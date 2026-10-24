@@ -50,10 +50,10 @@ describe('Runs screen', () => {
       expect(f).toContain('3 active')
       expect(f).toContain('5h 7%')
       expect(f).toContain('week 55%')
-      expect(f).toMatch(/#105 +Title fso-105 .*Plan approval +defaults in 12m +a approve/)
+      expect(f).toMatch(/#105 +Title fso-105 +develop .*Plan approval +defaults in 12m +a approve/)
       expect(f).toContain('Q1 Also guard the order list? (default: no)')
       expect(f).toMatch(/#104 .*Ready to ship .*s ship/)
-      expect(f).toMatch(/#103 +Title fso-103 +●●●◎◌◌ +running +14m +264k +verifying/)
+      expect(f).toMatch(/#103 +Title fso-103 +develop +●●●◎◌◌ +running +14m +264k +verifying/)
     } finally { t.s.renderer.destroy() }
   })
   test('a on a plan: the questions with their defaults, then y approves with the defaults', async () => {

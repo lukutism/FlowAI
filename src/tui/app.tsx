@@ -121,7 +121,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'p') return state.pr ? void send({ cmd: 'port', run: state.id }, `porting ${state.ticket} to develop`) : setNotice(`${state.ticket} has no draft PR to port yet`)
   })
 
-  const titleW = Math.max(16, width - 9 - 1 - 8 - 22 - 7 - 7 - 22 - 4)
+  const titleW = Math.max(16, width - 9 - 1 - 9 - 8 - 22 - 7 - 7 - 22 - 4)
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <text>
@@ -138,7 +138,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
           <Attention items={items} />
           <text> </text>
           <text><strong>Runs</strong><span fg={C.muted}> {list.length}</span></text>
-          <text fg={C.muted}>{`${fit('Run', 9)} ${fit('Task', titleW)} ${fit('Stage', 8)}${fit('Status', 22)}${fitL('Time', 6)} ${fitL('Tokens', 6)}  ${fit('Next', 22)}`}</text>
+          <text fg={C.muted}>{`${fit('Run', 9)} ${fit('Task', titleW)} ${fit('Line', 9)}${fit('Stage', 8)}${fit('Status', 22)}${fitL('Time', 6)} ${fitL('Tokens', 6)}  ${fit('Next', 22)}`}</text>
           {list.length ? list.map((r, i) => <RunRow key={r.run} row={r} selected={i === selected} titleW={titleW} />) : <text fg={C.muted}>No runs yet. Start one: flow start &lt;project&gt; &lt;ticket&gt;</text>}
         </>
       )}
@@ -155,7 +155,7 @@ function Attention({ items }: { items: AttentionItem[] }) {
       {items.length ? items.map(a => (
         <box key={a.run} flexDirection="column">
           <text>
-            <span fg={C.secondary}>{fit(a.ticket, 9)}</span> <strong>{fit(a.title, 34)}</strong> <span fg={C.muted}>{fit(a.project, 5)}</span>
+            <span fg={C.secondary}>{fit(a.ticket, 9)}</span> <strong>{fit(a.title, 34)}</strong> <span fg={C.muted}>{fit(a.line, 9)}</span>
             <span fg={TONE[a.tone]}> ◆ {fit(a.label, 15)}</span><span fg={C.secondary}>{fit(a.when, 18)}</span>
             <strong>{a.key}</strong><span fg={C.secondary}> {a.action}</span>
           </text>
@@ -172,6 +172,7 @@ function RunRow({ row: r, selected, titleW }: { row: Row; selected: boolean; tit
       <text>
         <span fg={selected ? C.text : C.secondary}>{fit(r.ticket, 9)} </span>
         <span fg={r.tone === 'success' && !selected ? C.muted : C.text}>{fit(r.title, titleW)} </span>
+        <span fg={C.muted}>{fit(r.line, 9)}</span>
         <span fg={TONE[r.tone]}>{fit(r.track, 8)}</span>
         <span fg={TONE[r.tone]}>{fit(r.status, 22)}</span>
         <span fg={C.secondary}>{fitL(r.elapsed, 6)} {fitL(r.tokens, 6)}  </span>

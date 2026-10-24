@@ -68,6 +68,14 @@ describe('rows: the runs table', () => {
   })
 })
 
+describe('the line a run targets', () => {
+  test('a release fix and its port are told apart by their line', () => {
+    const r = rows([run('a', { base: 'origin/patch/3.18.41' }), run('b', { base: 'origin/develop' })], NOW)
+    expect(r.map(x => x.line)).toEqual(['3.18.41', 'develop'])
+    expect(attention([run('c', { base: 'origin/release/3.21', ...plan(true) })], NOW)[0]!.line).toBe('3.21')
+  })
+})
+
 describe('header and formats', () => {
   test('counts and plan windows', () => {
     const h = header([run('a', {}), run('b', plan(true)), run('c', { status: 'paused' }), run('d', { stage: 'done', status: 'done' })], {

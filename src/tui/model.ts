@@ -10,10 +10,12 @@ export const duration = (ms: number) => {
   return m < 1 ? '<1m' : m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`
 }
 export const tokens = (n: number) => (!n ? '–' : n >= 1e6 ? `${(Math.round(n / 1e5) / 10).toFixed(1)}M` : `${Math.round(n / 1000)}k`)
+/** origin/patch/3.18.41 → 3.18.41, origin/develop → develop */
+export const line = (base: string) => base.replace(/^origin\//, '').replace(/^(patch|release|hotfix)\//, '')
 export const hhmm = (ms: number) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
 export interface AttentionItem {
-  run: string; ticket: string; title: string; project: string
+  run: string; ticket: string; title: string; project: string; line: string
   label: string; detail: string; when: string
   /** the key that acts on it, and what it does */
   key: 'a' | 'm' | 's' | '↵'; action: 'approve' | 'message' | 'ship' | 'open'
@@ -45,13 +47,13 @@ export function attention(runs: RunState[], now: number): AttentionItem[] {
     const [label, key, action, tone] = LABELS[n.kind]!
     const qs = n.kind === 'plan' ? (r.plan?.questions ?? []).map(q => `${q.id} ${q.text} (default: ${q.default})`).join(' · ') : ''
     const when = n.kind !== 'plan' ? '' : n.held || !n.deadline ? 'held for you' : n.deadline <= now ? 'defaults now' : `defaults in ${duration(n.deadline - now)}`
-    return { run: r.id, ticket: r.ticket, title: r.title, project: r.project, label, key, action, tone, when,
+    return { run: r.id, ticket: r.ticket, title: r.title, project: r.project, line: line(r.base), label, key, action, tone, when,
       detail: n.kind === 'plan' ? qs || n.ask : n.kind === 'pr' ? r.pr?.url ?? n.ask : n.ask }
   })
 }
 
 export interface Row {
-  run: string; ticket: string; title: string; project: string
+  run: string; ticket: string; title: string; project: string; line: string
   track: string; stage: string; status: string; tone: 'accent' | 'warning' | 'danger' | 'success' | 'muted'
   elapsed: string; tokens: string; next: string; mine: boolean
 }
@@ -90,7 +92,7 @@ export function rows(runs: RunState[], now: number): Row[] {
   const done = runs.filter(r => r.status === 'done').sort((a, b) => b.updatedAt - a.updatedAt)
   return [...live, ...done].map(r => {
     const n = next(r)
-    return { run: r.id, ticket: r.ticket, title: r.title, project: r.project, track: track(r), stage: r.stage, status: statusWord(r), tone: TONE[r.status],
+    return { run: r.id, ticket: r.ticket, title: r.title, project: r.project, line: line(r.base), track: track(r), stage: r.stage, status: statusWord(r), tone: TONE[r.status],
       elapsed: duration((r.status === 'done' ? r.updatedAt : now) - r.createdAt), tokens: tokens(r.tokens), next: n.text, mine: n.mine }
   })
 }
