@@ -37,3 +37,16 @@ describe('the run\'s settings: flow\'s guard on every editing and shell tool', (
     expect(out.hookSpecificOutput.permissionDecision).toBe('deny')
   })
 })
+
+describe('the OS sandbox, when the project asks for one', () => {
+  test('the project\'s sandbox is passed on; the worktree and the run folder are writable first', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-sb-'))
+    const file = writeRunSettings({ dir, worktree: '/w/run/mobile', allow: ['/data/runs/x'], sandbox: { enabled: true, filesystem: { allowWrite: ['~/.cache'] }, network: { allowedDomains: ['registry.npmjs.org'] } } })
+    const s = JSON.parse(readFileSync(file, 'utf8'))
+    expect(s.sandbox).toEqual({ enabled: true, filesystem: { allowWrite: ['/w/run/mobile', '/data/runs/x', '~/.cache'] }, network: { allowedDomains: ['registry.npmjs.org'] } })
+  })
+  test('no sandbox in the project: none in the settings (the user\'s own setup decides)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-sb-'))
+    expect(JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w' }), 'utf8')).sandbox).toBeUndefined()
+  })
+})

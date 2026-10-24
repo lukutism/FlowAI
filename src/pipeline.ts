@@ -180,7 +180,7 @@ export class Pipeline {
     const cached = this.agents.get(run)
     if (cached) return cached
     const m = this.meta(run)
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [this.runDir(run)] })
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [this.runDir(run)], sandbox: this.d.project.sandbox })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session })
     this.agents.set(run, agent)
     return agent
@@ -251,7 +251,7 @@ export class Pipeline {
     const skip = (reason: string) => { this.d.store.append(run, 'engine', { type: 'review.skipped', reason }); return null }
     if (!this.d.project.review.enabled) return skip('review is off for this project')
     if (!this.d.makeReviewer) return skip('no reviewer configured')
-    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree })
+    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, sandbox: this.d.project.sandbox })
     const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')

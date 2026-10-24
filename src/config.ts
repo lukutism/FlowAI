@@ -41,6 +41,8 @@ const project = z.object({
   /** start agent turns only while the plan windows are under these shares */
   usage: z.object({ fiveHour: z.number().min(0).max(1).default(0.9), week: z.number().min(0).max(1).default(0.95) }).default({}),
   plan: z.object({ deadlineMinutes: z.number().int().positive().default(30) }).default({}),
+  /** Claude Code's OS sandbox for the agents' shell commands (its settings block); flow adds the run's folders */
+  sandbox: z.record(z.unknown()).optional(),
   /** an independent reviewer (a fresh, read-only claude session) before ship */
   review: z.object({ enabled: z.boolean().default(true) }).default({}),
 })
