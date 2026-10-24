@@ -1,0 +1,7 @@
+node_modules/
+# raw CLI recordings carry the user's plugin output (work notes, customer names, local paths): local only.
+# The fake agent's fixtures are sanitized copies under test/fixtures/.
+spike/recordings/
+spike/sandbox/
+*.log
+.DS_Store

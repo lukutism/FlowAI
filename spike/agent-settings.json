@@ -1,0 +1,102 @@
+{
+ "hooks": {
+  "SessionStart": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ]
+   }
+  ],
+  "PreToolUse": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ],
+    "matcher": "*"
+   }
+  ],
+  "PostToolUse": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ],
+    "matcher": "*"
+   }
+  ],
+  "Stop": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ]
+   }
+  ],
+  "PreCompact": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ]
+   }
+  ],
+  "PostCompact": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ]
+   }
+  ],
+  "SessionEnd": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ]
+   }
+  ],
+  "Notification": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ]
+   }
+  ],
+  "UserPromptSubmit": [
+   {
+    "hooks": [
+     {
+      "type": "command",
+      "command": "~/projects/flow/spike/hook.sh"
+     }
+    ]
+   }
+  ]
+ },
+ "permissions": {
+  "allow": [
+   "Bash(ls:*)",
+   "Bash(git:*)"
+  ]
+ }
+}
