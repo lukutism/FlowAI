@@ -36,11 +36,16 @@ export type EventBody =
   /** the run's own device is booted, its app installed, its Metro answering */
   | { type: 'device.ready'; platform: 'android' | 'ios'; id: string; metroPort: number }
   | { type: 'device.released' }
+  /** the customer's patch, applied as a local commit (never pushed) so verify and review see only the fix */
+  | { type: 'patch.applied'; customer: string; app: string; summary: string; commit: string }
+  /** ship of a patch run: the write-back's dry run */
+  | { type: 'patch.checked'; report: string }
+  | { type: 'patch.written'; report: string }
 
 export type RunEvent = EventBody & { seq: number; at: number; run: string; actor: Actor }
 export type EventType = EventBody["type"]
 
-export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'review' | 'setup' | 'ship' | 'pr'; ask: string; held?: boolean; deadline?: number }
+export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'review' | 'setup' | 'ship' | 'pr' | 'patch'; ask: string; held?: boolean; deadline?: number }
 
 export interface RunState {
   id: string; ticket: string; title: string; project: string; base: string
@@ -54,6 +59,7 @@ export interface RunState {
   prs?: { url: string; number: number; repo?: string }[]
   waitingFor?: string; pausedUntil?: number
   device?: { platform: 'android' | 'ios'; id: string; metroPort: number }
+  patch?: { customer: string; app: string; commit: string }
   createdAt: number; updatedAt: number
 }
 
@@ -137,6 +143,13 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'tool.denied': return go(s, e, {})
     case 'device.ready': need(s, 'setup', e); return go(s, e, { device: { platform: e.platform, id: e.id, metroPort: e.metroPort } })
     case 'device.released': return go(s, e, { device: undefined })
+    case 'patch.applied': need(s, 'setup', e); return go(s, e, { patch: { customer: e.customer, app: e.app, commit: e.commit } })
+    case 'patch.checked':
+      if (s.needs?.kind !== 'ship' || !s.patch) throw new TransitionError('patch.checked needs a verified patch run')
+      return go(s, e, { status: 'needs-you', needs: { kind: 'patch', ask: 'write-back dry run in patch-report.txt: ship again to write the patch back' } })
+    case 'patch.written':
+      if (s.needs?.kind !== 'patch') throw new TransitionError('patch.written needs a checked write-back')
+      return go(s, e, { stage: 'done', status: 'done', needs: undefined })
   }
 }
 

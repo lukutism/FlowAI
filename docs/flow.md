@@ -18,6 +18,7 @@ weekly windows, which flow reads from the CLI after every turn.
      (`tsc`, `eslint`, `jest`, `vitest` or a `command`; `perPackage` runs a step inside each package of a monorepo);
      `default: true` marks the repos a run gets when it names none
    - `naming`: branch (`{type}/{id}`, `{key}`), commit, PR title and body styles
+     and, for customer patches, `patches` (below)
    - optionally Claude Code's `sandbox` block, and `devices` (below)
 3. Optionally `~/.config/flow/flow.json` with the machine's limits: `{"limits": {"agents": 2, "builds": 2, "devices": 4}}`.
 4. `bun install` in this folder, then `bun src/cli.tsx` (or an alias `flow`).
@@ -27,7 +28,7 @@ weekly windows, which flow reads from the CLI after every turn.
 | | |
 |---|---|
 | `flow` | The screen: what needs you, every run, your plan windows. Starts the background service if needed. |
-| `n` | Start a run: `<project> <ticket> [base] [repos=a,b] [device=android\|ios]` (the ticket: a number or a Jira key) |
+| `n` | Start a run: `<project> <ticket> [base] [repos=a,b] [device=android\|ios] [patch=customer/app]` (the ticket: a number or a Jira key) |
 | `a` | Approve a plan: its questions with their defaults; `y`, or `e` to type other answers |
 | `m` | Message a run's agent |
 | `s` | Ship a verified run: commit, push, draft PR |
@@ -35,7 +36,7 @@ weekly windows, which flow reads from the CLI after every turn.
 | `↵` / `esc` | A run's detail (plan, answers, findings, review, PR, timeline) / back |
 
 The same as commands: `flow start | approve | message | ship | port | release | status | log` (`flow start` takes
-`--repos a,b`, `--base`, `--kind bug|feature`, `--device android|ios`). With the service running they go through it
+`--repos a,b`, `--base`, `--kind bug|feature`, `--device android|ios`, `--patch <customer>/<app>`). With the service running they go through it
 and follow the run until it needs you; without it they run in the terminal.
 
 **Slots.** All runs on the machine share three kinds of slot: agent turns, builds (installs, verify, app builds) and
@@ -64,6 +65,21 @@ working from their common folder, verify per repo, and at ship one draft PR per 
 7. **Ship (you).** flow commits (your commit hooks run), pushes without force, and opens a draft PR linked to the
    ticket, described by the agent's `pr.md`. Merging stays yours.
 8. **Port (optional).** The shipped commit is applied to another line in a new run, then verify, review and ship.
+
+### A customer patch run
+
+Some products ship per-customer variants as a patch on top of a release. A run started with
+`--patch <customer>/<app>` (and the release as its base) works on that variant:
+
+- **Setup:** the repo's `patches.apply` command stages the customer's patch in the new worktree
+  (`{customer} {app} {base} {main}`; its last line of output is the summary, a failure fails the setup with its words).
+  flow then commits it locally, in that worktree only: never pushed, and without commit hooks, so nothing reformats
+  the customer's code. The agent is told the patch is there.
+- **Verify and review** compare against that commit, so they see only the fix, not the patch's own lines.
+- **Ship** writes the patch back instead of opening a PR, in two steps. The first `ship` runs `patches.writeBack`
+  with `{dryRun}` = `--dry-run` on the whole change (the patch, the fix, new files) and saves its report as
+  `patch-report.txt`; the second `ship` runs it for real and the run is done. For the write-back flow moves HEAD back
+  off the local commit and puts the worktree back exactly afterwards.
 
 ### A run's own device
 
@@ -104,10 +120,11 @@ TypeScript on Bun. One process per run drives `claude -p --input-format stream-j
 | `tracker.ts`, `azure.ts`, `jira.ts`, `forge.ts` | Tickets from Azure DevOps or Jira; draft PRs on Azure DevOps or GitHub |
 | `resources.ts` | The machine-wide slots: agents, builds, devices |
 | `device.ts` | A run's own device and Metro: ports, background processes, readiness, cleanup |
+| `sh.ts` | A project's shell commands, with placeholders |
 | `guard.ts`, `settings.ts` | The guard hook and each run's settings |
 | `service.ts`, `server.ts`, `client.ts`, `daemon.ts` | The background service, its socket and the connection |
 | `tui/` | The screen (OpenTUI + React) and its view model |
 
-Tests: `bun test` (about 260, with a fake agent replaying sanitized real sessions, real git repos, stand-ins for
+Tests: `bun test` (about 270, with a fake agent replaying sanitized real sessions, real git repos, stand-ins for
 `az`, `gh`, Jira, devices and Metro, and the screen driven by keys). `scripts/` holds real-world checks:
 `review-check.ts`, `sandbox-check.ts`, `device-check.ts`, `ui-snapshot.tsx`.

@@ -1,4 +1,4 @@
-import type { RunState, Stage } from '../run.ts'
+import type { Needs, RunState, Stage } from '../run.ts'
 import type { Windows } from '../usage.ts'
 
 /** What the Runs screen shows, computed from run states: no terminal needed to test it. */
@@ -22,7 +22,7 @@ export interface AttentionItem {
   tone: 'warning' | 'danger' | 'success' | 'accent'
 }
 
-const LABELS: Record<string, [label: string, key: AttentionItem['key'], action: AttentionItem['action'], tone: AttentionItem['tone']]> = {
+const LABELS: Record<Needs['kind'], [label: string, key: AttentionItem['key'], action: AttentionItem['action'], tone: AttentionItem['tone']]> = {
   plan: ['Plan approval', 'a', 'approve', 'warning'],
   question: ['Agent question', 'm', 'message', 'warning'],
   blocked: ['Blocked', 'm', 'message', 'danger'],
@@ -31,8 +31,9 @@ const LABELS: Record<string, [label: string, key: AttentionItem['key'], action: 
   review: ['Review cap', 'm', 'message', 'danger'],
   ship: ['Ready to ship', 's', 'ship', 'success'],
   pr: ['Draft PR', '↵', 'open', 'accent'],
+  patch: ['Write-back checked', 's', 'ship', 'success'],
 }
-const ORDER = ['plan', 'question', 'blocked', 'setup', 'verify', 'review', 'ship', 'pr']
+const ORDER = ['plan', 'question', 'blocked', 'setup', 'verify', 'review', 'ship', 'patch', 'pr']
 
 export function attention(runs: RunState[], now: number): AttentionItem[] {
   const items = runs.filter(r => r.needs && r.status !== 'done')
@@ -44,7 +45,7 @@ export function attention(runs: RunState[], now: number): AttentionItem[] {
   items.sort((a, b) => { const [x1, y1] = rank(a), [x2, y2] = rank(b); return x1! - x2! || y1! - y2! })
   return items.map(r => {
     const n = r.needs!
-    const [label, key, action, tone] = LABELS[n.kind]!
+    const [label, key, action, tone] = LABELS[n.kind]
     const qs = n.kind === 'plan' ? (r.plan?.questions ?? []).map(q => `${q.id} ${q.text} (default: ${q.default})`).join(' · ') : ''
     const when = n.kind !== 'plan' ? '' : n.held || !n.deadline ? 'held for you' : n.deadline <= now ? 'defaults now' : `defaults in ${duration(n.deadline - now)}`
     return { run: r.id, ticket: r.ticket, title: r.title, project: r.project, line: line(r.base), label, key, action, tone, when,
@@ -70,7 +71,7 @@ function statusWord(r: RunState): string {
   const loops = r.loops.review > 0 && (r.stage === 'review' || r.stage === 'build') && !r.loops.verify ? ` · review ×${r.loops.review}` : r.loops.verify > 0 ? ` · verify ×${r.loops.verify}` : ''
   if (r.status === 'paused') return `paused${r.pausedUntil ? ` until ${hhmm(r.pausedUntil)}` : ''}`
   if (r.status === 'waiting') return 'waiting'
-  const words: Record<string, string> = { plan: 'approval', question: 'question', ship: 'verified', pr: 'draft PR' }
+  const words: Record<string, string> = { plan: 'approval', question: 'question', ship: 'verified', pr: 'draft PR', patch: 'write-back checked' }
   if (r.status === 'needs-you') return `${words[r.needs?.kind ?? ''] ?? r.needs?.kind ?? 'needs you'}${loops}`
   if (r.status === 'running' && r.stage === 'build' && r.loops.verify > 0) return `fixing${loops}`
   return `${r.status}${loops}`
@@ -78,10 +79,10 @@ function statusWord(r: RunState): string {
 
 function next(r: RunState): { text: string; mine: boolean } {
   const n = r.needs
-  if (n) return { mine: true, text: { plan: 'approve plan', question: 'answer the agent', blocked: 'message the agent', setup: 'check setup', verify: 'message the agent', review: 'decide on review', ship: 'ship', pr: `review PR #${r.pr?.number ?? ''}` }[n.kind] }
+  if (n) return { mine: true, text: { plan: 'approve plan', question: 'answer the agent', blocked: 'message the agent', setup: 'check setup', verify: 'message the agent', review: 'decide on review', ship: r.patch ? 'check the write-back' : 'ship', pr: `review PR #${r.pr?.number ?? ''}`, patch: 'write the patch back' }[n.kind] }
   if (r.status === 'waiting') return { mine: false, text: `waits for ${r.waitingFor ?? 'a slot'}` }
   if (r.status === 'paused') return { mine: false, text: 'resumes by itself' }
-  if (r.status === 'done') return { mine: false, text: r.pr ? `PR #${r.pr.number}` : 'done' }
+  if (r.status === 'done') return { mine: false, text: r.pr ? `PR #${r.pr.number}` : r.patch ? 'patch written back' : 'done' }
   return { mine: false, text: { setup: 'setting up', plan: 'planning', build: 'building', verify: 'verifying', review: 'in review', ship: 'shipping', done: 'done' }[r.stage] }
 }
 

@@ -120,10 +120,17 @@ describe('Runs screen', () => {
       expect(await t.press('n', ...'fso 1 device=tv'.split(''), 'enter')).toContain('device is android or ios')
     } finally { t.s.renderer.destroy() }
   })
+  test('n with patch=<customer>/<app> starts a customer patch run', async () => {
+    const t = await screen()
+    try {
+      await t.press('n', ...'fso 204598 origin/patch/3.18.41 patch=acme/product'.split(''), 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.18.41', patch: 'acme/product' }])
+    } finally { t.s.renderer.destroy() }
+  })
   test('n with a malformed entry says what it needs and sends nothing', async () => {
     const t = await screen()
     try {
-      expect(await t.press('n', ...'fso'.split(''), 'enter')).toContain('type: <project> <ticket> [base] [repos=a,b] [device=android|ios]')
+      expect(await t.press('n', ...'fso'.split(''), 'enter')).toContain('type: <project> <ticket> [base] [repos=a,b] [device=android|ios] [patch=customer/app]')
       expect(t.f.sent).toEqual([])
     } finally { t.s.renderer.destroy() }
   })
@@ -174,6 +181,14 @@ describe('Run detail', () => {
   test('a run with a device names it and its Metro port', async () => {
     const t = await screen([base('fso-105', { device: { platform: 'android', id: 'emulator-5580', metroPort: 8090 } })])
     try { expect(await t.press('enter')).toContain('Device android emulator-5580 · Metro :8090') } finally { t.s.renderer.destroy() }
+  })
+  test('a customer patch run names its patch; s on a checked write-back asks before writing it back', async () => {
+    const t = await screen([base('fso-105', { stage: 'ship', status: 'needs-you', needs: { kind: 'patch', ask: 'write-back dry run in patch-report.txt: ship again to write the patch back' }, patch: { customer: 'acme', app: 'product', commit: 'abc' } })])
+    try {
+      expect(await t.press('enter')).toContain('Customer patch acme/product (applied locally, written back at ship)')
+      await t.press('esc')
+      expect(await t.press('s')).toContain('Write the patch back for #105?')
+    } finally { t.s.renderer.destroy() }
   })
   test('enter opens it: what it needs, the plan, its questions, the timeline; esc goes back', async () => {
     const t = await screen()

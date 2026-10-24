@@ -8,6 +8,7 @@ import { trackerFor, type Tracker } from './tracker.ts'
 import type { Project, Repo } from './config.ts'
 import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { createWorktree, shipChange } from './git.ts'
+import { fill, sh, tail } from './sh.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
 import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
@@ -24,6 +25,12 @@ interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
 interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios' }
+
+/** a project's git in a worktree (its env), for flow's own local steps */
+const gitIn = (cwd: string, env?: Record<string, string | undefined>) => (...a: string[]) => {
+  const x = Bun.spawnSync(['git', ...a], { cwd, env: env ?? process.env })
+  return { code: x.exitCode, out: new TextDecoder().decode(x.stdout).trim(), err: new TextDecoder().decode(x.stderr).trim() }
+}
 
 export interface PipelineDeps {
   store: EventStore
@@ -110,7 +117,8 @@ export class Pipeline {
     return `${p.key}-${parsed.id}`
   }
 
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios' } = {}): Promise<string> {
+  /** patch: "<customer>/<app>", the customer patch the change goes on (in the run's repo that has patch commands) */
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string } = {}): Promise<string> {
     const p = this.d.project
     const run = this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
@@ -119,12 +127,20 @@ export class Pipeline {
     const keys = o.repos?.length ? o.repos : p.repos.some(r => r.default) ? p.repos.filter(r => r.default).map(r => r.key) : [p.repos[0]!.key]
     const unknown = keys.filter(k => !p.repos.some(r => r.key === k))
     if (unknown.length) throw new Error(`no repo ${unknown.join(', ')} in project ${p.key} (it has ${p.repos.map(r => r.key).join(', ')})`)
+    let patch: Meta['patch']
+    if (o.patch) {
+      const [customer, app, ...more] = o.patch.split('/')
+      if (!customer || !app || more.length) throw new Error(`--patch is <customer>/<app>, not "${o.patch}"`)
+      const repo = keys.find(k => this.repoConfig(k).patches)
+      if (!repo) throw new Error(`no repo of this run has patch commands (patches in the repo's config): ${keys.join(', ')}`)
+      patch = { customer, app, repo }
+    }
     const t = await this.tracker.read(id)
     const kind = o.kind ?? t.kind
     const root = join(p.worktrees, String(id))
     const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
     const branch = p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}) }
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
@@ -147,6 +163,12 @@ export class Pipeline {
       this.d.store.append(run, 'engine', { type: 'setup.failed', reason: (e as Error).message })
       return false
     }
+    if (m.patch) {
+      try { await this.applyPatch(run, m) } catch (e) {
+        this.d.store.append(run, 'engine', { type: 'setup.failed', reason: `patch: ${(e as Error).message}` })
+        return false
+      }
+    }
     if (m.platform) {
       try { await this.bootDevice(run, m.platform, m.repos[0]!.worktree) } catch (e) {
         this.d.store.append(run, 'engine', { type: 'setup.failed', reason: `device: ${(e as Error).message}` })
@@ -156,6 +178,47 @@ export class Pipeline {
     if (notes.length) writeFileSync(join(this.runDir(run), 'setup-notes.txt'), notes.join('\n') + '\n')
     this.d.store.append(run, 'engine', { type: 'setup.done' })
     return true
+  }
+
+  /**
+   * The customer's patch, staged by the project's apply command, then committed by flow in the worktree only (never
+   * pushed, commit hooks skipped so nothing reformats the customer's code): verify, review and the agent then see
+   * only the fix on top of it.
+   */
+  private async applyPatch(run: string, m: Meta) {
+    const { customer, app, repo } = m.patch!
+    const r = m.repos.find(x => x.key === repo)!, c = this.repoConfig(repo)
+    const res = await sh(fill(c.patches!.apply, { customer, app, base: r.base, main: c.path }), r.worktree, this.d.gitEnv)
+    if (res.code !== 0) throw new Error(tail(res.err || res.out) || `the apply command exited ${res.code}`)
+    const git = gitIn(r.worktree, this.d.gitEnv)
+    if (git('diff', '--cached', '--quiet').code === 0) throw new Error(`the apply command staged nothing (${tail(res.out, 2) || 'no output'})`)
+    const commit = git('commit', '--no-verify', '-q', '-m', `customer patch ${customer}/${app} (local to flow, never pushed)`)
+    if (commit.code !== 0) throw new Error(`committing it locally failed: ${commit.err}`)
+    this.d.store.append(run, 'engine', { type: 'patch.applied', customer, app, summary: tail(res.out, 1), commit: git('rev-parse', 'HEAD').out })
+  }
+
+  /**
+   * The project's write-back on the whole change (the patch and the fix, new files included): the patch commit is
+   * undone for the duration (HEAD back on the base, the patch staged), then the worktree is put back exactly.
+   */
+  private async writeBack(run: string, m: Meta, dryRun: boolean): Promise<string> {
+    const { customer, app, repo } = m.patch!, s = this.must(run)
+    const r = m.repos.find(x => x.key === repo)!, c = this.repoConfig(repo)
+    const git = gitIn(r.worktree, this.d.gitEnv)
+    const commit = s.patch!.commit
+    if (git('rev-parse', 'HEAD').out !== commit) throw new Error(`${repo}: HEAD is no longer the patch commit ${commit.slice(0, 8)}; put it back before the write-back`)
+    const added = git('ls-files', '--others', '--exclude-standard').out.split('\n').filter(Boolean)
+    git('reset', '--soft', '-q', `${commit}~1`)
+    try {
+      if (added.length) git('add', '-N', '--', ...added) // new files belong in the patch too
+      const res = await sh(fill(c.patches!.writeBack, { customer, app, base: r.base, dryRun: dryRun ? '--dry-run' : '' }), r.worktree, this.d.gitEnv)
+      const out = (res.out + res.err).trim()
+      if (res.code !== 0) throw new Error(`the write-back${dryRun ? ' dry run' : ''} failed (exit ${res.code}):\n${tail(out)}`)
+      return `${out}${added.length ? `\nnew files included: ${added.join(', ')}` : ''}\n`
+    } finally {
+      if (added.length) git('reset', '-q', '--', ...added)
+      git('reset', '--soft', '-q', commit)
+    }
   }
 
   /** the run's own device: a device slot, free ports (not another run's), boot, Metro, install; the slot is freed on failure */
@@ -216,8 +279,19 @@ export class Pipeline {
   /** a commit, a push and a draft PR for each repo the run changed */
   async ship(run: string): Promise<{ number: number; url: string }[]> {
     const s = this.must(run)
-    if (s.needs?.kind !== 'ship') throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
+    if (s.needs?.kind !== 'ship' && !(s.needs?.kind === 'patch' && s.patch)) throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
     const m = this.meta(run), n = this.d.project.naming
+    if (m.patch) {
+      // a customer patch run ends in the patch written back, not a PR: a dry run first, then (ship again) for real
+      const others = m.repos.filter(r => r.key !== m.patch!.repo && changedFiles(r.worktree).length).map(r => r.key)
+      if (others.length) throw new Error(`${run}: a patch run ships only its patch, but ${others.join(', ')} changed too`)
+      const first = s.needs.kind === 'ship'
+      const report = await this.writeBack(run, m, first)
+      writeFileSync(join(this.runDir(run), 'patch-report.txt'), report)
+      this.d.store.append(run, 'human', first ? { type: 'patch.checked', report } : { type: 'patch.written', report })
+      if (!first) await this.releaseDevice(run)
+      return []
+    }
     const changed = m.repos.map(r => ({ r, files: changedFiles(r.worktree) })).filter(x => x.files.length)
     if (!changed.length) throw new Error(`${run}: nothing to ship, no repo has changes`)
     const pr = existsSync(this.prFile(run)) ? readFileSync(this.prFile(run), 'utf8') : ''

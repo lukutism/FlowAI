@@ -80,12 +80,13 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (name === 'backspace') return setMode({ kind: 'new', text: mode.text.slice(0, -1) })
       if (name === 'return') {
         const [project, ticket, ...rest] = mode.text.trim().split(/\s+/)
-        if (!project || !ticket) return setNotice('type: <project> <ticket> [base] [repos=a,b] [device=android|ios]')
+        if (!project || !ticket) return setNotice('type: <project> <ticket> [base] [repos=a,b] [device=android|ios] [patch=customer/app]')
         const repos = rest.find(x => x.startsWith('repos='))?.slice(6).split(',').filter(Boolean)
         const device = rest.find(x => x.startsWith('device='))?.slice(7)
         if (device && device !== 'android' && device !== 'ios') return setNotice('device is android or ios')
+        const patch = rest.find(x => x.startsWith('patch='))?.slice(6)
         const base = rest.find(x => !x.includes('='))
-        return void send({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), ...(repos?.length ? { repos } : {}), ...(device ? { device: device as 'android' | 'ios' } : {}) }, `starting ${project}-${ticket}`)
+        return void send({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), ...(repos?.length ? { repos } : {}), ...(device ? { device: device as 'android' | 'ios' } : {}), ...(patch ? { patch } : {}) }, `starting ${project}-${ticket}`)
       }
       if (typed) setMode({ kind: 'new', text: mode.text + typed })
       return
@@ -110,7 +111,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       return
     }
     if (mode.kind === 'ship') {
-      if (typed === 'y') return void send({ cmd: 'ship', run: mode.run }, `shipping ${mode.run}: commit, push, draft PR`)
+      if (typed === 'y') {
+        const r = api.runs.get(mode.run)
+        const what = !r?.patch ? 'commit, push, draft PR' : r.needs?.kind === 'patch' ? 'writing the patch back' : 'write-back dry run'
+        return void send({ cmd: 'ship', run: mode.run }, `shipping ${mode.run}: ${what}`)
+      }
       if (typed === 'n' || name === 'escape') return setMode({ kind: 'list' })
       return
     }
@@ -122,7 +127,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (!state) return
     if (name === 'return') return setMode({ kind: 'detail', run: state.id })
     if (typed === 'a') return state.needs?.kind === 'plan' ? setMode({ kind: 'approve', run: state.id, editing: false, text: '' }) : setNotice(`${state.ticket}: no plan is waiting for you`)
-    if (typed === 's') return state.needs?.kind === 'ship' ? setMode({ kind: 'ship', run: state.id }) : setNotice(`${state.ticket} is not ready to ship`)
+    if (typed === 's') return state.needs?.kind === 'ship' || (state.needs?.kind === 'patch' && state.patch) ? setMode({ kind: 'ship', run: state.id }) : setNotice(`${state.ticket} is not ready to ship`)
     if (typed === 'm') return setMode({ kind: 'message', run: state.id, text: '' })
     if (typed === 'p') return state.pr ? void send({ cmd: 'port', run: state.id }, `porting ${state.ticket} to develop`) : setNotice(`${state.ticket} has no draft PR to port yet`)
   })
@@ -225,6 +230,7 @@ function DetailView({ run, detail, now }: { run: RunState; detail: Detail | null
     <box flexDirection="column">
       <text><span fg={C.secondary}>{run.ticket} </span><strong>{run.title}</strong><span fg={C.muted}>   {run.project} · from {run.base} · {duration(now - run.createdAt)} · {tokens(run.tokens)} tokens · {run.compactions} compactions</span></text>
       <text fg={C.warning}>{run.needs ? `Needs you: ${run.needs.ask}` : `${run.stage} · ${run.status}`}</text>
+      {run.patch ? <text fg={C.secondary}>{`Customer patch ${run.patch.customer}/${run.patch.app} (applied locally, written back at ship)`}</text> : null}
       {run.device ? <text fg={C.secondary}>{`Device ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</text> : null}
       <text> </text>
       <text><strong>Plan</strong></text>
@@ -273,11 +279,15 @@ function Bar({ mode, run, notice }: { mode: Mode; run?: RunState; notice: string
       </box>
     )
   }
+  if (mode.kind === 'ship' && run && run.patch) {
+    const real = run.needs?.kind === 'patch'
+    return <text><strong>{real ? `Write the patch back for ${run.ticket}?` : `Check the write-back for ${run.ticket}?`}</strong><span fg={C.secondary}>{real ? ' the patch and the fix, as the dry run showed   ' : ' a dry run, nothing written   '}</span><strong>y</strong><span fg={C.success}> {real ? 'write back' : 'check'}</span><span fg={C.muted}>   </span><strong>n</strong><span fg={C.secondary}> cancel</span></text>
+  }
   if (mode.kind === 'ship' && run) return <text><strong>Ship {run.ticket}?</strong><span fg={C.secondary}> commit, push, open a draft PR   </span><strong>y</strong><span fg={C.success}> ship</span><span fg={C.muted}>   </span><strong>n</strong><span fg={C.secondary}> cancel</span></text>
   if (mode.kind === 'new') return (
     <box flexDirection="column">
       {notice ? <text fg={C.accent}>{notice}</text> : null}
-      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   &lt;project&gt; &lt;ticket&gt; [base] [repos=a,b] [device=android|ios] · ↵ start · esc cancel</span></text>
+      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   &lt;project&gt; &lt;ticket&gt; [base] [repos=a,b] [device=android|ios] [patch=customer/app] · ↵ start · esc cancel</span></text>
     </box>
   )
   if (mode.kind === 'message' && run) return <text><span fg={C.accent}>Message {run.ticket} </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ send · esc cancel</span></text>

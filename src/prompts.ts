@@ -4,12 +4,15 @@ export interface Brief {
   key: string; title: string; url: string; base: string; branch: string; worktree: string; repos?: { key: string; worktree: string; base: string }[]
   /** the run's own device, booted with the app installed */
   device?: { platform: 'android' | 'ios'; id: string; metroPort: number }
+  /** the customer patch under the change, as a local commit */
+  patch?: { customer: string; app: string; repo: string }
 }
 
 /** where the agent works: its worktree, or with several repos each one's; and the run's device */
 const where = (b: Brief) => (b.repos && b.repos.length > 1
   ? `The repos, each its own git worktree on branch ${b.branch}:\n${b.repos.map(r => `- ${r.key}: ${r.worktree} (from ${r.base})`).join('\n')}`
   : `This folder is its own git worktree on branch ${b.branch}, from ${b.base}.`)
+  + (b.patch ? `\nCustomer patch ${b.patch.customer}/${b.patch.app} is applied as a local commit in ${b.patch.repo}: your change is the fix on top of it, uncommitted as usual. Leave that commit alone; flow writes the patch and your fix back together.` : '')
   + (b.device ? `\nDevice: ${b.device.platform} ${b.device.id}, Metro on port ${b.device.metroPort}, the app installed. It is this run's own: use only it, and leave it running (flow stops it).` : '')
 
 export const planPrompt = (b: Brief, ticket: string, planFile: string) => `You are working on ticket ${b.key} "${b.title}" (${b.url}).

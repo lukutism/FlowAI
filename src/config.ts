@@ -35,6 +35,11 @@ const repo = z.object({
   verify: z.array(verifyStep),
   /** taken when a run names no repos (if none is marked, the first) */
   default: z.boolean().default(false),
+  /**
+   * customer patches: apply puts the customer's patch in the new worktree, staged ({customer} {app} {base} {main});
+   * writeBack writes the worktree's whole change back as that patch ({customer} {app} {base} {dryRun}: --dry-run or nothing)
+   */
+  patches: z.object({ apply: z.string(), writeBack: z.string() }).optional(),
 })
 
 /** a run's own device (emulator or simulator) and Metro; the commands and placeholders are in device.ts */

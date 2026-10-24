@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fill, sh, tail } from './sh.ts'
 
 /**
  * A run's own device (emulator or simulator) and its Metro, from the project's commands. flow owns the lifecycle:
@@ -28,14 +29,6 @@ export interface DeviceCommands {
 export interface DeviceSpec { metro: string; consolePortStart: number; metroPortStart: number; android?: DeviceCommands; ios?: DeviceCommands }
 export interface DeviceState { run: string; platform: 'android' | 'ios'; id: string; consolePort: number; metroPort: number; pids: number[] }
 
-const fill = (cmd: string, vars: Record<string, string | number | undefined>) => cmd.replace(/\{(\w+)\}/g, (m, k: string) => (vars[k] === undefined ? m : String(vars[k])))
-const tail = (s: string, n = 5) => s.trim().split('\n').slice(-n).join('\n')
-
-async function sh(cmd: string, cwd: string) {
-  const p = Bun.spawn(['sh', '-c', cmd], { cwd, stdout: 'pipe', stderr: 'pipe' })
-  const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
-  return { code: await p.exited, out, err }
-}
 async function must(what: string, cmd: string, cwd: string) {
   const r = await sh(cmd, cwd)
   if (r.code !== 0) throw new Error(`${what} failed (${cmd}):\n${tail(r.err || r.out)}`)
