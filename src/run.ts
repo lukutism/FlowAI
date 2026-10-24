@@ -20,6 +20,8 @@ export type EventBody =
   | { type: 'build.done' }
   | { type: 'verify.result'; ok: boolean; newFindings: string[] }
   | { type: 'review.result'; findings: number }
+  /** the project runs no reviewer yet: the run goes from verify to ship */
+  | { type: 'review.skipped'; reason: string }
   | { type: 'pr.opened'; url: string; number: number }
   | { type: 'run.blocked'; reason: string }
   | { type: 'run.waiting'; resource: string }
@@ -35,7 +37,7 @@ export type EventBody =
 export type RunEvent = EventBody & { seq: number; at: number; run: string; actor: Actor }
 export type EventType = EventBody["type"]
 
-export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'review' | 'setup' | 'pr'; ask: string; held?: boolean; deadline?: number }
+export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'review' | 'setup' | 'ship' | 'pr'; ask: string; held?: boolean; deadline?: number }
 
 export interface RunState {
   id: string; ticket: string; title: string; project: string; base: string
@@ -53,6 +55,9 @@ export interface Rules { maxRedVerifies: number; maxReviews: number }
 export const DEFAULT_RULES: Rules = { maxRedVerifies: 3, maxReviews: 3 }
 
 export class TransitionError extends Error {}
+
+/** verified (and reviewed): publishing is the human's step (flow ship), like merging */
+const READY = { status: 'needs-you' as const, needs: { kind: 'ship' as const, ask: 'verified: publish the draft PR with flow ship' } }
 
 const need = (s: RunState, stage: Stage, e: RunEvent) => {
   if (s.stage !== stage) throw new TransitionError(`${e.type} needs the run in ${stage}, it is in ${s.stage}`)
@@ -99,11 +104,12 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     }
     case 'review.result': {
       need(s, 'review', e)
-      if (!e.findings) return go(s, e, { stage: 'ship', ...running })
+      if (!e.findings) return go(s, e, { stage: 'ship', ...READY })
       const loops = { ...s.loops, review: s.loops.review + 1 }
       if (loops.review >= rules.maxReviews) return go(s, e, { loops, status: 'needs-you', needs: { kind: 'review', ask: `${e.findings} findings after ${loops.review} reviews` } })
       return go(s, e, { stage: 'build', loops, ...running })
     }
+    case 'review.skipped': need(s, 'review', e); return go(s, e, { stage: 'ship', ...READY })
     case 'pr.opened': need(s, 'ship', e); return go(s, e, { pr: { url: e.url, number: e.number }, status: 'needs-you', needs: { kind: 'pr', ask: `review draft PR #${e.number}` } })
     case 'run.done': return go(s, e, { stage: 'done', status: 'done', needs: undefined, waitingFor: undefined, pausedUntil: undefined })
     case 'agent.asked': return go(s, e, { status: 'needs-you', needs: { kind: 'question', ask: e.question } })

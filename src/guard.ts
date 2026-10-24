@@ -37,13 +37,14 @@ function trackerWrite(s: string): boolean {
   return false
 }
 
-function insideWorktree(file: string, worktree: string): boolean {
-  const p = resolve(worktree, file), wt = resolve(worktree)
-  if (p === wt || p.startsWith(wt + '/')) return true
-  return [tmpdir(), '/tmp', '/private/tmp'].some(t => p.startsWith(resolve(t) + '/'))
+function insideWorktree(file: string, worktree: string, allow: string[]): boolean {
+  const p = resolve(worktree, file)
+  const within = (dir: string) => { const d = resolve(dir); return p === d || p.startsWith(d + '/') }
+  return within(worktree) || allow.some(within) || [tmpdir(), '/tmp', '/private/tmp'].some(within)
 }
 
-export function guard(input: HookInput, ctx: { worktree: string }): Decision | null {
+/** allow: other folders the agent may edit (the run folder: plan.md, pr.md) */
+export function guard(input: HookInput, ctx: { worktree: string; allow?: string[] }): Decision | null {
   const tool = input.tool_name ?? '', args = input.tool_input ?? {}
   if (tool === 'Bash' && typeof args.command === 'string') {
     for (const seg of segments(args.command)) {
@@ -55,7 +56,7 @@ export function guard(input: HookInput, ctx: { worktree: string }): Decision | n
   }
   if (['Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(tool)) {
     const file = String(args.file_path ?? args.notebook_path ?? '')
-    if (!file || !insideWorktree(file, ctx.worktree)) return { deny: true, reason: `edit only inside this run's worktree (${ctx.worktree})` }
+    if (!file || !insideWorktree(file, ctx.worktree, ctx.allow ?? [])) return { deny: true, reason: `edit only inside this run's worktree (${ctx.worktree})` }
   }
   return null
 }
@@ -65,6 +66,6 @@ if (import.meta.main) {
   let input: HookInput = {}
   try { input = JSON.parse(await Bun.stdin.text()) } catch {}
   // fail closed: a guard that can't tell where the run lives refuses edits and shell commands
-  const d = worktree ? guard(input, { worktree }) : ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(input.tool_name ?? '') ? { deny: true, reason: 'flow guard: FLOW_WORKTREE is not set' } : null
+  const d = worktree ? guard(input, { worktree, allow: (process.env.FLOW_ALLOW ?? '').split(':').filter(Boolean) }) : ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit'].includes(input.tool_name ?? '') ? { deny: true, reason: 'flow guard: FLOW_WORKTREE is not set' } : null
   if (d) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `flow: ${d.reason}` } }))
 }

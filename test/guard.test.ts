@@ -74,6 +74,11 @@ describe('guard: file edits stay inside the worktree', () => {
     expect(edit(`${wt}/../../other/src/a.ts`)).toMatchObject({ deny: true })
     expect(edit(`${wt}-evil/src/a.ts`)).toMatchObject({ deny: true })
   })
+  test('the run folder (plan.md, pr.md) is allowed when flow names it', () => {
+    const run = '/data/flow/runs/fso-186278'
+    expect(guard({ tool_name: 'Write', tool_input: { file_path: `${run}/plan.md` } }, { worktree: wt, allow: [run] })).toBeNull()
+    expect(guard({ tool_name: 'Write', tool_input: { file_path: `${run}-other/plan.md` } }, { worktree: wt, allow: [run] })).toMatchObject({ deny: true })
+  })
   test('scratch space is allowed: the system temp folder', () => {
     expect(edit('/tmp/flow-notes.md', 'Write')).toBeNull()
   })

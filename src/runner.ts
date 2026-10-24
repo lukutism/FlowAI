@@ -3,7 +3,7 @@ import type { AgentEvent } from './agent/stream.ts'
 import { Ingest } from './ingest.ts'
 import type { EventStore } from './store.ts'
 import { Turns } from './turns.ts'
-import type { UsageLimits } from './usage.ts'
+import type { UsageLimits, Windows } from './usage.ts'
 
 export type RunAgent = Agent & { close?: () => Promise<void> }
 
@@ -17,6 +17,9 @@ export interface RunnerOptions {
   sleep?: (ms: number) => Promise<void>
   /** sees every agent event as it arrives (live output) */
   tap?: (run: string, e: AgentEvent) => void
+  /** the plan windows as last saved, and where to save new ones */
+  windows?: Windows
+  onWindows?: (w: Windows) => void
 }
 
 /** Runs agent turns for runs: waits for room in the plan windows, records what each turn reports. */
@@ -25,7 +28,8 @@ export class Runner {
   private turns: Turns
 
   constructor(private o: RunnerOptions) {
-    this.ingest = new Ingest(o.store)
+    this.ingest = new Ingest(o.store, o.onWindows)
+    if (o.windows) this.ingest.windows = o.windows
     this.turns = new Turns({
       maxParallel: o.maxParallel, limits: o.limits, windows: () => this.ingest.windows, now: o.now, sleep: o.sleep,
       onPause: (run, g) => o.store.append(run, 'engine', { type: 'run.paused', window: g.window, until: g.until }),

@@ -15,7 +15,7 @@ const runHook = async (command: string, input: object) => {
 
 describe('the run\'s settings: flow\'s guard on every editing and shell tool', () => {
   const dir = mkdtempSync(join(tmpdir(), 'flow-settings-')), worktree = join(dir, 'wt with space')
-  const file = writeRunSettings({ dir, worktree })
+  const file = writeRunSettings({ dir, worktree, allow: [join(dir, 'run')] })
   const s = JSON.parse(readFileSync(file, 'utf8'))
   const hook = s.hooks.PreToolUse[0]
   test('one PreToolUse hook, for Bash and the editing tools only; nothing else of the user\'s setup is touched', () => {
@@ -28,6 +28,9 @@ describe('the run\'s settings: flow\'s guard on every editing and shell tool', (
   })
   test('…and lets an edit inside the worktree through (the path with a space is quoted right)', async () => {
     expect(await runHook(hook.hooks[0].command, { tool_name: 'Edit', tool_input: { file_path: join(worktree, 'src/a.ts') } })).toBeNull()
+  })
+  test('…and an edit in the run folder (plan.md)', async () => {
+    expect(await runHook(hook.hooks[0].command, { tool_name: 'Write', tool_input: { file_path: join(dir, 'run', 'plan.md') } })).toBeNull()
   })
   test('without its worktree setting the guard fails closed', async () => {
     const out = await runHook(`${process.execPath} ${join(import.meta.dir, '..', 'src', 'guard.ts')}`, { tool_name: 'Edit', tool_input: { file_path: '/tmp/x' } })

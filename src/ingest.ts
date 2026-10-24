@@ -9,7 +9,8 @@ import type { Windows } from './usage.ts'
  */
 export class Ingest {
   windows: Windows = {}
-  constructor(private store: EventStore) {}
+  /** onWindows: the plan windows changed (flow saves them, so the next command knows them too) */
+  constructor(private store: EventStore, private onWindows?: (w: Windows) => void) {}
 
   agent(run: string, e: AgentEvent) {
     switch (e.kind) {
@@ -26,6 +27,7 @@ export class Ingest {
         return
       case 'usage':
         this.windows = { ...this.windows, ...Object.fromEntries(Object.entries(e.windows).filter(([, w]) => w)) }
+        this.onWindows?.(this.windows)
         return
       case 'result': {
         const t = e.tokens.input + e.tokens.output + e.tokens.cacheRead + e.tokens.cacheWrite

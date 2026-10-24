@@ -49,4 +49,14 @@ describe('Runner.turn: one agent turn for a run, recorded', () => {
     expect(await runner.turn('r', 'x')).toMatchObject({ ok: false })
     expect(store.state('r')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/agent stopped: .*recorded turn/) } })
   })
+  test('plan windows reported by a turn are handed out for saving, and saved ones are used by the next process', async () => {
+    let saved: unknown
+    const store = new EventStore(':memory:')
+    store.append('r', 'human', { type: 'run.created', ticket: 'r', title: 't', project: 'example', base: 'b' })
+    const r1 = new Runner({ store, maxParallel: 1, limits: { fiveHour: 0.9, week: 0.95 }, agentFor: () => new FakeAgent([fixture('01-turn-tool')]), onWindows: w => { saved = w } })
+    await r1.turn('r', 'x')
+    expect(saved).toMatchObject({ week: { utilization: 0.55 } })
+    const r2 = new Runner({ store, maxParallel: 1, limits: { fiveHour: 0.9, week: 0.95 }, agentFor: () => new FakeAgent([]), windows: saved as never })
+    expect(r2.ingest.windows.week?.utilization).toBe(0.55)
+  })
 })

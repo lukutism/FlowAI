@@ -25,7 +25,7 @@ describe('a run from ticket to draft PR, with a fake agent replaying real sessio
     store.append(run, 'agent', { type: 'build.done' })
     store.append(run, 'engine', { type: 'verify.result', ok: true, newFindings: [] })
     store.append(run, 'engine', { type: 'review.result', findings: 0 })
-    store.append(run, 'engine', { type: 'pr.opened', url: 'https://example/pr/7', number: 7 })
+    store.append(run, 'human', { type: 'pr.opened', url: 'https://example/pr/7', number: 7 })
 
     expect(store.state(run)).toMatchObject({ stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review draft PR #7' }, compactions: 1, session: expect.any(String) })
     expect(store.state(run)!.tokens).toBeGreaterThan(100_000)
@@ -35,7 +35,7 @@ describe('a run from ticket to draft PR, with a fake agent replaying real sessio
       'agent:plan.submitted',
       // the second turn: the refused push, then /compact (a turn the CLI reports with zero tokens, so none recorded)
       'agent:session.started', 'agent:tool.denied', 'agent:tokens.used', 'agent:session.compacted',
-      'agent:build.done', 'engine:verify.result', 'engine:review.result', 'engine:pr.opened',
+      'agent:build.done', 'engine:verify.result', 'engine:review.result', 'human:pr.opened',
     ])
     expect(store.events(run).find(e => e.type === 'tool.denied')).toMatchObject({ tool: 'Bash', detail: 'git push origin main' })
   })

@@ -13,10 +13,18 @@ const toBuild = (): RunEvent[] => [created(), ev({ type: 'setup.done' }), ev({ t
 describe('a run from ticket to draft PR', () => {
   test('happy path: setup → plan (no questions, so no wait) → build → verify → review → draft PR → done', () => {
     let s = fold([...toBuild(), ev({ type: 'build.done' }), ev({ type: 'verify.result', ok: true, newFindings: [] }), ev({ type: 'review.result', findings: 0 })])
-    expect(s).toMatchObject({ stage: 'ship', status: 'running' })
-    s = apply(s, ev({ type: 'pr.opened', url: 'https://x/pr/1', number: 1 }))
+    expect(s).toMatchObject({ stage: 'ship', status: 'needs-you', needs: { kind: 'ship' } })
+    s = apply(s, ev({ type: 'pr.opened', actor: 'human', url: 'https://x/pr/1', number: 1 }))
     expect(s).toMatchObject({ stage: 'ship', status: 'needs-you', needs: { kind: 'pr' }, pr: { number: 1 } })
     expect(apply(s, ev({ type: 'run.done', actor: 'human' }))).toMatchObject({ stage: 'done', status: 'done' })
+  })
+})
+
+describe('without a reviewer', () => {
+  test('review skipped (with the reason): verified runs wait for the human to ship', () => {
+    let s = fold([...toBuild(), ev({ type: 'build.done' }), ev({ type: 'verify.result', ok: true, newFindings: [] })])
+    s = apply(s, ev({ type: 'review.skipped', reason: 'no reviewer configured' }))
+    expect(s).toMatchObject({ stage: 'ship', status: 'needs-you', needs: { kind: 'ship', ask: expect.stringMatching(/flow ship/) } })
   })
 })
 
