@@ -9,10 +9,10 @@ describe('parseFindings', () => {
   const f = (o: object) => ({ severity: 'P1' as const, file: 'src/a.ts', line: 3, problem: 'p', evidence: 'e', confidence: 90, ...o })
   test('the last ```json block of the answer; low-confidence findings dropped', () => {
     const text = `Looked at it.\n\n\`\`\`json\n${JSON.stringify([f({ problem: 'kept' }), f({ problem: 'dropped', confidence: 60 })])}\n\`\`\``
-    expect(parseFindings(text)).toEqual({ findings: [f({ problem: 'kept' })], dropped: 1 })
+    expect(parseFindings(text)).toEqual({ findings: [f({ problem: 'kept' })], dropped: 1, below: [f({ problem: 'dropped', confidence: 60 })], note: 'Looked at it.' })
   })
   test('an empty array: nothing found', () => {
-    expect(parseFindings('```json\n[]\n```')).toEqual({ findings: [], dropped: 0 })
+    expect(parseFindings('```json\n[]\n```')).toEqual({ findings: [], dropped: 0, below: [], note: '' })
   })
   test('a bare array without a fence is read too', () => {
     expect(parseFindings(JSON.stringify([f({})])).findings).toHaveLength(1)

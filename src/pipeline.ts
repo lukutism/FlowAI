@@ -265,7 +265,7 @@ export class Pipeline {
         try { parsed = parseFindings(r.text) } catch (e) { return skip(`review unreadable: ${(e as Error).message} (first answer: ${(first as Error).message})`) }
       }
       const n = this.state(run).loops.review + 1
-      writeFileSync(join(this.runDir(run), 'review.json'), JSON.stringify({ review: n, at: this.now(), findings: parsed.findings, dropped: parsed.dropped }, null, 2) + '\n')
+      writeFileSync(join(this.runDir(run), 'review.json'), JSON.stringify({ review: n, at: this.now(), findings: parsed.findings, dropped: parsed.dropped, below: parsed.below, note: parsed.note }, null, 2) + '\n')
       this.d.store.append(run, 'engine', { type: 'review.result', findings: parsed.findings.length })
       return parsed.findings.length ? parsed.findings : null
     } finally { await reviewer.close?.() }

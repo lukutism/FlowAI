@@ -185,7 +185,7 @@ describe('the independent review before ship', () => {
     expect(t.reviewer.prompts[0]).toContain('+export const b = 2')
     expect(t.reviewer.prompts[0]).toContain('Guard the walk against missing assets.')
     expect(t.reviewers[0]).toMatchObject({ cwd: t.wt })
-    expect(JSON.parse(readFileSync(join(t.runDir, 'review.json'), 'utf8'))).toMatchObject({ review: 1, findings: [] })
+    expect(JSON.parse(readFileSync(join(t.runDir, 'review.json'), 'utf8'))).toMatchObject({ review: 1, findings: [], below: [], note: 'Checked.' })
   })
   test('a finding goes to the agent; after its fix, verify and review run again, then ready to ship', async () => {
     const t = setup(d => [

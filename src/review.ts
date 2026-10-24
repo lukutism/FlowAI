@@ -19,9 +19,11 @@ const finding = z.object({
 })
 export type Finding = z.infer<typeof finding>
 
-export function parseFindings(text: string): { findings: Finding[]; dropped: number } {
-  const blocks = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)].map(m => m[1]!)
-  const raw = blocks.at(-1) ?? (text.trim().startsWith('[') ? text.trim() : undefined)
+/** findings kept (≥ 80%), the ones below the line (kept for the human to see), and the reviewer's note */
+export function parseFindings(text: string): { findings: Finding[]; dropped: number; below: Finding[]; note: string } {
+  const blocks = [...text.matchAll(/```(?:json)?\s*\n([\s\S]*?)```/g)]
+  const last = blocks.at(-1)
+  const raw = last?.[1] ?? (text.trim().startsWith('[') ? text.trim() : undefined)
   if (raw === undefined) throw new Error('the reviewer gave no JSON array of findings')
   let arr: unknown
   try { arr = JSON.parse(raw) } catch { throw new Error('the reviewer gave no JSON array of findings (it did not parse)') }
@@ -31,8 +33,9 @@ export function parseFindings(text: string): { findings: Finding[]; dropped: num
     if (!r.success) throw new Error(`finding ${i + 1} is incomplete: ${r.error.issues.map(e => e.path.join('.') || 'item').join(', ')}`)
     return r.data
   })
-  const findings = all.filter(f => f.confidence >= MIN_CONFIDENCE)
-  return { findings, dropped: all.length - findings.length }
+  const findings = all.filter(f => f.confidence >= MIN_CONFIDENCE), below = all.filter(f => f.confidence < MIN_CONFIDENCE)
+  // the reviewer's note: what it wrote before the findings block
+  return { findings, dropped: below.length, below, note: last ? text.slice(0, last.index).trim() : '' }
 }
 
 const MAX = 60_000

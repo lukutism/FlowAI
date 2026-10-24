@@ -220,13 +220,14 @@ function DetailView({ run, detail, now }: { run: RunState; detail: Detail | null
 
 function ReviewView({ json }: { json: string }) {
   if (!json.trim()) return null
-  let r: { review: number; findings: { severity: string; file: string; line?: number; problem: string }[]; dropped: number }
+  let r: { review: number; findings: { severity: string; file: string; line?: number; problem: string }[]; dropped: number; below?: { severity: string; file: string; line?: number; problem: string; confidence: number }[] }
   try { r = JSON.parse(json) } catch { return null }
   return (
     <>
       <text> </text>
       <text><strong>Review {r.review}</strong><span fg={r.findings.length ? C.warning : C.success}> {r.findings.length ? `${r.findings.length} finding(s)` : 'nothing found'}</span>{r.dropped ? <span fg={C.muted}> · {r.dropped} below 80% confidence left out</span> : null}</text>
       {r.findings.slice(0, 6).map((f, i) => <text key={i} fg={C.secondary}>{`  R${i + 1} [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''}  ${f.problem}`.slice(0, 120)}</text>)}
+      {(r.below ?? []).slice(0, 4).map((f, i) => <text key={`b${i}`} fg={C.muted}>{`  ${f.confidence}%  [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''}  ${f.problem}`.slice(0, 120)}</text>)}
     </>
   )
 }

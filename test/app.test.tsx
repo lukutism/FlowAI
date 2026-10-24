@@ -25,7 +25,7 @@ function api(list = runs) {
     send: async c => { sent.push(c); return { ok: true, run: 'run' in c ? c.run : 'x' } },
     events: async run => [{ seq: 1, at: NOW - 14 * 60_000, run, actor: 'human', type: 'run.created', ticket: '#105', title: 't', project: 'fso', base: 'b' }, { seq: 2, at: NOW - 13 * 60_000, run, actor: 'agent', type: 'plan.submitted', summary: 's', questions: [] }] as RunEvent[],
     file: async (_run, name) => (name === 'plan.md' ? '# Plan\n\nGuard the walk against missing assets.\n'
-      : name === 'review.json' ? JSON.stringify({ review: 2, findings: [{ severity: 'P1', file: 'src/b.ts', line: 4, problem: 'the order list still shows 8' }], dropped: 1 }) : ''),
+      : name === 'review.json' ? JSON.stringify({ review: 2, findings: [{ severity: 'P1', file: 'src/b.ts', line: 4, problem: 'the order list still shows 8' }], dropped: 1, below: [{ severity: 'P2', file: 'src/c.ts', problem: 'maybe a rounding edge', confidence: 55 }] }) : ''),
   }
   return { a, sent, push: (m: { type: string; notice?: { run: string; text: string } }) => listeners.forEach(f => f(m)) }
 }
@@ -154,6 +154,7 @@ describe('Run detail', () => {
       expect(f).toMatch(/agent +plan\.submitted/)
       expect(f).toContain('Review 2 1 finding(s) · 1 below 80% confidence left out')
       expect(f).toContain('R1 [P1] src/b.ts:4  the order list still shows 8')
+      expect(f).toContain('55%  [P2] src/c.ts  maybe a rounding edge')
       expect(await t.press('esc')).toContain('Needs attention')
     } finally { t.s.renderer.destroy() }
   })
