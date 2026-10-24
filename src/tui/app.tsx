@@ -78,10 +78,10 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (name === 'backspace') return setMode({ kind: 'new', text: mode.text.slice(0, -1) })
       if (name === 'return') {
         const [project, ticket, ...rest] = mode.text.trim().split(/\s+/)
-        if (!project || !ticket || !/^\d+$/.test(ticket)) return setNotice('type: <project> <ticket number> [base] [repos=a,b]')
+        if (!project || !ticket) return setNotice('type: <project> <ticket> [base] [repos=a,b]')
         const repos = rest.find(x => x.startsWith('repos='))?.slice(6).split(',').filter(Boolean)
         const base = rest.find(x => !x.includes('='))
-        return void send({ cmd: 'start', project, ticket: Number(ticket), ...(base ? { base } : {}), ...(repos?.length ? { repos } : {}) }, `starting ${project}-${ticket}`)
+        return void send({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), ...(repos?.length ? { repos } : {}) }, `starting ${project}-${ticket}`)
       }
       if (typed) setMode({ kind: 'new', text: mode.text + typed })
       return
@@ -250,7 +250,7 @@ function Bar({ mode, run, notice }: { mode: Mode; run?: RunState; notice: string
   if (mode.kind === 'new') return (
     <box flexDirection="column">
       {notice ? <text fg={C.accent}>{notice}</text> : null}
-      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   &lt;project&gt; &lt;ticket number&gt; [base] [repos=a,b] · ↵ start · esc cancel</span></text>
+      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   &lt;project&gt; &lt;ticket&gt; [base] [repos=a,b] · ↵ start · esc cancel</span></text>
     </box>
   )
   if (mode.kind === 'message' && run) return <text><span fg={C.accent}>Message {run.ticket} </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ send · esc cancel</span></text>

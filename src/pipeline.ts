@@ -1,7 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
-import { azureDraftPr, azureTicket, type Az } from './azure.ts'
+import type { Az } from './azure.ts'
+import { forgeFor, type Forge, type Gh } from './forge.ts'
+import type { JiraDeps } from './jira.ts'
+import { trackerFor, type Tracker } from './tracker.ts'
 import type { Project, Repo } from './config.ts'
 import { createWorktree, shipChange } from './git.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
@@ -18,7 +21,7 @@ import { changedFiles, verify } from './verify.ts'
 interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
-interface Meta extends Brief { id: number; kind: 'bug' | 'feature'; repos: RunRepo[] }
+interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[] }
 
 export interface PipelineDeps {
   store: EventStore
@@ -35,6 +38,11 @@ export interface PipelineDeps {
   tap?: (run: string, e: AgentEvent) => void
   /** the plan windows changed (after they are saved) */
   onWindows?: (w: Windows) => void
+  /** where tickets come from and PRs go; by default from the project (az, gh, the Jira token in the keychain) */
+  tracker?: Tracker
+  forge?: Forge
+  gh?: Gh
+  jira?: JiraDeps
 }
 
 /**
@@ -45,8 +53,12 @@ export interface PipelineDeps {
 export class Pipeline {
   readonly runner: Runner
   private agents = new Map<string, RunAgent>()
+  private tracker: Tracker
+  private forge: Forge
 
   constructor(private d: PipelineDeps) {
+    this.tracker = d.tracker ?? trackerFor(d.project, { az: d.az, ...d.jira })
+    this.forge = d.forge ?? forgeFor(d.project, { az: d.az, gh: d.gh })
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
       store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap,
@@ -74,19 +86,28 @@ export class Pipeline {
   private static layout(root: string, repos: RunRepo[]) { return repos.length === 1 ? repos[0]!.worktree : root }
 
   /** kind: overrides the work item type (a Task may be a fix); repos: else the project's defaults; base: the first repo's */
-  async start(id: number, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[] } = {}): Promise<string> {
+  /** the run a ticket gets ("fso-204598", "spk-SGL-692"); throws for something that isn't one of the project's tickets */
+  runId(ticket: number | string): string {
+    const parsed = this.tracker.parseKey(String(ticket))
     const p = this.d.project
-    if (p.tracker.kind !== 'azure') throw new Error(`${p.tracker.kind} tickets are not supported yet`)
-    const run = `${p.key}-${id}`
+    if (!parsed) throw new Error(`${ticket} is not a ticket of project ${p.key} (${p.tracker.kind === 'jira' ? `${p.tracker.key}-<number>` : 'a work item number'})`)
+    return `${p.key}-${parsed.id}`
+  }
+
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[] } = {}): Promise<string> {
+    const p = this.d.project
+    const run = this.runId(ticket)
+    const id = this.tracker.parseKey(String(ticket))!.id
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already: flow status ${run}`)
     const keys = o.repos?.length ? o.repos : p.repos.some(r => r.default) ? p.repos.filter(r => r.default).map(r => r.key) : [p.repos[0]!.key]
     const unknown = keys.filter(k => !p.repos.some(r => r.key === k))
     if (unknown.length) throw new Error(`no repo ${unknown.join(', ')} in project ${p.key} (it has ${p.repos.map(r => r.key).join(', ')})`)
-    const t = azureTicket(this.d.az, p.tracker, id)
+    const t = await this.tracker.read(id)
     const kind = o.kind ?? t.kind
     const root = join(p.worktrees, String(id))
     const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch: `${kind === 'bug' ? 'fix' : 'feat'}/${id}`, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos) }
+    const branch = p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
@@ -147,19 +168,20 @@ export class Pipeline {
   async ship(run: string): Promise<{ number: number; url: string }[]> {
     const s = this.must(run)
     if (s.needs?.kind !== 'ship') throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
-    const m = this.meta(run), p = this.d.project
-    if (p.forge.kind !== 'azure') throw new Error(`${p.forge.kind} pull requests are not supported yet`)
+    const m = this.meta(run), n = this.d.project.naming
     const changed = m.repos.map(r => ({ r, files: changedFiles(r.worktree) })).filter(x => x.files.length)
     if (!changed.length) throw new Error(`${run}: nothing to ship, no repo has changes`)
     const pr = existsSync(this.prFile(run)) ? readFileSync(this.prFile(run), 'utf8') : ''
     const summary = prSummary(pr, m.title)
-    const body = pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`
+    const body = n.prBody === 'ticket-link' ? m.url : pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`
+    const title = n.prTitle === 'key' ? m.key : `${m.key} ${summary}`
+    const message = (files: string[], repo: string) => (n.commit === 'key-summary' ? `${m.key} ${summary}`.slice(0, 100) : commitMessage({ id: m.id, title: m.title, kind: m.kind }, files, repo))
     const created: { number: number; url: string }[] = []
     for (const { r, files } of changed) {
-      await shipChange({ worktree: r.worktree, branch: m.branch, message: commitMessage({ id: m.id, title: m.title, kind: m.kind }, files, r.key), env: this.d.gitEnv })
+      await shipChange({ worktree: r.worktree, branch: m.branch, message: message(files, r.key), env: this.d.gitEnv })
       const origin = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], { cwd: r.worktree })
-      const repository = new TextDecoder().decode(origin.stdout).trim().replace(/\.git$/, '').split('/').pop()!
-      const c = azureDraftPr(this.d.az, p.forge, repository, { head: m.branch, base: r.base.replace(/^origin\//, ''), title: `${m.key} ${summary}`, body, workItem: m.id })
+      const repository = new TextDecoder().decode(origin.stdout).trim().replace(/\.git$/, '').split(/[/:]/).pop()!
+      const c = this.forge.draftPr({ repository, head: m.branch, base: r.base.replace(/^origin\//, ''), title, body, ...(typeof m.id === 'number' ? { workItem: m.id } : {}) })
       this.d.store.append(run, 'human', { type: 'pr.opened', url: c.url, number: c.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) })
       created.push(c)
     }

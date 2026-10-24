@@ -113,10 +113,11 @@ async function withRun(run: string, model: string | undefined, act: (p: Pipeline
 
 /** with the service running: send the command there and follow the run until it needs you */
 async function viaService(c: FlowClient, cmd: Command): Promise<void> {
-  let run = 'run' in cmd ? cmd.run : `${cmd.project}-${cmd.ticket}`
+  let run = 'run' in cmd ? cmd.run : ''
   const settled = new Promise<void>(done => {
     c.listen(m => {
-      if (m.type === 'event' && m.event.run === run) {
+      if (m.type === 'event' && (m.event.run === run || (!run && m.event.type === 'run.created'))) {
+        run ||= m.event.run
         showEvent(m.event)
         if (['needs-you', 'blocked', 'failed', 'done', 'paused'].includes(m.state.status) && m.event.type !== 'human.message') done()
       }
@@ -166,14 +167,15 @@ async function main(argv: string[]) {
     case 'serve': return serveCmd()
     case 'start': {
       const [project, ticket] = args
-      if (!project || !ticket || !/^\d+$/.test(ticket)) throw new Error('flow start <project> <ticket number> [--base <ref>] [--kind bug|feature] [--model <name>]')
+      if (!project || !ticket) throw new Error('flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--model <name>]')
+      const tk = /^\d+$/.test(ticket) ? Number(ticket) : ticket
       if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
-      if (service) return viaService(service, { cmd: 'start', project, ticket: Number(ticket), base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos }).finally(() => service.close())
+      if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos }).finally(() => service.close())
       const s = store()
-      const run = `${project}-${ticket}`
-      const release = lock(run)
       const p = pipeline(s, project, f.model)
-      try { await p.start(Number(ticket), { base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos }) } finally { await p.close(); release() }
+      const run = p.runId(tk)
+      const release = lock(run)
+      try { await p.start(tk, { base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos }) } finally { await p.close(); release() }
       console.log(`\n${next(s.state(run)!)}\n${windowsLine(p.runner.ingest.windows)}`)
       return
     }

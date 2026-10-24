@@ -105,10 +105,17 @@ describe('Runs screen', () => {
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.18.41', repos: ['mobile', 'portal'] }])
     } finally { t.s.renderer.destroy() }
   })
+  test('n takes a Jira key as the ticket too', async () => {
+    const t = await screen()
+    try {
+      await t.press('n', ...'spk SGL-692'.split(''), 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'spk', ticket: 'SGL-692' }])
+    } finally { t.s.renderer.destroy() }
+  })
   test('n with a malformed entry says what it needs and sends nothing', async () => {
     const t = await screen()
     try {
-      expect(await t.press('n', ...'fso abc'.split(''), 'enter')).toContain('type: <project> <ticket number> [base] [repos=a,b]')
+      expect(await t.press('n', ...'fso'.split(''), 'enter')).toContain('type: <project> <ticket> [base] [repos=a,b]')
       expect(t.f.sent).toEqual([])
     } finally { t.s.renderer.destroy() }
   })

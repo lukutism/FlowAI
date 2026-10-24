@@ -8,8 +8,10 @@ import { z } from 'zod'
 const path = z.string().transform(p => (p === '~' || p.startsWith('~/') ? join(homedir(), p.slice(2)) : p))
 
 const azure = z.object({ kind: z.literal('azure'), org: z.string().url(), project: z.string() })
-const jira = z.object({ kind: z.literal('jira'), site: z.string().url(), key: z.string() })
-const github = z.object({ kind: z.literal('github'), repo: z.string().regex(/^[^/]+\/[^/]+$/) })
+/** keychain: the macOS keychain item holding the API token (never in a file) */
+const jira = z.object({ kind: z.literal('jira'), site: z.string().url(), key: z.string(), email: z.string(), keychain: z.string().default('flow-jira') })
+/** owner: the organisation or user; each repo's name comes from its origin URL */
+const github = z.object({ kind: z.literal('github'), owner: z.string() })
 
 const verifyStep = z.object({
   name: z.string(),
@@ -38,7 +40,7 @@ const repo = z.object({
 const project = z.object({
   key: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string(),
-  tracker: z.discriminatedUnion('kind', [azure, jira, github]),
+  tracker: z.discriminatedUnion('kind', [azure, jira]),
   forge: z.discriminatedUnion('kind', [azure, github]),
   worktrees: path,
   repos: z.array(repo).min(1),
@@ -46,6 +48,13 @@ const project = z.object({
   /** start agent turns only while the plan windows are under these shares */
   usage: z.object({ fiveHour: z.number().min(0).max(1).default(0.9), week: z.number().min(0).max(1).default(0.95) }).default({}),
   plan: z.object({ deadlineMinutes: z.number().int().positive().default(30) }).default({}),
+  /** naming: branch ({type} fix|feat, {id}, {key}); commit (conventional, or "<key> <summary>"); PR title and body */
+  naming: z.object({
+    branch: z.string().default('{type}/{id}'),
+    commit: z.enum(['conventional', 'key-summary']).default('conventional'),
+    prTitle: z.enum(['key-summary', 'key']).default('key-summary'),
+    prBody: z.enum(['full', 'ticket-link']).default('full'),
+  }).default({}),
   /** Claude Code's OS sandbox for the agents' shell commands (its settings block); flow adds the run's folders */
   sandbox: z.record(z.unknown()).optional(),
   /** an independent reviewer (a fresh, read-only claude session) before ship */

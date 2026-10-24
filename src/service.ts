@@ -9,7 +9,7 @@ import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 
 export type Command =
-  | { cmd: 'start'; project: string; ticket: number; base?: string; kind?: 'bug' | 'feature'; repos?: string[] }
+  | { cmd: 'start'; project: string; ticket: number | string; base?: string; kind?: 'bug' | 'feature'; repos?: string[] }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
@@ -68,12 +68,14 @@ export class Service {
   dispatch(c: Command): Reply {
     try {
       if (c.cmd === 'start') {
-        const run = `${c.project}-${c.ticket}`
         const p = this.pipeline(c.project)
+        const run = p.runId(c.ticket)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos }) })
         return { ok: true, run }
       }
+      // a run just started may not be recorded yet (its ticket is still being read): it is busy, not missing
+      if (this.busy.has(c.run)) throw new Error(`${c.run} is busy: wait for its current step to end`)
       const s = this.d.store.state(c.run)
       if (!s) throw new Error(`no run ${c.run}`)
       const p = this.pipeline(s.project)
