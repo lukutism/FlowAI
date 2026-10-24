@@ -4,11 +4,12 @@ import type { AgentEvent } from './agent/stream.ts'
 import { azureDraftPr, azureTicket, type Az } from './azure.ts'
 import type { Project } from './config.ts'
 import { createWorktree, shipChange } from './git.ts'
-import { commitMessage, parsePlan } from './plan.ts'
+import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
 import { Runner, type RunAgent } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import type { EventStore } from './store.ts'
+import type { Windows } from './usage.ts'
 import { changedFiles, verify } from './verify.ts'
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
@@ -25,6 +26,8 @@ export interface PipelineDeps {
   now?: () => number
   /** sees each agent event as it arrives (live output) */
   tap?: (run: string, e: AgentEvent) => void
+  /** the plan windows changed (after they are saved) */
+  onWindows?: (w: Windows) => void
 }
 
 /**
@@ -41,7 +44,7 @@ export class Pipeline {
     this.runner = new Runner({
       store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap,
       windows: existsSync(usage) ? JSON.parse(readFileSync(usage, 'utf8')) : undefined,
-      onWindows: w => { mkdirSync(d.dataDir, { recursive: true }); writeFileSync(usage, JSON.stringify(w) + '\n') },
+      onWindows: w => { mkdirSync(d.dataDir, { recursive: true }); writeFileSync(usage, JSON.stringify(w) + '\n'); d.onWindows?.(w) },
     })
   }
 
@@ -90,6 +93,15 @@ export class Pipeline {
     await this.buildStep(run)
   }
 
+  /** the plan's deadline passed with no answer: the engine takes the defaults (never for a held question) */
+  async decideByDeadline(run: string) {
+    const s = this.state(run)
+    if (s.needs?.kind !== 'plan' || !s.plan) throw new Error(`${run}: no plan is waiting for a decision`)
+    if (s.needs.held) throw new Error(`${run}: the plan has a held question; only you can answer it`)
+    this.d.store.append(run, 'engine', { type: 'plan.decided', by: 'deadline', answers: Object.fromEntries(s.plan.questions.map(q => [q.id, q.default])) })
+    await this.buildStep(run)
+  }
+
   /** a message from the human: goes to the run's session; afterwards the run carries on from where it is */
   async message(run: string, text: string) {
     this.d.store.append(run, 'human', { type: 'human.message', text })
@@ -105,7 +117,7 @@ export class Pipeline {
     if (s.needs?.kind !== 'ship') throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
     const m = this.meta(run), p = this.d.project
     const pr = existsSync(this.prFile(run)) ? readFileSync(this.prFile(run), 'utf8') : ''
-    const summary = /^#\s+(.+)$/m.exec(pr)?.[1]?.trim() ?? m.title
+    const summary = prSummary(pr, m.title)
     const body = pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`
     const message = commitMessage({ id: m.id, title: m.title, kind: m.kind }, changedFiles(m.worktree), m.repo)
     await shipChange({ worktree: m.worktree, branch: m.branch, message, env: this.d.gitEnv })

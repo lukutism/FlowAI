@@ -94,6 +94,22 @@ describe('a ticket to a draft PR', () => {
     expect(t.store.state(run)!.plan!.answers).toEqual({ Q1: 'yes', Q2: 'yes' })
     expect(t.agent.prompts[1]).toContain('Q2 Log the skipped asset? → yes')
   })
+  test('at the deadline: the defaults are taken by the engine (recorded as such) and the build goes on', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Guard the order list? — default: no'))),
+      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+    ])
+    const run = await t.pipe.start(186278)
+    await t.pipe.decideByDeadline(run)
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', plan: { decidedBy: 'deadline', answers: { Q1: 'no' } } })
+    expect(t.store.events(run).find(e => e.type === 'plan.decided')).toMatchObject({ actor: 'engine', by: 'deadline' })
+  })
+  test('a held plan is never decided by the deadline', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1 (held): Change the behaviour? — default: no')))])
+    const run = await t.pipe.start(186278)
+    await expect(t.pipe.decideByDeadline(run)).rejects.toThrow(/held/)
+    expect(t.store.state(run)).toMatchObject({ stage: 'plan', status: 'needs-you' })
+  })
   test('an answer to a question the plan does not have is refused', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
     const run = await t.pipe.start(186278)

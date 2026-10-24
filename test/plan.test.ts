@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { commitMessage, parsePlan } from '../src/plan.ts'
+import { commitMessage, parsePlan, prSummary } from '../src/plan.ts'
 
 // The agent writes plan.md in the run folder; flow reads the summary and the open questions out of it.
 const plan = (questions: string) => `# Plan
@@ -49,5 +49,16 @@ describe('commitMessage: conventional, with the ticket, within commitlint\'s 100
     const m = commitMessage({ id: 3, title: 'word '.repeat(40), kind: 'bug' }, [], 'mobile')
     expect(m.length).toBeLessThanOrEqual(100)
     expect(m).toEndWith('word…')
+  })
+})
+
+describe('prSummary: the PR title\'s text from pr.md', () => {
+  test('the first heading, without a conventional-commit prefix the agent may have put there', () => {
+    expect(prSummary('# fix(product): show remaining reservation quantity\n\nbody', 'fallback')).toBe('show remaining reservation quantity')
+    expect(prSummary('# feat!: new export\n', 'x')).toBe('new export')
+    expect(prSummary('# Show the remaining quantity\n', 'x')).toBe('Show the remaining quantity')
+  })
+  test('no heading: the fallback (the ticket title)', () => {
+    expect(prSummary('just text', 'Ticket title')).toBe('Ticket title')
   })
 })

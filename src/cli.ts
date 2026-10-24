@@ -53,7 +53,8 @@ function next(s: RunState): string {
   if (!n) return s.status === 'done' ? 'done' : `${s.stage} · ${s.status}`
   if (n.kind === 'plan') {
     const qs = s.plan?.questions.map(q => `  ${q.id}${q.held ? ' (held)' : ''} ${q.text} — default: ${q.default}`).join('\n') ?? ''
-    const when = n.held ? 'held for you: no deadline' : n.deadline ? `defaults apply at ${hhmm(n.deadline)} if unanswered` : ''
+    // the deadline is applied by the background service (flow serve); without it flow waits for you
+    const when = n.held ? 'held for you: no deadline' : n.deadline ? `defaults at ${hhmm(n.deadline)} if flow serve is running; otherwise it waits for you` : ''
     return `plan needs you (${when})\n${qs}\n  → flow approve ${s.id} ${s.plan?.questions.map(q => `${q.id}=…`).join(' ')}`
   }
   if (n.kind === 'ship') return `verified → flow ship ${s.id}`

@@ -32,3 +32,9 @@ export function commitMessage(ticket: { id: number | string; title: string; kind
   if (head.length + subject.length > HEADER_MAX) subject = subject.slice(0, HEADER_MAX - head.length - 1).replace(/\s+\S*$/, '').replace(/[.,;:\s]+$/, '') + '…'
   return head + subject
 }
+
+/** the PR title's text: pr.md's first heading, without a conventional-commit prefix (the ticket key goes in front) */
+export function prSummary(pr: string, fallback: string): string {
+  const h = /^#\s+(.+)$/m.exec(pr)?.[1]?.trim()
+  return h ? h.replace(/^[a-z]+(\([^)]*\))?!?:\s*/i, '') : fallback
+}
