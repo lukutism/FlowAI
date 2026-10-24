@@ -10,11 +10,13 @@ import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 
 export type Command =
-  | { cmd: 'start'; project: string; ticket: number | string; base?: string; kind?: 'bug' | 'feature'; repos?: string[] }
+  | { cmd: 'start'; project: string; ticket: number | string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios' }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
   | { cmd: 'port'; run: string; to?: string }
+  /** stop the run's device and free its slot (ship does it too) */
+  | { cmd: 'release'; run: string }
 
 export type Reply = { ok: true; run: string } | { ok: false; error: string }
 export interface Notice { run: string; text: string }
@@ -83,7 +85,8 @@ export class Service {
         const p = this.pipeline(c.project)
         const run = p.runId(c.ticket)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
-        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos }) })
+        if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
+        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device }) })
         return { ok: true, run }
       }
       // a run just started may not be recorded yet (its ticket is still being read): it is busy, not missing
@@ -98,7 +101,7 @@ export class Service {
         this.act(run, async () => { await p.port(c.run, to) })
         return { ok: true, run }
       }
-      this.act(c.run, () => (c.cmd === 'approve' ? p.approve(c.run, c.answers ?? {}) : c.cmd === 'message' ? p.message(c.run, c.text) : p.ship(c.run).then(() => {})))
+      this.act(c.run, () => (c.cmd === 'approve' ? p.approve(c.run, c.answers ?? {}) : c.cmd === 'message' ? p.message(c.run, c.text) : c.cmd === 'release' ? p.releaseDevice(c.run) : p.ship(c.run).then(() => {})))
       return { ok: true, run: c.run }
     } catch (e) { return { ok: false, error: (e as Error).message } }
   }

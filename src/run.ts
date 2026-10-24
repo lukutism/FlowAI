@@ -33,6 +33,9 @@ export type EventBody =
   | { type: 'tokens.used'; tokens: number }
   /** the guard (PreToolUse hook) refused a tool call; kept for the ledger, the run goes on */
   | { type: 'tool.denied'; tool: string; detail: string }
+  /** the run's own device is booted, its app installed, its Metro answering */
+  | { type: 'device.ready'; platform: 'android' | 'ios'; id: string; metroPort: number }
+  | { type: 'device.released' }
 
 export type RunEvent = EventBody & { seq: number; at: number; run: string; actor: Actor }
 export type EventType = EventBody["type"]
@@ -50,6 +53,7 @@ export interface RunState {
   /** one draft PR per repo the run changed */
   prs?: { url: string; number: number; repo?: string }[]
   waitingFor?: string; pausedUntil?: number
+  device?: { platform: 'android' | 'ios'; id: string; metroPort: number }
   createdAt: number; updatedAt: number
 }
 
@@ -66,7 +70,7 @@ const need = (s: RunState, stage: Stage, e: RunEvent) => {
 }
 const go = (s: RunState, e: RunEvent, patch: Partial<RunState>): RunState => {
   const out: RunState = { ...s, ...patch, updatedAt: e.at }
-  for (const k of ['needs', 'waitingFor', 'pausedUntil'] as const) if (k in patch && patch[k] === undefined) delete out[k]
+  for (const k of ['needs', 'waitingFor', 'pausedUntil', 'device'] as const) if (k in patch && patch[k] === undefined) delete out[k]
   return out
 }
 
@@ -131,6 +135,8 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'session.compacted': return go(s, e, { compactions: s.compactions + 1 })
     case 'tokens.used': return go(s, e, { tokens: s.tokens + e.tokens })
     case 'tool.denied': return go(s, e, {})
+    case 'device.ready': need(s, 'setup', e); return go(s, e, { device: { platform: e.platform, id: e.id, metroPort: e.metroPort } })
+    case 'device.released': return go(s, e, { device: undefined })
   }
 }
 

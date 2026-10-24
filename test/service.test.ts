@@ -81,6 +81,15 @@ describe('Service: the background process that drives runs', () => {
     t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 }); await t.svc.idle()
     expect(t.store.events('ex-1').find(e => e.type === 'run.waiting')).toMatchObject({ resource: 'a build slot' })
   })
+  test('a device the project has no commands for is refused at once; release of a run without a device does nothing', async () => {
+    const t = setup(d => [turn(planWith(d.data, '- Q1: x? — default: y'))])
+    expect(t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1, device: 'ios' })).toMatchObject({ ok: false, error: expect.stringMatching(/no devices configured for ios/) })
+    t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 }); await t.svc.idle()
+    expect(t.svc.dispatch({ cmd: 'release', run: 'ex-1' })).toEqual({ ok: true, run: 'ex-1' })
+    await t.svc.idle()
+    expect(t.notices).toEqual([])
+    expect(t.store.events('ex-1').some(e => e.type === 'device.released')).toBe(false)
+  })
   test('commands for a run that doesn\'t exist, or an unknown project, are refused at once', () => {
     const t = setup(() => [])
     expect(t.svc.dispatch({ cmd: 'approve', run: 'ex-9' })).toMatchObject({ ok: false, error: expect.stringMatching(/no run ex-9/) })

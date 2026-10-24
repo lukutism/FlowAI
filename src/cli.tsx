@@ -4,11 +4,12 @@
  *
  *   flow                                                            the screen (starts the background service if needed)
  *   flow serve                                                      the background service: runs, deadlines, the screen's data
- *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--model <name>]   worktrees, plan; continues until it needs you
+ *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--model <name>]   worktrees, plan; continues until it needs you
  *   flow approve <run> [Q1=<answer> …]                             answer the plan's questions (defaults for the rest)
  *   flow message <run> "<text>"                                     to the run's agent; the run carries on afterwards
  *   flow port <run> [--to <branch>]                               the shipped fix onto another line (default develop)
- *   flow ship <run>                                                 commit, push, draft PR (after verify)
+ *   flow ship <run>                                                 commit, push, draft PR (after verify); stops the run's device
+ *   flow release <run>                                              stop the run's device now and free its slot
  *   flow status [<run>]                                             runs and what they need; your plan windows
  *   flow log <run>                                                  the run's events
  *   flow try [--cwd <dir>] [--model <name>] "<message>" …          real turns in a folder, to check the connection
@@ -159,23 +160,25 @@ async function uiCmd() {
 
 async function main(argv: string[]) {
   const [cmd, ...args] = argv
-  const f = flags(args, ['base', 'model', 'cwd', 'kind', 'to', 'repos'])
+  const f = flags(args, ['base', 'model', 'cwd', 'kind', 'to', 'repos', 'device'])
   const repos = f.repos ? f.repos.split(',').map(x => x.trim()).filter(Boolean) : undefined
-  const service = ['start', 'approve', 'message', 'ship', 'port'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
+  const service = ['start', 'approve', 'message', 'ship', 'port', 'release'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
   switch (cmd) {
     case undefined: case 'ui': return uiCmd()
     case 'serve': return serveCmd()
     case 'start': {
       const [project, ticket] = args
-      if (!project || !ticket) throw new Error('flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--model <name>]')
+      if (!project || !ticket) throw new Error('flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--model <name>]')
       const tk = /^\d+$/.test(ticket) ? Number(ticket) : ticket
       if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
-      if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos }).finally(() => service.close())
+      if (f.device && f.device !== 'android' && f.device !== 'ios') throw new Error('--device is android or ios')
+      const device = f.device as 'android' | 'ios' | undefined
+      if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device }).finally(() => service.close())
       const s = store()
       const p = pipeline(s, project, f.model)
       const run = p.runId(tk)
       const release = lock(run)
-      try { await p.start(tk, { base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos }) } finally { await p.close(); release() }
+      try { await p.start(tk, { base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device }) } finally { await p.close(); release() }
       console.log(`\n${next(s.state(run)!)}\n${windowsLine(p.runner.ingest.windows)}`)
       return
     }
@@ -197,6 +200,12 @@ async function main(argv: string[]) {
       if (!run) throw new Error('flow ship <run>')
       if (service) return viaService(service, { cmd: 'ship', run }).finally(() => service.close())
       return withRun(run, f.model, async p => { for (const pr of await p.ship(run)) console.log(`draft PR #${pr.number}: ${pr.url}`) })
+    }
+    case 'release': {
+      const [run] = args
+      if (!run) throw new Error('flow release <run>')
+      if (service) return viaService(service, { cmd: 'release', run }).finally(() => service.close())
+      return withRun(run, f.model, p => p.releaseDevice(run))
     }
     case 'port': {
       const [run] = args

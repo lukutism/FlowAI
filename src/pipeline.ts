@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
@@ -6,6 +6,7 @@ import { forgeFor, type Forge, type Gh } from './forge.ts'
 import type { JiraDeps } from './jira.ts'
 import { trackerFor, type Tracker } from './tracker.ts'
 import type { Project, Repo } from './config.ts'
+import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { createWorktree, shipChange } from './git.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
@@ -22,7 +23,7 @@ import { changedFiles, verify } from './verify.ts'
 interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
-interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[] }
+interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios' }
 
 export interface PipelineDeps {
   store: EventStore
@@ -46,6 +47,8 @@ export interface PipelineDeps {
   jira?: JiraDeps
   /** machine-wide slots shared with other runs (the service's): agent turns, builds */
   resources?: Resources
+  /** how long a run's device may take to boot (default 3 minutes) */
+  deviceReadyTimeoutMs?: number
 }
 
 /**
@@ -56,6 +59,8 @@ export interface PipelineDeps {
 export class Pipeline {
   readonly runner: Runner
   private agents = new Map<string, RunAgent>()
+  /** the device slot each run with a device holds */
+  private deviceSlots = new Map<string, () => void>()
   private tracker: Tracker
   private forge: Forge
 
@@ -89,7 +94,8 @@ export class Pipeline {
   private meta(run: string): Meta {
     const m = JSON.parse(readFileSync(join(this.runDir(run), 'run.json'), 'utf8')) as Meta & { repo?: string }
     if (!m.repos) m.repos = [{ key: m.repo!, worktree: m.worktree, base: m.base }]
-    return m
+    const device = this.d.store.state(run)?.device
+    return device ? { ...m, device } : m
   }
 
   /** the agent's folder: the worktree with one repo, the run's root with several */
@@ -104,9 +110,10 @@ export class Pipeline {
     return `${p.key}-${parsed.id}`
   }
 
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[] } = {}): Promise<string> {
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios' } = {}): Promise<string> {
     const p = this.d.project
     const run = this.runId(ticket)
+    if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
     const id = this.tracker.parseKey(String(ticket))!.id
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already: flow status ${run}`)
     const keys = o.repos?.length ? o.repos : p.repos.some(r => r.default) ? p.repos.filter(r => r.default).map(r => r.key) : [p.repos[0]!.key]
@@ -117,7 +124,7 @@ export class Pipeline {
     const root = join(p.worktrees, String(id))
     const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
     const branch = p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos) }
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
@@ -140,9 +147,41 @@ export class Pipeline {
       this.d.store.append(run, 'engine', { type: 'setup.failed', reason: (e as Error).message })
       return false
     }
+    if (m.platform) {
+      try { await this.bootDevice(run, m.platform, m.repos[0]!.worktree) } catch (e) {
+        this.d.store.append(run, 'engine', { type: 'setup.failed', reason: `device: ${(e as Error).message}` })
+        return false
+      }
+    }
     if (notes.length) writeFileSync(join(this.runDir(run), 'setup-notes.txt'), notes.join('\n') + '\n')
     this.d.store.append(run, 'engine', { type: 'setup.done' })
     return true
+  }
+
+  /** the run's own device: a device slot, free ports (not another run's), boot, Metro, install; the slot is freed on failure */
+  private async bootDevice(run: string, platform: 'android' | 'ios', worktree: string) {
+    const free = this.d.resources ? await this.d.resources.acquire(run, 'devices') : () => {}
+    try {
+      const taken = new Set<number>()
+      const runs = join(this.d.dataDir, 'runs')
+      for (const other of existsSync(runs) ? readdirSync(runs) : []) {
+        const f = join(runs, other, 'device.json')
+        if (other !== run && existsSync(f)) { const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState; taken.add(d.consolePort).add(d.consolePort + 1).add(d.metroPort) }
+      }
+      const d = await this.building(run, () => startDevice({ spec: this.d.project.devices!, platform, run, runDir: this.runDir(run), worktree, taken, readyTimeoutMs: this.d.deviceReadyTimeoutMs }))
+      this.deviceSlots.set(run, free)
+      this.d.store.append(run, 'engine', { type: 'device.ready', platform, id: d.id, metroPort: d.metroPort })
+    } catch (e) { free(); throw e }
+  }
+
+  /** stop the run's device and free its slot (at ship, or by hand); nothing to do when it has none */
+  async releaseDevice(run: string) {
+    const f = join(this.runDir(run), 'device.json')
+    if (!existsSync(f) || !this.d.project.devices) return
+    await stopDevice(JSON.parse(readFileSync(f, 'utf8')) as DeviceState, this.d.project.devices, this.runDir(run))
+    this.deviceSlots.get(run)?.()
+    this.deviceSlots.delete(run)
+    this.d.store.append(run, 'engine', { type: 'device.released' })
   }
 
   async approve(run: string, answers: Record<string, string> = {}) {
@@ -195,6 +234,7 @@ export class Pipeline {
       this.d.store.append(run, 'human', { type: 'pr.opened', url: c.url, number: c.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) })
       created.push(c)
     }
+    await this.releaseDevice(run)
     return created
   }
 
@@ -210,7 +250,8 @@ export class Pipeline {
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
     const root = join(p.worktrees, `${m.id}-${short}`)
     const repos = m.repos.map(r => ({ key: r.key, worktree: join(root, r.key), base: `origin/${to}` }))
-    const pm: Meta = { ...m, base: `origin/${to}`, branch: `${m.branch}-${short}`, repos, worktree: Pipeline.layout(root, repos) }
+    const { device: _, ...src0 } = m // the source's device is its own; the port boots one of its own if the source had one
+    const pm: Meta = { ...src0, base: `origin/${to}`, branch: `${m.branch}-${short}`, repos, worktree: Pipeline.layout(root, repos) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(pm, null, 2) + '\n')
     for (const f of ['ticket.md', 'plan.md']) if (existsSync(join(this.runDir(source), f))) writeFileSync(join(this.runDir(run), f), readFileSync(join(this.runDir(source), f)))

@@ -37,6 +37,27 @@ const repo = z.object({
   default: z.boolean().default(false),
 })
 
+/** a run's own device (emulator or simulator) and Metro; the commands and placeholders are in device.ts */
+const deviceCommands = z.object({
+  template: z.string().optional(),
+  prepare: z.string().optional(),
+  create: z.string().optional(),
+  id: z.string().optional(),
+  boot: z.string(),
+  bootStays: z.boolean().default(false),
+  ready: z.string(),
+  install: z.string().optional(),
+  stop: z.string().optional(),
+  remove: z.string().optional(),
+})
+const devices = z.object({
+  metro: z.string(),
+  consolePortStart: z.number().int().default(5700),
+  metroPortStart: z.number().int().default(8300),
+  android: deviceCommands.optional(),
+  ios: deviceCommands.optional(),
+})
+
 const project = z.object({
   key: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string(),
@@ -59,6 +80,8 @@ const project = z.object({
   sandbox: z.record(z.unknown()).optional(),
   /** an independent reviewer (a fresh, read-only claude session) before ship */
   review: z.object({ enabled: z.boolean().default(true) }).default({}),
+  /** a run started with a device gets its own, booted in the first repo's worktree */
+  devices: devices.optional(),
 })
 
 export type Project = z.infer<typeof project>

@@ -9,26 +9,41 @@ weekly windows, which flow reads from the CLI after every turn.
 
 ## Setup
 
-1. Bun, git, and the `claude` CLI signed in to your subscription. For Azure DevOps projects, the `az` CLI signed in.
-2. A project file in `~/.config/flow/projects/<key>.json` (see `test/fixtures/project.example.json`): tracker, code
-   host, the repo's main checkout, its default base and release branch patterns, the install command, the verify
-   steps, and optionally Claude Code's `sandbox` block.
-3. `bun install` in this folder, then `bun src/cli.tsx` (or an alias `flow`).
+1. Bun, git, and the `claude` CLI signed in to your subscription. For Azure DevOps, the `az` CLI signed in; for
+   GitHub, `gh`; for Jira, an API token in the macOS keychain (`security add-generic-password -U -s flow-jira -a <email> -w`).
+2. A project file in `~/.config/flow/projects/<key>.json` (see `test/fixtures/project.example.json`):
+   - `tracker`: Azure DevOps (`org`, `project`) or Jira (`site`, `key`, `email`, `keychain`)
+   - `forge`: Azure DevOps or GitHub (`owner`)
+   - `repos`: each repo's main checkout, default base, release branch patterns, install command and verify steps
+     (`tsc`, `eslint`, `jest`, `vitest` or a `command`; `perPackage` runs a step inside each package of a monorepo);
+     `default: true` marks the repos a run gets when it names none
+   - `naming`: branch (`{type}/{id}`, `{key}`), commit, PR title and body styles
+   - optionally Claude Code's `sandbox` block, and `devices` (below)
+3. Optionally `~/.config/flow/flow.json` with the machine's limits: `{"limits": {"agents": 2, "builds": 2, "devices": 4}}`.
+4. `bun install` in this folder, then `bun src/cli.tsx` (or an alias `flow`).
 
 ## Daily use
 
 | | |
 |---|---|
 | `flow` | The screen: what needs you, every run, your plan windows. Starts the background service if needed. |
-| `n` | Start a run: `<project> <ticket number> [base]` |
+| `n` | Start a run: `<project> <ticket> [base] [repos=a,b] [device=android\|ios]` (the ticket: a number or a Jira key) |
 | `a` | Approve a plan: its questions with their defaults; `y`, or `e` to type other answers |
 | `m` | Message a run's agent |
 | `s` | Ship a verified run: commit, push, draft PR |
 | `p` | Port a shipped run to develop |
 | `↵` / `esc` | A run's detail (plan, answers, findings, review, PR, timeline) / back |
 
-The same as commands: `flow start | approve | message | ship | port | status | log`. With the service running they
-go through it and follow the run until it needs you; without it they run in the terminal.
+The same as commands: `flow start | approve | message | ship | port | release | status | log` (`flow start` takes
+`--repos a,b`, `--base`, `--kind bug|feature`, `--device android|ios`). With the service running they go through it
+and follow the run until it needs you; without it they run in the terminal.
+
+**Slots.** All runs on the machine share three kinds of slot: agent turns, builds (installs, verify, app builds) and
+devices. A run that has to wait shows what for ("waiting for a build slot"); a freed slot goes to the run that has
+waited longest. The screen's Resources panel shows who holds and who waits.
+
+**Several repos.** A run can span repos (`repos=mobile,portal`): a worktree each on the same branch, the agent
+working from their common folder, verify per repo, and at ship one draft PR per repo that changed.
 
 ## A run
 
@@ -49,6 +64,18 @@ go through it and follow the run until it needs you; without it they run in the 
 7. **Ship (you).** flow commits (your commit hooks run), pushes without force, and opens a draft PR linked to the
    ticket, described by the agent's `pr.md`. Merging stays yours.
 8. **Port (optional).** The shipped commit is applied to another line in a new run, then verify, review and ship.
+
+### A run's own device
+
+A run started with `--device android|ios` gets its own emulator or simulator and its own Metro, so runs never share
+one. During setup flow takes a device slot, picks free ports no other run holds, then runs the project's `devices`
+commands in order: `prepare` (in the app's worktree: prebuild, pods), `create` (the device; a simulator's UDID is
+what it prints), `boot`, `ready` (polled until it exits 0), Metro, and `install` (build, install, point the app at
+the run's Metro). The agent is told the device id and the Metro port. Ship stops and removes everything and frees
+the slot; `flow release <run>` does so earlier. A device that never becomes ready fails the setup with the last
+lines of its log. Placeholders: `{run} {id} {consolePort} {metroPort} {worktree} {runDir} {template}`.
+`scripts/avd-clone.sh` (an Android AVD cloned copy-on-write from a template) and `scripts/android-dev-host.sh` (a
+React Native debug app pointed at another Metro port) are there for the Android commands.
 
 ## Safety
 
@@ -73,11 +100,14 @@ TypeScript on Bun. One process per run drives `claude -p --input-format stream-j
 | `runner.ts`, `turns.ts`, `usage.ts` | Turns: plan windows, parallel slots, usage-limit retries |
 | `pipeline.ts`, `prompts.ts`, `plan.ts` | The steps of a run and what the agent is told |
 | `verify.ts`, `review.ts` | Checks against the base; the independent review |
-| `git.ts`, `azure.ts` | Worktrees, commit and push; work items and draft PRs |
+| `git.ts` | Worktrees, commit and push |
+| `tracker.ts`, `azure.ts`, `jira.ts`, `forge.ts` | Tickets from Azure DevOps or Jira; draft PRs on Azure DevOps or GitHub |
+| `resources.ts` | The machine-wide slots: agents, builds, devices |
+| `device.ts` | A run's own device and Metro: ports, background processes, readiness, cleanup |
 | `guard.ts`, `settings.ts` | The guard hook and each run's settings |
 | `service.ts`, `server.ts`, `client.ts`, `daemon.ts` | The background service, its socket and the connection |
 | `tui/` | The screen (OpenTUI + React) and its view model |
 
-Tests: `bun test` (about 200, with a fake agent replaying sanitized real sessions, real git repos, a stand-in `az`,
-and the screen driven by keys). `scripts/` holds real-world checks: `review-check.ts`, `sandbox-check.ts`,
-`ui-snapshot.tsx`.
+Tests: `bun test` (about 260, with a fake agent replaying sanitized real sessions, real git repos, stand-ins for
+`az`, `gh`, Jira, devices and Metro, and the screen driven by keys). `scripts/` holds real-world checks:
+`review-check.ts`, `sandbox-check.ts`, `device-check.ts`, `ui-snapshot.tsx`.

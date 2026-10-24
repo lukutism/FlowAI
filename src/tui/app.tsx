@@ -80,10 +80,12 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (name === 'backspace') return setMode({ kind: 'new', text: mode.text.slice(0, -1) })
       if (name === 'return') {
         const [project, ticket, ...rest] = mode.text.trim().split(/\s+/)
-        if (!project || !ticket) return setNotice('type: <project> <ticket> [base] [repos=a,b]')
+        if (!project || !ticket) return setNotice('type: <project> <ticket> [base] [repos=a,b] [device=android|ios]')
         const repos = rest.find(x => x.startsWith('repos='))?.slice(6).split(',').filter(Boolean)
+        const device = rest.find(x => x.startsWith('device='))?.slice(7)
+        if (device && device !== 'android' && device !== 'ios') return setNotice('device is android or ios')
         const base = rest.find(x => !x.includes('='))
-        return void send({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), ...(repos?.length ? { repos } : {}) }, `starting ${project}-${ticket}`)
+        return void send({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), ...(repos?.length ? { repos } : {}), ...(device ? { device: device as 'android' | 'ios' } : {}) }, `starting ${project}-${ticket}`)
       }
       if (typed) setMode({ kind: 'new', text: mode.text + typed })
       return
@@ -211,7 +213,7 @@ function RunRow({ row: r, selected, titleW }: { row: Row; selected: boolean; tit
 const eventLine = (e: RunEvent) => {
   const d = e.type === 'verify.result' ? (e.ok ? 'no new findings' : `${e.newFindings.length} new`) : e.type === 'plan.submitted' ? `${e.questions.length} question(s)`
     : e.type === 'plan.decided' ? `by ${e.by}` : e.type === 'tokens.used' ? tokens(e.tokens) : e.type === 'run.blocked' || e.type === 'setup.failed' ? e.reason
-    : e.type === 'tool.denied' ? `${e.tool}: ${e.detail}` : e.type === 'pr.opened' ? e.url : e.type === 'human.message' ? e.text : e.type === 'run.paused' ? `until ${hhmm(e.until)}` : ''
+    : e.type === 'tool.denied' ? `${e.tool}: ${e.detail}` : e.type === 'pr.opened' ? e.url : e.type === 'human.message' ? e.text : e.type === 'run.paused' ? `until ${hhmm(e.until)}` : e.type === 'device.ready' ? `${e.platform} ${e.id} :${e.metroPort}` : ''
   return `${hhmm(e.at)}  ${e.actor.padEnd(6)} ${e.type}${d ? `  ${d}` : ''}`
 }
 
@@ -223,6 +225,7 @@ function DetailView({ run, detail, now }: { run: RunState; detail: Detail | null
     <box flexDirection="column">
       <text><span fg={C.secondary}>{run.ticket} </span><strong>{run.title}</strong><span fg={C.muted}>   {run.project} · from {run.base} · {duration(now - run.createdAt)} · {tokens(run.tokens)} tokens · {run.compactions} compactions</span></text>
       <text fg={C.warning}>{run.needs ? `Needs you: ${run.needs.ask}` : `${run.stage} · ${run.status}`}</text>
+      {run.device ? <text fg={C.secondary}>{`Device ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</text> : null}
       <text> </text>
       <text><strong>Plan</strong></text>
       <text fg={C.secondary}>{summary ? (summary.length > 300 ? `${summary.slice(0, 300).replace(/\s+\S*$/, '')}…` : summary) : detail ? 'no plan yet' : 'loading…'}</text>
@@ -274,7 +277,7 @@ function Bar({ mode, run, notice }: { mode: Mode; run?: RunState; notice: string
   if (mode.kind === 'new') return (
     <box flexDirection="column">
       {notice ? <text fg={C.accent}>{notice}</text> : null}
-      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   &lt;project&gt; &lt;ticket&gt; [base] [repos=a,b] · ↵ start · esc cancel</span></text>
+      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   &lt;project&gt; &lt;ticket&gt; [base] [repos=a,b] [device=android|ios] · ↵ start · esc cancel</span></text>
     </box>
   )
   if (mode.kind === 'message' && run) return <text><span fg={C.accent}>Message {run.ticket} </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ send · esc cancel</span></text>
