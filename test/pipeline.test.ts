@@ -133,6 +133,12 @@ describe('a ticket to a draft PR', () => {
     const run = await t.pipe.start(186278)
     await expect(t.pipe.ship(run)).rejects.toThrow(/not ready to ship/)
   })
+  test('--kind overrides the work item type (a Task that is a fix): branch and commit type follow it', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
+    const run = await t.pipe.start(186278, { kind: 'feature' })
+    expect(JSON.parse(readFileSync(join(t.runDir, 'run.json'), 'utf8'))).toMatchObject({ kind: 'feature', branch: 'feat/186278' })
+    void run
+  })
   test('the ticket and the plan are kept in the run folder', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
     await t.pipe.start(186278)

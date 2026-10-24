@@ -53,15 +53,17 @@ export class Pipeline {
   private state = (run: string) => this.d.store.state(run)!
   private now = () => (this.d.now ?? Date.now)()
 
-  async start(id: number, o: { base?: string } = {}): Promise<string> {
+  /** kind: overrides the work item type (a Task may be a fix) */
+  async start(id: number, o: { base?: string; kind?: 'bug' | 'feature' } = {}): Promise<string> {
     const p = this.d.project
     if (p.tracker.kind !== 'azure') throw new Error(`${p.tracker.kind} tickets are not supported yet`)
     const run = `${p.key}-${id}`
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already: flow status ${run}`)
     const t = azureTicket(this.d.az, p.tracker, id)
     const repo = p.repos[0]!
-    const m: Meta = { id, key: t.key, title: t.title, kind: t.kind, url: t.url, repo: repo.key, base: o.base ?? repo.defaultBase,
-      branch: `${t.kind === 'bug' ? 'fix' : 'feat'}/${id}`, worktree: join(p.worktrees, String(id), repo.key) }
+    const kind = o.kind ?? t.kind
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, repo: repo.key, base: o.base ?? repo.defaultBase,
+      branch: `${kind === 'bug' ? 'fix' : 'feat'}/${id}`, worktree: join(p.worktrees, String(id), repo.key) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)

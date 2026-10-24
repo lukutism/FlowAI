@@ -30,6 +30,14 @@ describe('azureTicket: the work item as the agent reads it', () => {
     expect(t.text).toBe(['Description:', 'Open order 700216740 and walk assets.', '', 'Repro steps:', '- Open order', '- Edit 90 assets', '',
       'Comments (newest first):', '2026-10-05 PO: newer: 1,500 assets in prod', '2026-10-01 Tester: older'].join('\n'))
   })
+  test('a work item from another project of the organisation: its own project for the comments and the link', () => {
+    const other = { ...wi, fields: { ...wi.fields, 'System.TeamProject': 'customer-hub' } }
+    const { az, calls } = fakeAz({ 'work-item show': other, 'devops invoke': comments })
+    const t = azureTicket(az, tracker, 186278)
+    expect(t.url).toBe('https://dev.azure.com/example/customer-hub/_workitems/edit/186278')
+    expect(calls[1]).toContain('project=customer-hub')
+    expect(t.text).toContain('newer: 1,500 assets in prod')
+  })
   test('anything but a Bug is a feature', () => {
     const { az } = fakeAz({ 'work-item show': { ...wi, fields: { ...wi.fields, 'System.WorkItemType': 'User Story' } } })
     expect(azureTicket(az, tracker, 1).kind).toBe('feature')

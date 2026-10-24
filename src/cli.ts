@@ -2,7 +2,7 @@
 /**
  * flow — Claude Code agents on tickets, on your own subscription.
  *
- *   flow start <project> <ticket> [--base <ref>] [--model <name>]   worktree, plan; continues until it needs you
+ *   flow start <project> <ticket> [--base <ref>] [--kind bug|feature] [--model <name>]   worktree, plan; continues until it needs you
  *   flow approve <run> [Q1=<answer> …]                             answer the plan's questions (defaults for the rest)
  *   flow message <run> "<text>"                                     to the run's agent; the run carries on afterwards
  *   flow ship <run>                                                 commit, push, draft PR (after verify)
@@ -104,16 +104,17 @@ async function withRun(run: string, model: string | undefined, act: (p: Pipeline
 
 async function main(argv: string[]) {
   const [cmd, ...args] = argv
-  const f = flags(args, ['base', 'model', 'cwd'])
+  const f = flags(args, ['base', 'model', 'cwd', 'kind'])
   switch (cmd) {
     case 'start': {
       const [project, ticket] = args
-      if (!project || !ticket || !/^\d+$/.test(ticket)) throw new Error('flow start <project> <ticket number> [--base <ref>] [--model <name>]')
+      if (!project || !ticket || !/^\d+$/.test(ticket)) throw new Error('flow start <project> <ticket number> [--base <ref>] [--kind bug|feature] [--model <name>]')
+      if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
       const s = store()
       const run = `${project}-${ticket}`
       const release = lock(run)
       const p = pipeline(s, project, f.model)
-      try { await p.start(Number(ticket), { base: f.base }) } finally { await p.close(); release() }
+      try { await p.start(Number(ticket), { base: f.base, kind: f.kind as 'bug' | 'feature' | undefined }) } finally { await p.close(); release() }
       console.log(`\n${next(s.state(run)!)}\n${windowsLine(p.runner.ingest.windows)}`)
       return
     }

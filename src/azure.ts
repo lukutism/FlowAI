@@ -27,7 +27,9 @@ export function azureTicket(az: Az, t: AzureRef, id: number): Ticket {
   const r = az(['boards', 'work-item', 'show', '--id', String(id), '--org', t.org, '-o', 'json'])
   if (r.code !== 0) throw new Error(`az boards work-item show ${id} failed: ${firstError(r.err)} (signed in? az login)`)
   const f = JSON.parse(r.out).fields as Record<string, string | undefined>
-  const c = az(['devops', 'invoke', '--area', 'wit', '--resource', 'comments', '--route-parameters', `project=${t.project}`, `workItemId=${id}`,
+  // a ticket may live in another project of the organisation (a customer's board): use its own
+  const project = f['System.TeamProject'] ?? t.project
+  const c = az(['devops', 'invoke', '--area', 'wit', '--resource', 'comments', '--route-parameters', `project=${project}`, `workItemId=${id}`,
     '--org', t.org, '--api-version', '7.1-preview', '-o', 'json'])
   const comments = c.code === 0 ? ((JSON.parse(c.out).comments ?? []) as { createdDate: string; createdBy?: { displayName?: string }; text?: string }[]) : []
   const sections: string[] = []
@@ -41,7 +43,7 @@ export function azureTicket(az: Az, t: AzureRef, id: number): Ticket {
   if (lines.length) sections.push(`Comments (newest first):\n${lines.join('\n')}`)
   return {
     id, key: `#${id}`, title: String(f['System.Title'] ?? ''), kind: f['System.WorkItemType'] === 'Bug' ? 'bug' : 'feature',
-    url: `${t.org}/${t.project}/_workitems/edit/${id}`, text: sections.join('\n\n'),
+    url: `${t.org}/${project}/_workitems/edit/${id}`, text: sections.join('\n\n'),
   }
 }
 
