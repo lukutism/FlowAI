@@ -32,19 +32,21 @@ export class Resources {
       this.queue.push({ run, kind, go })
       this.changed()
       this.o.onWait?.(run, kind)
-      await turn
+      await turn // the releasing run handed this one its slot (see below)
       this.o.onGo?.(run, kind)
+    } else {
+      this.holders[kind].push(run)
+      this.changed()
     }
-    this.holders[kind].push(run)
-    this.changed()
     let released = false
     return () => {
       if (released) return
       released = true
       const i = this.holders[kind].indexOf(run)
       if (i >= 0) this.holders[kind].splice(i, 1)
+      // the slot goes straight to the next waiter: a run arriving in the same moment can't take it first
       const next = this.queue.findIndex(q => q.kind === kind)
-      if (next >= 0) this.queue.splice(next, 1)[0]!.go()
+      if (next >= 0) { const w = this.queue.splice(next, 1)[0]!; this.holders[kind].push(w.run); w.go() }
       this.changed()
     }
   }

@@ -55,4 +55,18 @@ describe('Resources', () => {
     const got = await Promise.race([r.acquire('b', 'builds').then(() => 'b got it'), Bun.sleep(500).then(() => 'stuck')])
     expect(got).toBe('b got it')
   })
+  test('a freed slot goes to the run that waited, not to one that arrives in the same moment: the limit holds', async () => {
+    const r = new Resources({ agents: 1, builds: 1, devices: 1 })
+    const freeA = await r.acquire('a', 'builds')
+    const b = r.acquire('b', 'builds')
+    freeA()
+    let cGot = false
+    const c = r.acquire('c', 'builds').then(f => { cGot = true; return f })
+    await b
+    await Bun.sleep(1)
+    expect(cGot).toBe(false)
+    expect(r.snapshot().holders.builds).toEqual(['b'])
+    expect(r.snapshot().waiting).toEqual([{ run: 'c', kind: 'builds' }])
+    ;(await b)(); await c
+  })
 })
