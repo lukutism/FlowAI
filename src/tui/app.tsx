@@ -28,6 +28,7 @@ type Mode =
   | { kind: 'approve'; run: string; editing: boolean; text: string }
   | { kind: 'ship'; run: string }
   | { kind: 'message'; run: string; text: string }
+  | { kind: 'new'; text: string }
   | { kind: 'detail'; run: string }
 
 interface Detail { events: RunEvent[]; plan: string; pr: string; review: string }
@@ -72,6 +73,17 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
 
   useKeyboard(key => {
     const name = key.name, typed = key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : ''
+    if (mode.kind === 'new') {
+      if (name === 'escape') return setMode({ kind: 'list' })
+      if (name === 'backspace') return setMode({ kind: 'new', text: mode.text.slice(0, -1) })
+      if (name === 'return') {
+        const [project, ticket, base] = mode.text.trim().split(/\s+/)
+        if (!project || !ticket || !/^\d+$/.test(ticket)) return setNotice('type: <project> <ticket number> [base]')
+        return void send({ cmd: 'start', project, ticket: Number(ticket), ...(base ? { base } : {}) }, `starting ${project}-${ticket}`)
+      }
+      if (typed) setMode({ kind: 'new', text: mode.text + typed })
+      return
+    }
     if (mode.kind === 'message' || (mode.kind === 'approve' && mode.editing)) {
       const text = mode.text
       if (name === 'escape') return setMode({ kind: 'list' })
@@ -98,6 +110,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     }
     if (name === 'escape' && mode.kind === 'detail') return setMode({ kind: 'list' })
     if (typed === 'q') return onQuit()
+    if (typed === 'n') return setMode({ kind: 'new', text: '' })
     if (name === 'down' || typed === 'j') return setSelected(s => Math.min(s + 1, list.length - 1))
     if (name === 'up' || typed === 'k') return setSelected(s => Math.max(s - 1, 0))
     if (!state) return
@@ -130,7 +143,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         </>
       )}
       <text> </text>
-      <Bar mode={mode} run={mode.kind !== 'list' ? api.runs.get(mode.run) : undefined} notice={notice} />
+      <Bar mode={mode} run={mode.kind !== 'list' && mode.kind !== 'new' ? api.runs.get(mode.run) : undefined} notice={notice} />
     </box>
   )
 }
@@ -230,11 +243,17 @@ function Bar({ mode, run, notice }: { mode: Mode; run?: RunState; notice: string
     )
   }
   if (mode.kind === 'ship' && run) return <text><strong>Ship {run.ticket}?</strong><span fg={C.secondary}> commit, push, open a draft PR   </span><strong>y</strong><span fg={C.success}> ship</span><span fg={C.muted}>   </span><strong>n</strong><span fg={C.secondary}> cancel</span></text>
+  if (mode.kind === 'new') return (
+    <box flexDirection="column">
+      {notice ? <text fg={C.accent}>{notice}</text> : null}
+      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   &lt;project&gt; &lt;ticket number&gt; [base] · ↵ start · esc cancel</span></text>
+    </box>
+  )
   if (mode.kind === 'message' && run) return <text><span fg={C.accent}>Message {run.ticket} </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ send · esc cancel</span></text>
   return (
     <box flexDirection="column">
       {notice ? <text fg={C.accent}>{notice}</text> : null}
-      <text fg={C.muted}>{mode.kind === 'detail' ? 'esc back   a approve   m message   s ship   p port   q quit' : '↑↓/jk move   ↵ open   a approve   m message   s ship   p port   q quit'}</text>
+      <text fg={C.muted}>{mode.kind === 'detail' ? 'esc back   a approve   m message   s ship   p port   q quit' : '↑↓/jk move   ↵ open   n new   a approve   m message   s ship   p port   q quit'}</text>
     </box>
   )
 }

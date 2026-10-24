@@ -97,6 +97,21 @@ describe('Runs screen', () => {
       expect(await t.press('j', 'p')).toContain('#103 has no draft PR to port yet')
     } finally { t.s.renderer.destroy() }
   })
+  test('n starts a run: project, ticket number and an optional base, typed in place', async () => {
+    const t = await screen()
+    try {
+      expect(await t.press('n')).toContain('New run')
+      await t.press(...'fso 204598 origin/patch/3.18.41'.split(''), 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.18.41' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('n with a malformed entry says what it needs and sends nothing', async () => {
+    const t = await screen()
+    try {
+      expect(await t.press('n', ...'fso abc'.split(''), 'enter')).toContain('type: <project> <ticket number> [base]')
+      expect(t.f.sent).toEqual([])
+    } finally { t.s.renderer.destroy() }
+  })
   test('m: typing a message (q included, it does not quit), enter sends it', async () => {
     const t = await screen()
     try {
