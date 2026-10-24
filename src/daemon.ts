@@ -1,0 +1,51 @@
+import { randomBytes } from 'node:crypto'
+import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { FlowClient } from './client.ts'
+
+/** Where the background service tells clients how to reach it: its port and pid, and a token only the user can read. */
+export const serviceFile = (data: string) => join(data, 'service.json')
+
+export function token(data: string): string {
+  const f = join(data, 'token')
+  if (!existsSync(f)) {
+    mkdirSync(data, { recursive: true })
+    writeFileSync(f, randomBytes(24).toString('hex'), { mode: 0o600 })
+  }
+  chmodSync(f, 0o600)
+  return readFileSync(f, 'utf8').trim()
+}
+
+const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+
+/** the running service's address, or null (a file left by a dead process is cleaned up) */
+export function running(data: string): { port: number; pid: number } | null {
+  const f = serviceFile(data)
+  if (!existsSync(f)) return null
+  const s = JSON.parse(readFileSync(f, 'utf8')) as { port: number; pid: number }
+  if (alive(s.pid)) return s
+  rmSync(f, { force: true })
+  return null
+}
+
+export const announce = (data: string, port: number) => writeFileSync(serviceFile(data), JSON.stringify({ port, pid: process.pid }) + '\n')
+export const withdraw = (data: string) => rmSync(serviceFile(data), { force: true })
+
+export async function connect(data: string): Promise<FlowClient | null> {
+  const s = running(data)
+  return s ? FlowClient.connect(`ws://127.0.0.1:${s.port}`, token(data)) : null
+}
+
+/** start `flow serve` in the background (its output in service.log) and wait until it answers */
+export async function startService(data: string, cli: string): Promise<FlowClient> {
+  mkdirSync(data, { recursive: true })
+  const log = openSync(join(data, 'service.log'), 'a')
+  const p = Bun.spawn([process.execPath, cli, 'serve'], { stdio: ['ignore', log, log], env: process.env })
+  p.unref()
+  for (let i = 0; i < 100; i++) {
+    await Bun.sleep(100)
+    const c = await connect(data).catch(() => null)
+    if (c) return c
+  }
+  throw new Error(`the flow service did not start; see ${join(data, 'service.log')}`)
+}

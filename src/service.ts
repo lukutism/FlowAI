@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
 import type { Project } from './config.ts'
@@ -37,7 +39,11 @@ export class Service {
   private windowsListeners = new Set<(w: Windows) => void>()
   private lastWindows: Windows = {}
 
-  constructor(private d: ServiceDeps) {}
+  constructor(private d: ServiceDeps) {
+    // the windows the last turn reported, saved by the pipeline: the screen shows them before any new turn
+    const saved = join(d.dataDir, 'usage.json')
+    if (existsSync(saved)) try { this.lastWindows = JSON.parse(readFileSync(saved, 'utf8')) } catch {}
+  }
 
   onNotice(fn: (n: Notice) => void) { this.notices.add(fn); return () => { this.notices.delete(fn) } }
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }

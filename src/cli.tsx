@@ -2,6 +2,8 @@
 /**
  * flow — Claude Code agents on tickets, on your own subscription.
  *
+ *   flow                                                            the screen (starts the background service if needed)
+ *   flow serve                                                      the background service: runs, deadlines, the screen's data
  *   flow start <project> <ticket> [--base <ref>] [--kind bug|feature] [--model <name>]   worktree, plan; continues until it needs you
  *   flow approve <run> [Q1=<answer> …]                             answer the plan's questions (defaults for the rest)
  *   flow message <run> "<text>"                                     to the run's agent; the run carries on afterwards
@@ -24,6 +26,11 @@ import type { RunEvent, RunState } from './run.ts'
 import { Runner } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import { EventStore } from './store.ts'
+import { announce, connect, startService, token, withdraw } from './daemon.ts'
+import type { FlowClient } from './client.ts'
+import { serve } from './server.ts'
+import { Service, type Command } from './service.ts'
+import { readdirSync } from 'node:fs'
 import type { Windows } from './usage.ts'
 
 const DATA = process.env.FLOW_DATA ?? join(homedir(), '.local', 'share', 'flow')
@@ -103,14 +110,63 @@ async function withRun(run: string, model: string | undefined, act: (p: Pipeline
   console.log(`\n${next(s.state(run)!)}\n${windowsLine(p.runner.ingest.windows)}`)
 }
 
+/** with the service running: send the command there and follow the run until it needs you */
+async function viaService(c: FlowClient, cmd: Command): Promise<void> {
+  let run = 'run' in cmd ? cmd.run : `${cmd.project}-${cmd.ticket}`
+  const settled = new Promise<void>(done => {
+    c.listen(m => {
+      if (m.type === 'event' && m.event.run === run) {
+        showEvent(m.event)
+        if (['needs-you', 'blocked', 'failed', 'done', 'paused'].includes(m.state.status) && m.event.type !== 'human.message') done()
+      }
+      if (m.type === 'notice' && m.notice.run === run) { console.log(`flow: ${m.notice.text}`); done() }
+    })
+  })
+  const r = await c.send(cmd)
+  if (!r.ok) throw new Error(r.error)
+  run = r.run
+  await settled
+  const s = c.runs.get(run)
+  if (s) console.log(`\n${next(s)}\n${windowsLine(c.windows)}`)
+}
+
+async function serveCmd() {
+  const projects = Object.fromEntries((existsSync(PROJECTS) ? readdirSync(PROJECTS) : []).filter(f => f.endsWith('.json')).map(f => { const p = loadProject(join(PROJECTS, f)); return [p.key, p] }))
+  const s = store()
+  s.subscribe(showEvent)
+  const svc = new Service({ store: s, projects, az: realAz, dataDir: DATA, makeAgent: o => new ClaudeAgent(o), tap: (_, e) => showAgent(e) })
+  svc.onNotice(n => console.log(`notice ${n.run}: ${n.text}`))
+  const srv = serve({ service: svc, store: s, dataDir: DATA, port: 0, token: token(DATA) })
+  announce(DATA, srv.port)
+  console.log(`flow service on 127.0.0.1:${srv.port} (pid ${process.pid}); projects: ${Object.keys(projects).join(', ') || 'none'}`)
+  const tick = setInterval(() => svc.tick(), 30_000)
+  svc.tick()
+  const stop = async () => { clearInterval(tick); withdraw(DATA); srv.stop(); await svc.close(); process.exit(0) }
+  process.on('SIGINT', stop); process.on('SIGTERM', stop)
+  await new Promise(() => {})
+}
+
+async function uiCmd() {
+  const client = (await connect(DATA).catch(() => null)) ?? (await startService(DATA, import.meta.path))
+  const { createCliRenderer } = await import('@opentui/core')
+  const { createRoot } = await import('@opentui/react')
+  const { App } = await import('./tui/app.tsx')
+  const renderer = await createCliRenderer({ exitOnCtrlC: true })
+  createRoot(renderer).render(<App api={client} onQuit={() => { renderer.destroy(); client.close(); process.exit(0) }} />)
+}
+
 async function main(argv: string[]) {
   const [cmd, ...args] = argv
   const f = flags(args, ['base', 'model', 'cwd', 'kind'])
+  const service = ['start', 'approve', 'message', 'ship'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
   switch (cmd) {
+    case undefined: case 'ui': return uiCmd()
+    case 'serve': return serveCmd()
     case 'start': {
       const [project, ticket] = args
       if (!project || !ticket || !/^\d+$/.test(ticket)) throw new Error('flow start <project> <ticket number> [--base <ref>] [--kind bug|feature] [--model <name>]')
       if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
+      if (service) return viaService(service, { cmd: 'start', project, ticket: Number(ticket), base: f.base, kind: f.kind as 'bug' | 'feature' | undefined }).finally(() => service.close())
       const s = store()
       const run = `${project}-${ticket}`
       const release = lock(run)
@@ -123,16 +179,19 @@ async function main(argv: string[]) {
       const [run, ...pairs] = args
       if (!run) throw new Error('flow approve <run> [Q1=<answer> …]')
       const answers = Object.fromEntries(pairs.map(p => { const i = p.indexOf('='); if (i < 1) throw new Error(`"${p}": answers are Q1=<answer>`); return [p.slice(0, i).toUpperCase(), p.slice(i + 1)] }))
+      if (service) return viaService(service, { cmd: 'approve', run, answers }).finally(() => service.close())
       return withRun(run, f.model, p => p.approve(run, answers))
     }
     case 'message': {
       const [run, ...words] = args
       if (!run || !words.length) throw new Error('flow message <run> "<text>"')
+      if (service) return viaService(service, { cmd: 'message', run, text: words.join(' ') }).finally(() => service.close())
       return withRun(run, f.model, p => p.message(run, words.join(' ')))
     }
     case 'ship': {
       const [run] = args
       if (!run) throw new Error('flow ship <run>')
+      if (service) return viaService(service, { cmd: 'ship', run }).finally(() => service.close())
       return withRun(run, f.model, async p => { const pr = await p.ship(run); console.log(`draft PR #${pr.number}: ${pr.url}`) })
     }
     case 'status': {
@@ -151,6 +210,7 @@ async function main(argv: string[]) {
     }
     case 'try': return tryCmd(args, f.cwd, f.model)
     default:
+      if (cmd === 'help' || cmd === '--help') process.exitCode = 0
       console.log(readFileSync(import.meta.path, 'utf8').split('\n').filter(l => /^ \* {3}flow /.test(l)).map(l => l.slice(3)).join('\n'))
       if (cmd) process.exitCode = 1
   }

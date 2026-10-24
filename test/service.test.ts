@@ -64,6 +64,15 @@ describe('Service: the background process that drives runs', () => {
     await t.svc.idle()
     expect(t.notices).toEqual([expect.stringMatching(/^ex-1: .*not ready to ship/)])
   })
+  test('a fresh service knows the plan windows saved by earlier runs, before any turn', () => {
+    const t = setup(() => [])
+    void t
+    const root = mkdtempSync(join(tmpdir(), 'flow-svc-w-'))
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'usage.json'), JSON.stringify({ week: { utilization: 0.59, resetsAt: 1, status: 'allowed' } }))
+    const svc = new Service({ store: new EventStore(':memory:'), projects: {}, az: () => ({ code: 1, out: '', err: '' }), dataDir: root, makeAgent: () => new FakeAgent([]) })
+    expect(svc.windows().week?.utilization).toBe(0.59)
+  })
   test('commands for a run that doesn\'t exist, or an unknown project, are refused at once', () => {
     const t = setup(() => [])
     expect(t.svc.dispatch({ cmd: 'approve', run: 'ex-9' })).toMatchObject({ ok: false, error: expect.stringMatching(/no run ex-9/) })

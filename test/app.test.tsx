@@ -1,0 +1,134 @@
+import { describe, expect, test } from 'bun:test'
+import { act } from 'react'
+import { testRender } from '@opentui/react/test-utils'
+import type { RunEvent, RunState } from '../src/run.ts'
+import type { Command } from '../src/service.ts'
+import { App, type FlowApi } from '../src/tui/app.tsx'
+
+// The Runs screen and run detail, driven by keys, against a stand-in service connection.
+const NOW = Date.parse('2026-10-25T12:00:00Z')
+const base = (id: string, over: Partial<RunState>): RunState => ({ id, ticket: `#${id.split('-')[1]}`, title: `Title ${id}`, project: 'fso', base: 'origin/develop',
+  stage: 'build', status: 'running', loops: { verify: 0, verifyRuns: 0, review: 0 }, tokens: 264_000, compactions: 0, createdAt: NOW - 14 * 60_000, updatedAt: NOW - 60_000, ...over })
+const runs = [
+  base('fso-105', { stage: 'plan', status: 'needs-you', needs: { kind: 'plan', ask: '1 open question', held: false, deadline: NOW + 12 * 60_000 },
+    plan: { summary: 'Guard the walk.', questions: [{ id: 'Q1', text: 'Also guard the order list?', default: 'no', held: false }] } }),
+  base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'ship', ask: 'verified' } }),
+  base('fso-103', { stage: 'verify' }),
+]
+
+function api(list = runs) {
+  const sent: Command[] = []
+  const listeners = new Set<(m: { type: string; notice?: { run: string; text: string } }) => void>()
+  const a: FlowApi = {
+    runs: new Map(list.map(r => [r.id, r])), windows: { fiveHour: { utilization: 0.07, resetsAt: Date.parse('2026-10-25T14:00:00Z') / 1000, status: 'allowed' }, week: { utilization: 0.55, resetsAt: 1, status: 'allowed' } },
+    listen: f => { listeners.add(f); return () => listeners.delete(f) },
+    send: async c => { sent.push(c); return { ok: true, run: 'run' in c ? c.run : 'x' } },
+    events: async run => [{ seq: 1, at: NOW - 14 * 60_000, run, actor: 'human', type: 'run.created', ticket: '#105', title: 't', project: 'fso', base: 'b' }, { seq: 2, at: NOW - 13 * 60_000, run, actor: 'agent', type: 'plan.submitted', summary: 's', questions: [] }] as RunEvent[],
+    file: async (_run, name) => (name === 'plan.md' ? '# Plan\n\nGuard the walk against missing assets.\n' : ''),
+  }
+  return { a, sent, push: (m: { type: string; notice?: { run: string; text: string } }) => listeners.forEach(f => f(m)) }
+}
+async function screen(list = runs) {
+  const f = api(list)
+  let quit = false
+  const s = await testRender(<App api={f.a} now={() => NOW} onQuit={() => { quit = true }} />, { width: 130, height: 34 })
+  const frame = async () => { await act(async () => { await Bun.sleep(1) }); await s.renderOnce(); return s.captureCharFrame() }
+  // a lone Escape is only known after a short pause (it could start a key sequence), so wait for it
+  const press = async (...keys: string[]) => {
+    for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
+    return frame()
+  }
+  return { s, f, frame, press, quit: () => quit }
+}
+
+describe('Runs screen', () => {
+  test('header with plan windows; what needs you with the deadline; the runs table with stage, status, tokens, next', async () => {
+    const t = await screen()
+    try {
+      const f = await t.frame()
+      expect(f).toContain('3 active')
+      expect(f).toContain('5h 7%')
+      expect(f).toContain('week 55%')
+      expect(f).toMatch(/#105 +Title fso-105 .*Plan approval +defaults in 12m +a approve/)
+      expect(f).toContain('Q1 Also guard the order list? (default: no)')
+      expect(f).toMatch(/#104 .*Ready to ship .*s ship/)
+      expect(f).toMatch(/#103 +Title fso-103 +●●●◎◌◌ +running +14m +264k +verifying/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a on a plan: the questions with their defaults, then y approves with the defaults', async () => {
+    const t = await screen()
+    try {
+      const f = await t.press('a')
+      expect(f).toContain('Approve #105 with the defaults?')
+      expect(f).toContain('Q1 Also guard the order list? → no')
+      await t.press('y')
+      expect(t.f.sent).toEqual([{ cmd: 'approve', run: 'fso-105' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('other answers: e, type Q1=yes, enter', async () => {
+    const t = await screen()
+    try {
+      await t.press('a', 'e', 'Q', '1', '=', 'y', 'e', 's', 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'approve', run: 'fso-105', answers: { Q1: 'yes' } }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('s on a verified run asks first; y ships', async () => {
+    const t = await screen()
+    try {
+      const f = await t.press('j', 's')
+      expect(f).toContain('Ship #104?')
+      await t.press('y')
+      expect(t.f.sent).toEqual([{ cmd: 'ship', run: 'fso-104' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('s on a run that is not verified says so and sends nothing', async () => {
+    const t = await screen()
+    try {
+      expect(await t.press('j', 'j', 's')).toContain('#103 is not ready to ship')
+      expect(t.f.sent).toEqual([])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('m: typing a message (q included, it does not quit), enter sends it', async () => {
+    const t = await screen()
+    try {
+      await t.press('m', 'q', 'u', 'i', 't', ' ', 'n', 'o', 'w', 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'message', run: 'fso-105', text: 'quit now' }])
+      expect(t.quit()).toBe(false)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('esc cancels a confirm without sending', async () => {
+    const t = await screen()
+    try {
+      expect(await t.press('a')).toContain('Approve #105 with the defaults?')
+      const f = await t.press('esc')
+      expect(f).not.toContain('Approve #105 with the defaults?')
+      expect(t.f.sent).toEqual([])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a notice from the service shows at the bottom', async () => {
+    const t = await screen()
+    try {
+      await act(async () => { t.f.push({ type: 'notice', notice: { run: 'fso-104', text: 'commit refused: subject too long' } }) })
+      expect(await t.frame()).toContain('fso-104: commit refused: subject too long')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('no runs: says how to start one', async () => {
+    const t = await screen([])
+    try { expect(await t.frame()).toContain('No runs yet. Start one: flow start <project> <ticket>') } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe('Run detail', () => {
+  test('enter opens it: what it needs, the plan, its questions, the timeline; esc goes back', async () => {
+    const t = await screen()
+    try {
+      const f = await t.press('enter')
+      expect(f).toContain('Needs you: 1 open question')
+      expect(f).toContain('Guard the walk against missing assets.')
+      expect(f).toContain('Q1 Also guard the order list? → default: no')
+      expect(f).toMatch(/human +run\.created/)
+      expect(f).toMatch(/agent +plan\.submitted/)
+      expect(await t.press('esc')).toContain('Needs attention')
+    } finally { t.s.renderer.destroy() }
+  })
+})
