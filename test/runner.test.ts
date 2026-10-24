@@ -59,4 +59,28 @@ describe('Runner.turn: one agent turn for a run, recorded', () => {
     const r2 = new Runner({ store, maxParallel: 1, limits: { fiveHour: 0.9, week: 0.95 }, agentFor: () => new FakeAgent([]), windows: saved as never })
     expect(r2.ingest.windows.week?.utilization).toBe(0.55)
   })
+  test('a turn that hits the plan\'s usage limit: paused until the reset, then the same message is sent again', async () => {
+    const reset = Date.parse('2026-10-24T17:00:00Z') / 1000
+    const limited = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', apiKeySource: 'none' }),
+      JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', unifiedWindows: { five_hour: { utilization: 1, resetsAt: reset, status: 'rejected' } } } }),
+      JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Claude usage limit reached. Your limit will reset at 5pm.', num_turns: 0, session_id: 's', usage: {} }),
+    ].join('\n')
+    const { runner, store, agent } = setup([limited, fixture('01-turn-tool')])
+    expect(await runner.turn('r', 'plan the fix')).toEqual({ ok: true, text: '1' })
+    expect(agent.prompts).toEqual(['plan the fix', 'plan the fix'])
+    const types = store.events('r').map(e => e.type)
+    expect(types).toContain('run.paused')
+    expect(types.indexOf('run.resumed')).toBeGreaterThan(types.indexOf('run.paused'))
+    expect(store.events('r').find(e => e.type === 'run.paused')).toMatchObject({ window: 'fiveHour', until: reset * 1000 })
+  })
+  test('a turn that fails for another reason blocks the run with the CLI\'s words, never leaves it looking busy', async () => {
+    const failed = [
+      JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', apiKeySource: 'none' }),
+      JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'API Error: 500 overloaded', num_turns: 1, session_id: 's', usage: {} }),
+    ].join('\n')
+    const { runner, store } = setup([failed])
+    expect(await runner.turn('r', 'x')).toMatchObject({ ok: false })
+    expect(store.state('r')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/the agent's turn failed: API Error: 500 overloaded/) } })
+  })
 })
