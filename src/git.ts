@@ -26,8 +26,13 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   if (add.code !== 0) throw new Error(`git worktree add failed: ${tail(add.err)}`)
   const nm = join(o.repo, 'node_modules')
   if (existsSync(nm)) {
-    try { cpSync(nm, join(o.worktree, 'node_modules'), { recursive: true, mode: 2 /* COPYFILE_FICLONE: clone where the disk can */, verbatimSymlinks: true }) }
-    catch (e) { notes.push(`node_modules not cloned (${(e as Error).message}); the install starts from nothing`) }
+    // macOS: cp -c clones the whole tree in one call (APFS clonefile); elsewhere a per-file copy-on-write copy
+    const dst = join(o.worktree, 'node_modules')
+    const cloned = process.platform === 'darwin' && (await run(['cp', '-c', '-R', nm, dst], o.worktree)).code === 0
+    if (!cloned) {
+      try { cpSync(nm, dst, { recursive: true, mode: 2 /* COPYFILE_FICLONE */, verbatimSymlinks: true }) }
+      catch (e) { notes.push(`node_modules not cloned (${(e as Error).message}); the install starts from nothing`) }
+    }
   }
   if (o.install) {
     const i = await run(['sh', '-c', o.install], o.worktree)
