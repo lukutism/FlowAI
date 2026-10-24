@@ -89,6 +89,14 @@ describe('Runs screen', () => {
       expect(t.f.sent).toEqual([])
     } finally { t.s.renderer.destroy() }
   })
+  test('p ports a run that has its draft PR; on others it says why not', async () => {
+    const t = await screen([base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } }), base('fso-103', {})])
+    try {
+      await t.press('p')
+      expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
+      expect(await t.press('j', 'p')).toContain('#103 has no draft PR to port yet')
+    } finally { t.s.renderer.destroy() }
+  })
   test('m: typing a message (q included, it does not quit), enter sends it', async () => {
     const t = await screen()
     try {

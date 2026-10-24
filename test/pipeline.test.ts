@@ -16,7 +16,7 @@ const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const result = (text = 'done') => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 's-1', usage: { input_tokens: 1000, output_tokens: 100 } })
 const turn = (effect?: (prompt: string) => void, text?: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), result(text)].join('\n'), effect })
 
-function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean } = {}) {
+function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-pipe-'))
   const origin = join(root, 'origin.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin])
@@ -25,6 +25,8 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   writeFileSync(join(main, 'src/a.ts'), 'const a = 1 // ERR already on develop\n')
   writeFileSync(join(main, '.gitignore'), 'node_modules/\n')
   git(main, 'add', '.'); git(main, 'commit', '-qm', 'base'); git(main, 'push', '-q', 'origin', 'HEAD:develop')
+  // a release line cut from develop (the base for release fixes that are later ported)
+  if (o.release) git(main, 'push', '-q', 'origin', 'HEAD:refs/heads/patch/1.0')
   const project = parseProject({
     key: 'example', name: 'Example', worktrees: join(root, 'worktrees'),
     tracker: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' }, forge: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' },
@@ -50,7 +52,7 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   const reviewers: { cwd: string; settings: string }[] = []
   const pipe = new Pipeline({ store, project, az, dataDir, gitEnv: env, makeAgent: o => { agents.push(o); return agent },
     ...(o.review ? { makeReviewer: (x: { cwd: string; settings: string }) => { reviewers.push(x); return reviewer } } : {}) })
-  return { pipe, store, agent, reviewer, reviewers, azCalls, origin, wt, runDir, agents }
+  return { pipe, store, agent, reviewer, reviewers, azCalls, origin, main, wt, runDir, agents, root }
 }
 const review = (findings: object[]): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'rev-1', model: 'm', apiKeySource: 'none' }),
   JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: `Checked.\n\n\`\`\`json\n${JSON.stringify(findings)}\n\`\`\``, num_turns: 1, session_id: 'rev-1', usage: { input_tokens: 500, output_tokens: 50 } })].join('\n') })
@@ -214,5 +216,48 @@ describe('the independent review before ship', () => {
     const run = await t.pipe.start(186278)
     expect(t.store.events(run).find(e => e.type === 'review.skipped')).toMatchObject({ reason: 'review is off for this project' })
     expect(t.reviewer.prompts).toEqual([])
+  })
+})
+
+describe('port: the same fix onto another line', () => {
+  const shipped = async (develop?: (main: string) => void) => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => { writeFileSync(join(d.wt, 'src/a.ts'), 'const a = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+    ], { release: true })
+    develop?.(t.main)
+    const run = await t.pipe.start(186278, { base: 'origin/patch/1.0' })
+    await t.pipe.ship(run)
+    return { t, run }
+  }
+  test('a new run on develop with the shipped change applied (uncommitted), verified, waiting to ship; its PR says what it ports', async () => {
+    const { t, run } = await shipped()
+    const port = await t.pipe.port(run, 'develop')
+    expect(port).toBe('example-186278-develop')
+    expect(t.store.state(port)).toMatchObject({ base: 'origin/develop', stage: 'ship', needs: { kind: 'ship' } })
+    const wt = join(t.root, 'worktrees', '186278-develop', 'mobile')
+    expect(readFileSync(join(wt, 'src/a.ts'), 'utf8')).toBe('const a = 2\n')
+    expect(git(wt, 'branch', '--show-current')).toBe('fix/186278-develop')
+    expect(git(wt, 'status', '--short')).toBe('M src/a.ts')
+    await t.pipe.ship(port)
+    const create = t.azCalls.filter(a => a.includes('create')).at(-1)!
+    expect(create).toEqual(expect.arrayContaining(['--target-branch', 'develop', '--source-branch', 'fix/186278-develop']))
+    expect(create[create.indexOf('--description') + 1]).toMatch(/^Port of #186278 PR #4711 \(patch\/1\.0\) to develop\./)
+  })
+  test('a conflict: the port is blocked naming the files, for you or its agent to resolve', async () => {
+    const { t, run } = await shipped(main => {
+      writeFileSync(join(main, 'src/a.ts'), 'const a = 9 // changed on develop meanwhile\n')
+      git(main, 'commit', '-qam', 'develop moves on'); git(main, 'push', '-q', 'origin', 'HEAD:develop')
+    })
+    const port = await t.pipe.port(run, 'develop')
+    expect(t.store.state(port)).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/conflicts in src\/a\.ts/) } })
+  })
+  test('only a shipped run can be ported, and only once per line', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
+    const run = await t.pipe.start(186278)
+    await expect(t.pipe.port(run, 'develop')).rejects.toThrow(/not shipped/)
+    const s = await shipped()
+    await s.t.pipe.port(s.run, 'develop')
+    await expect(s.t.pipe.port(s.run, 'develop')).rejects.toThrow(/exists already/)
   })
 })

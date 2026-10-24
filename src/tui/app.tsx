@@ -105,6 +105,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'a') return state.needs?.kind === 'plan' ? setMode({ kind: 'approve', run: state.id, editing: false, text: '' }) : setNotice(`${state.ticket}: no plan is waiting for you`)
     if (typed === 's') return state.needs?.kind === 'ship' ? setMode({ kind: 'ship', run: state.id }) : setNotice(`${state.ticket} is not ready to ship`)
     if (typed === 'm') return setMode({ kind: 'message', run: state.id, text: '' })
+    if (typed === 'p') return state.pr ? void send({ cmd: 'port', run: state.id }, `porting ${state.ticket} to develop`) : setNotice(`${state.ticket} has no draft PR to port yet`)
   })
 
   const titleW = Math.max(16, width - 9 - 1 - 8 - 22 - 7 - 7 - 22 - 4)
@@ -233,7 +234,7 @@ function Bar({ mode, run, notice }: { mode: Mode; run?: RunState; notice: string
   return (
     <box flexDirection="column">
       {notice ? <text fg={C.accent}>{notice}</text> : null}
-      <text fg={C.muted}>{mode.kind === 'detail' ? 'esc back   a approve   m message   s ship   q quit' : '↑↓/jk move   ↵ open   a approve   m message   s ship   q quit'}</text>
+      <text fg={C.muted}>{mode.kind === 'detail' ? 'esc back   a approve   m message   s ship   p port   q quit' : '↑↓/jk move   ↵ open   a approve   m message   s ship   p port   q quit'}</text>
     </box>
   )
 }

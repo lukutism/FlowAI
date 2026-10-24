@@ -132,6 +132,44 @@ export class Pipeline {
     return created
   }
 
+  /**
+   * The same fix onto another line (release fix → develop): a new run on <to> with the shipped commits applied
+   * uncommitted, then verify and review as usual and a stop to ship. A conflict blocks the run, naming the files.
+   */
+  async port(source: string, to = 'develop'): Promise<string> {
+    const src = this.d.store.state(source)
+    if (!src?.pr) throw new Error(`${source} is not shipped yet: port a run that has its draft PR`)
+    const m = this.meta(source), p = this.d.project, short = to.split('/').pop()!
+    const run = `${source}-${short}`
+    if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
+    const repo = this.repo(m)
+    const pm: Meta = { ...m, base: `origin/${to}`, branch: `${m.branch}-${short}`, worktree: join(p.worktrees, `${m.id}-${short}`, m.repo) }
+    mkdirSync(this.runDir(run), { recursive: true })
+    writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(pm, null, 2) + '\n')
+    for (const f of ['ticket.md', 'plan.md']) if (existsSync(join(this.runDir(source), f))) writeFileSync(join(this.runDir(run), f), readFileSync(join(this.runDir(source), f)))
+    const from = m.base.replace(/^origin\//, '')
+    const pr = existsSync(this.prFile(source)) ? readFileSync(this.prFile(source), 'utf8') : `# ${m.title}\n`
+    writeFileSync(this.prFile(run), pr.replace(/^(#\s+.+\n?)/m, `$1\nPort of ${src.ticket} PR #${src.pr.number} (${from}) to ${to}.\n`))
+    this.d.store.append(run, 'human', { type: 'run.created', ticket: m.key, title: m.title, project: p.key, base: pm.base })
+    try {
+      await createWorktree({ repo: repo.path, worktree: pm.worktree, branch: pm.branch, base: pm.base, install: repo.install })
+      this.d.store.append(run, 'engine', { type: 'setup.done' })
+    } catch (e) { this.d.store.append(run, 'engine', { type: 'setup.failed', reason: (e as Error).message }); return run }
+    const git = (...a: string[]) => { const r = Bun.spawnSync(['git', ...a], { cwd: pm.worktree, env: this.d.gitEnv ?? process.env }); return { code: r.exitCode, out: new TextDecoder().decode(r.stdout).trim(), err: new TextDecoder().decode(r.stderr).trim() } }
+    const commits = git('log', '--reverse', '--format=%H', `${m.base}..${m.branch}`).out.split('\n').filter(Boolean)
+    this.d.store.append(run, 'engine', { type: 'plan.submitted', summary: `Port of ${src.ticket} PR #${src.pr.number} (${from}) to ${to}`, questions: [] })
+    const pick = git('cherry-pick', '--no-commit', ...commits)
+    if (pick.code !== 0) {
+      const files = git('diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
+      this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the port conflicts in ${files.join(', ') || '(unknown files)'}: message the agent to resolve them, or resolve them by hand in ${pm.worktree}` })
+      return run
+    }
+    git('reset', '--quiet') // the change stays in the working tree, as an agent's would
+    this.d.store.append(run, 'engine', { type: 'build.done' })
+    await this.verifyLoop(run)
+    return run
+  }
+
   private agentFor(run: string): RunAgent {
     const cached = this.agents.get(run)
     if (cached) return cached

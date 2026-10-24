@@ -7,6 +7,7 @@
  *   flow start <project> <ticket> [--base <ref>] [--kind bug|feature] [--model <name>]   worktree, plan; continues until it needs you
  *   flow approve <run> [Q1=<answer> …]                             answer the plan's questions (defaults for the rest)
  *   flow message <run> "<text>"                                     to the run's agent; the run carries on afterwards
+ *   flow port <run> [--to <branch>]                               the shipped fix onto another line (default develop)
  *   flow ship <run>                                                 commit, push, draft PR (after verify)
  *   flow status [<run>]                                             runs and what they need; your plan windows
  *   flow log <run>                                                  the run's events
@@ -157,8 +158,8 @@ async function uiCmd() {
 
 async function main(argv: string[]) {
   const [cmd, ...args] = argv
-  const f = flags(args, ['base', 'model', 'cwd', 'kind'])
-  const service = ['start', 'approve', 'message', 'ship'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
+  const f = flags(args, ['base', 'model', 'cwd', 'kind', 'to'])
+  const service = ['start', 'approve', 'message', 'ship', 'port'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
   switch (cmd) {
     case undefined: case 'ui': return uiCmd()
     case 'serve': return serveCmd()
@@ -193,6 +194,20 @@ async function main(argv: string[]) {
       if (!run) throw new Error('flow ship <run>')
       if (service) return viaService(service, { cmd: 'ship', run }).finally(() => service.close())
       return withRun(run, f.model, async p => { const pr = await p.ship(run); console.log(`draft PR #${pr.number}: ${pr.url}`) })
+    }
+    case 'port': {
+      const [run] = args
+      if (!run) throw new Error('flow port <run> [--to <branch>]')
+      if (service) return viaService(service, { cmd: 'port', run, to: f.to }).finally(() => service.close())
+      const s = store()
+      const state = s.state(run)
+      if (!state) throw new Error(`no run ${run}: flow status`)
+      const p = pipeline(s, state.project, f.model)
+      const port = `${run}-${(f.to ?? 'develop').split('/').pop()}`
+      const release = lock(port)
+      try { await p.port(run, f.to ?? 'develop') } finally { await p.close(); release() }
+      console.log(`\n${next(s.state(port)!)}\n${windowsLine(p.runner.ingest.windows)}`)
+      return
     }
     case 'status': {
       const s = store()

@@ -13,6 +13,7 @@ export type Command =
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
+  | { cmd: 'port'; run: string; to?: string }
 
 export type Reply = { ok: true; run: string } | { ok: false; error: string }
 export interface Notice { run: string; text: string }
@@ -76,6 +77,13 @@ export class Service {
       const s = this.d.store.state(c.run)
       if (!s) throw new Error(`no run ${c.run}`)
       const p = this.pipeline(s.project)
+      if (c.cmd === 'port') {
+        if (!s.pr) throw new Error(`${c.run} is not shipped yet: port a run that has its draft PR`)
+        const to = c.to ?? 'develop', run = `${c.run}-${to.split('/').pop()}`
+        if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
+        this.act(run, async () => { await p.port(c.run, to) })
+        return { ok: true, run }
+      }
       this.act(c.run, () => (c.cmd === 'approve' ? p.approve(c.run, c.answers ?? {}) : c.cmd === 'message' ? p.message(c.run, c.text) : p.ship(c.run).then(() => {})))
       return { ok: true, run: c.run }
     } catch (e) { return { ok: false, error: (e as Error).message } }
