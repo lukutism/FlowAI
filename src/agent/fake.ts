@@ -12,8 +12,8 @@ export class FakeAgent implements Agent {
   constructor(private scripts: FakeTurn[]) {}
   async *turn(prompt: string): AsyncIterable<AgentEvent> {
     const script = this.scripts[this.prompts.length]
-    if (script === undefined) throw new Error(`the fake agent has ${this.scripts.length} recorded turn(s); turn ${this.prompts.length + 1} was asked for`)
     this.prompts.push(prompt)
+    if (script === undefined) throw new Error(`the fake agent has ${this.scripts.length} recorded turn(s); turn ${this.prompts.length} was asked for`)
     if (typeof script !== 'string') script.effect?.(prompt)
     yield* parseStream(typeof script === 'string' ? script : script.stream)
   }

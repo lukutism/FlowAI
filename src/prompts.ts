@@ -40,3 +40,10 @@ ${findings.map(f => `- ${f}`).join('\n')}
 Fix them in the code (no suppressions such as @ts-ignore or eslint-disable), then stop. flow runs verify again.`
 
 export const planRetryPrompt = (planFile: string, problem: string) => `${planFile} ${problem}. Write the plan there now, in the format from the first message, then stop.`
+
+/** the first message to an agent that has no session yet (a port's): what it is working on, then the message */
+export const contextPrompt = (b: Brief, planFile: string, prFile: string, text: string) => `You are picking up ticket ${b.key} "${b.title}" (${b.url}) in this worktree, on branch ${b.branch} from ${b.base}.
+The plan is in ${planFile}; the pull request description in ${prFile}. Leave your changes uncommitted: flow commits,
+pushes and opens the draft PR itself after verify and review.
+
+${text}`

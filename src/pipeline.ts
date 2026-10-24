@@ -5,7 +5,7 @@ import { azureDraftPr, azureTicket, type Az } from './azure.ts'
 import type { Project } from './config.ts'
 import { createWorktree, shipChange } from './git.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
-import { buildPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
+import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
 import { Runner, type RunAgent } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import type { EventStore } from './store.ts'
@@ -108,7 +108,7 @@ export class Pipeline {
   /** a message from the human: goes to the run's session; afterwards the run carries on from where it is */
   async message(run: string, text: string) {
     this.d.store.append(run, 'human', { type: 'human.message', text })
-    const r = await this.runner.turn(run, text)
+    const r = await this.say(run, text)
     if (!r.ok) return
     const s = this.state(run)
     if (s.stage === 'plan' && !s.plan) { const p = this.readPlan(run); if ('plan' in p) await this.submitPlan(run, p.plan) }
@@ -168,6 +168,12 @@ export class Pipeline {
     this.d.store.append(run, 'engine', { type: 'build.done' })
     await this.verifyLoop(run)
     return run
+  }
+
+  /** a message to the run's agent; an agent with no session yet (a port's) gets the run's context first */
+  private say(run: string, text: string) {
+    const s = this.state(run)
+    return this.runner.turn(run, s.session ? text : contextPrompt(this.meta(run), this.planFile(run), this.prFile(run), text))
   }
 
   private agentFor(run: string): RunAgent {
@@ -233,7 +239,7 @@ export class Pipeline {
         prompt = reviewFixPrompt(found)
       }
       if (s.stage !== 'build') return // stopped for the human (red too often)
-      const r = await this.runner.turn(run, prompt)
+      const r = await this.say(run, prompt)
       if (!r.ok) return
       this.d.store.append(run, 'agent', { type: 'build.done' })
     }

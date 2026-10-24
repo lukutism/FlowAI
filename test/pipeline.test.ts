@@ -252,6 +252,20 @@ describe('port: the same fix onto another line', () => {
     const port = await t.pipe.port(run, 'develop')
     expect(t.store.state(port)).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/conflicts in src\/a\.ts/) } })
   })
+  test('a run whose agent has no session yet (a port): its first message carries the ticket and the plan first', async () => {
+    const { t, run } = await shipped(main => {
+      writeFileSync(join(main, 'src/a.ts'), 'const a = 9 // changed on develop meanwhile\n')
+      git(main, 'commit', '-qam', 'develop moves on'); git(main, 'push', '-q', 'origin', 'HEAD:develop')
+    })
+    const port = await t.pipe.port(run, 'develop')
+    const prompts = t.agent.prompts.length
+    await t.pipe.message(port, 'Resolve the conflict in src/a.ts, keeping develop\'s value.').catch(() => {})
+    const first = t.agent.prompts[prompts]!
+    expect(first).toContain('ticket #186278 "Asset list crashes"')
+    expect(first).toContain(join(t.root, 'data', 'runs', 'example-186278-develop', 'plan.md'))
+    expect(first).toContain('fix/186278-develop')
+    expect(first).toEndWith("Resolve the conflict in src/a.ts, keeping develop's value.")
+  })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
     const run = await t.pipe.start(186278)
