@@ -11,6 +11,7 @@ import { writeRunSettings } from './settings.ts'
 import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 import { changedFiles, verify } from './verify.ts'
+import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
 interface Meta extends Brief { id: number; kind: 'bug' | 'feature'; repo: string }
@@ -22,6 +23,8 @@ export interface PipelineDeps {
   /** flow's own data: the event log and one folder per run */
   dataDir: string
   makeAgent: (o: { cwd: string; settings: string; resume?: string }) => RunAgent
+  /** a fresh, read-only reviewer session per review; without it the review is skipped */
+  makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   /** sees each agent event as it arrives (live output) */
@@ -183,12 +186,44 @@ export class Pipeline {
       catch (e) { this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `verify could not run: ${(e as Error).message}` }); return }
       const findings = res.steps.flatMap(s => s.newFindings)
       this.d.store.append(run, 'engine', { type: 'verify.result', ok: res.ok, newFindings: findings })
-      const s = this.state(run)
-      if (s.stage === 'review') { this.d.store.append(run, 'engine', { type: 'review.skipped', reason: 'no reviewer configured yet' }); return }
+      let s = this.state(run)
+      let prompt = fixPrompt(findings)
+      if (s.stage === 'review') {
+        const found = await this.reviewStep(run)
+        s = this.state(run)
+        if (s.stage !== 'build' || !found) return // clean, skipped, or stopped for the human (review cap)
+        prompt = reviewFixPrompt(found)
+      }
       if (s.stage !== 'build') return // stopped for the human (red too often)
-      const r = await this.runner.turn(run, fixPrompt(findings))
+      const r = await this.runner.turn(run, prompt)
       if (!r.ok) return
       this.d.store.append(run, 'agent', { type: 'build.done' })
     }
+  }
+
+  /** the independent review; returns its findings when the agent has something to fix */
+  private async reviewStep(run: string): Promise<Finding[] | null> {
+    const m = this.meta(run)
+    const skip = (reason: string) => { this.d.store.append(run, 'engine', { type: 'review.skipped', reason }); return null }
+    if (!this.d.project.review.enabled) return skip('review is off for this project')
+    if (!this.d.makeReviewer) return skip('no reviewer configured')
+    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree })
+    const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings })
+    try {
+      const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
+      const prompt = reviewPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change: changeText(m.worktree) })
+      let r = await this.runner.turnWith(run, reviewer, prompt, { ownSession: false })
+      if (!r.ok) return null
+      let parsed: ReturnType<typeof parseFindings>
+      try { parsed = parseFindings(r.text) } catch (first) {
+        r = await this.runner.turnWith(run, reviewer, 'Answer again with the short note and exactly one ```json block holding the array of findings (an empty array if none).', { ownSession: false })
+        if (!r.ok) return null
+        try { parsed = parseFindings(r.text) } catch (e) { return skip(`review unreadable: ${(e as Error).message} (first answer: ${(first as Error).message})`) }
+      }
+      const n = this.state(run).loops.review + 1
+      writeFileSync(join(this.runDir(run), 'review.json'), JSON.stringify({ review: n, at: this.now(), findings: parsed.findings, dropped: parsed.dropped }, null, 2) + '\n')
+      this.d.store.append(run, 'engine', { type: 'review.result', findings: parsed.findings.length })
+      return parsed.findings.length ? parsed.findings : null
+    } finally { await reviewer.close?.() }
   }
 }

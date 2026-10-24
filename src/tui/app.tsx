@@ -30,7 +30,7 @@ type Mode =
   | { kind: 'message'; run: string; text: string }
   | { kind: 'detail'; run: string }
 
-interface Detail { events: RunEvent[]; plan: string; pr: string }
+interface Detail { events: RunEvent[]; plan: string; pr: string; review: string }
 
 export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { api: FlowApi; now?: () => number; onQuit?: () => void }) {
   const [, setTick] = useState(0)
@@ -59,8 +59,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   useEffect(() => {
     if (!detailRun) { setDetail(null); return }
     let live = true
-    void Promise.all([api.events(detailRun), api.file(detailRun, 'plan.md'), api.file(detailRun, 'pr.md')])
-      .then(([events, plan, pr]) => { if (live) setDetail({ events, plan, pr }) })
+    void Promise.all([api.events(detailRun), api.file(detailRun, 'plan.md'), api.file(detailRun, 'pr.md'), api.file(detailRun, 'review.json')])
+      .then(([events, plan, pr, review]) => { if (live) setDetail({ events, plan, pr, review }) })
     return () => { live = false }
   }, [detailRun, api, api.runs.get(detailRun ?? '')?.updatedAt])
 
@@ -195,11 +195,25 @@ function DetailView({ run, detail, now }: { run: RunState; detail: Detail | null
           {lastVerify.newFindings.slice(0, 6).map(f => <text key={f} fg={C.danger}>{`  ${f.slice(0, 110)}`}</text>)}
         </>
       ) : null}
+      <ReviewView json={detail?.review ?? ''} />
       {run.pr ? <text><span fg={C.success}>Draft PR #{run.pr.number} </span><span fg={C.secondary}>{run.pr.url}</span></text> : null}
       <text> </text>
       <text><strong>Timeline</strong></text>
       {timeline.map(e => <text key={e.seq} fg={e.actor === 'human' ? C.text : C.secondary}>{`  ${eventLine(e).slice(0, 120)}`}</text>)}
     </box>
+  )
+}
+
+function ReviewView({ json }: { json: string }) {
+  if (!json.trim()) return null
+  let r: { review: number; findings: { severity: string; file: string; line?: number; problem: string }[]; dropped: number }
+  try { r = JSON.parse(json) } catch { return null }
+  return (
+    <>
+      <text> </text>
+      <text><strong>Review {r.review}</strong><span fg={r.findings.length ? C.warning : C.success}> {r.findings.length ? `${r.findings.length} finding(s)` : 'nothing found'}</span>{r.dropped ? <span fg={C.muted}> · {r.dropped} below 80% confidence left out</span> : null}</text>
+      {r.findings.slice(0, 6).map((f, i) => <text key={i} fg={C.secondary}>{`  R${i + 1} [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''}  ${f.problem}`.slice(0, 120)}</text>)}
+    </>
   )
 }
 

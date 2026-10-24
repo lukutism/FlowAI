@@ -6,7 +6,7 @@ import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 
 /** the files of a run the screen may read */
-export const RUN_FILES = ['ticket.md', 'plan.md', 'pr.md'] as const
+export const RUN_FILES = ['ticket.md', 'plan.md', 'pr.md', 'review.json'] as const
 export type RunFile = (typeof RUN_FILES)[number]
 
 export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile }

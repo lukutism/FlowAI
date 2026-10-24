@@ -16,7 +16,7 @@ const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const result = (text = 'done') => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 's-1', usage: { input_tokens: 1000, output_tokens: 100 } })
 const turn = (effect?: (prompt: string) => void, text?: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), result(text)].join('\n'), effect })
 
-function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[]) {
+function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-pipe-'))
   const origin = join(root, 'origin.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin])
@@ -28,6 +28,7 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[]) {
   const project = parseProject({
     key: 'example', name: 'Example', worktrees: join(root, 'worktrees'),
     tracker: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' }, forge: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' },
+    ...(o.reviewOff ? { review: { enabled: false } } : {}),
     repos: [{ key: 'mobile', path: main, defaultBase: 'origin/develop', verify: [
       { name: 'tsc', kind: 'tsc', cmd: `${TOOLS} tsc` },
       { name: 'eslint', kind: 'eslint', cmd: `${TOOLS} eslint {json} {files}`, changedOnly: true, ext: ['ts'] },
@@ -45,9 +46,17 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[]) {
   const agent = new FakeAgent(turns({ wt, run: runDir }))
   const agents: { cwd: string; settings: string; resume?: string }[] = []
   const store = new EventStore(':memory:')
-  const pipe = new Pipeline({ store, project, az, dataDir, gitEnv: env, makeAgent: o => { agents.push(o); return agent } })
-  return { pipe, store, agent, azCalls, origin, wt, runDir, agents }
+  const reviewer = new FakeAgent(o.review ?? [])
+  const reviewers: { cwd: string; settings: string }[] = []
+  const pipe = new Pipeline({ store, project, az, dataDir, gitEnv: env, makeAgent: o => { agents.push(o); return agent },
+    ...(o.review ? { makeReviewer: (x: { cwd: string; settings: string }) => { reviewers.push(x); return reviewer } } : {}) })
+  return { pipe, store, agent, reviewer, reviewers, azCalls, origin, wt, runDir, agents }
 }
+const review = (findings: object[]): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'rev-1', model: 'm', apiKeySource: 'none' }),
+  JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: `Checked.\n\n\`\`\`json\n${JSON.stringify(findings)}\n\`\`\``, num_turns: 1, session_id: 'rev-1', usage: { input_tokens: 500, output_tokens: 50 } })].join('\n') })
+const reviewText = (text: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'rev-1', model: 'm', apiKeySource: 'none' }),
+  JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 'rev-1', usage: { input_tokens: 500, output_tokens: 50 } })].join('\n') })
+const finding = { severity: 'P1', file: 'src/b.ts', line: 1, problem: 'b is exported but never used', evidence: 'no import of b anywhere', confidence: 90 }
 const plan = (questions = 'none') => `# Plan\n\nGuard the walk against missing assets.\n\n## Open questions\n${questions}\n`
 const prMd = '# Guard the asset walk against missing assets\n\n## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings\n'
 
@@ -160,5 +169,50 @@ describe('a ticket to a draft PR', () => {
     await t.pipe.start(186278)
     expect(readFileSync(join(t.runDir, 'ticket.md'), 'utf8')).toContain('It crashes.')
     expect(existsSync(join(t.runDir, 'run.json'))).toBe(true)
+  })
+})
+
+describe('the independent review before ship', () => {
+  test('nothing found: ready to ship; the reviewer saw the new file in full; its session did not replace the run\'s', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+    ], { review: [review([])] })
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' }, session: 's-1' })
+    expect(t.reviewer.prompts[0]).toContain('+export const b = 2')
+    expect(t.reviewer.prompts[0]).toContain('Guard the walk against missing assets.')
+    expect(t.reviewers[0]).toMatchObject({ cwd: t.wt })
+    expect(JSON.parse(readFileSync(join(t.runDir, 'review.json'), 'utf8'))).toMatchObject({ review: 1, findings: [] })
+  })
+  test('a finding goes to the agent; after its fix, verify and review run again, then ready to ship', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'const b = 2\nconsole.log(b)\n')),
+    ], { review: [review([finding]), review([])] })
+    const run = await t.pipe.start(186278)
+    expect(t.agent.prompts[2]).toContain('R1 [P1] src/b.ts:1: b is exported but never used')
+    expect(t.store.events(run).map(e => e.type).filter(x => /review|verify|build/.test(x))).toEqual(['build.done', 'verify.result', 'review.result', 'build.done', 'verify.result', 'review.result'])
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', loops: { review: 1 } })
+  })
+  test('an unreadable review is asked for once more, then recorded as skipped with the reason; it never counts as clean', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+    ], { review: [reviewText('LGTM'), reviewText('still no json')] })
+    const run = await t.pipe.start(186278)
+    expect(t.reviewer.prompts[1]).toMatch(/one .*json/i)
+    expect(t.store.events(run).find(e => e.type === 'review.skipped')).toMatchObject({ reason: expect.stringMatching(/review unreadable.*no JSON array/) })
+    expect(t.store.state(run)).toMatchObject({ needs: { kind: 'ship' } })
+  })
+  test('review turned off for the project: skipped, saying so', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+    ], { review: [], reviewOff: true })
+    const run = await t.pipe.start(186278)
+    expect(t.store.events(run).find(e => e.type === 'review.skipped')).toMatchObject({ reason: 'review is off for this project' })
+    expect(t.reviewer.prompts).toEqual([])
   })
 })

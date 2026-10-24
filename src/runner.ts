@@ -38,8 +38,13 @@ export class Runner {
   }
 
   async turn(run: string, prompt: string): Promise<{ ok: boolean; text: string }> {
+    return this.turnWith(run, this.o.agentFor(run), prompt)
+  }
+
+  /** a turn with another agent for the run (the reviewer): its tokens count for the run, its session is not the run's */
+  async turnWith(run: string, agent: RunAgent, prompt: string, o: { ownSession?: boolean } = {}): Promise<{ ok: boolean; text: string }> {
+    const own = o.ownSession ?? agent === this.o.agentFor(run)
     const release = await this.turns.acquire(run)
-    const agent = this.o.agentFor(run)
     try {
       for await (const e of agent.turn(prompt)) {
         this.o.tap?.(run, e)
@@ -48,7 +53,7 @@ export class Runner {
           this.o.store.append(run, 'engine', { type: 'run.blocked', reason: 'the agent session is not on your Claude subscription (an API key is set); flow stopped it before it could be billed' })
           return { ok: false, text: '' }
         }
-        this.ingest.agent(run, e)
+        if (e.kind !== 'session' || own) this.ingest.agent(run, e)
         if (e.kind === 'result') return { ok: e.ok, text: e.text }
       }
       throw new Error('the turn ended without a result')

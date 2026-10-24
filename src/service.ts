@@ -23,6 +23,7 @@ export interface ServiceDeps {
   az: Az
   dataDir: string
   makeAgent: (o: { cwd: string; settings: string; resume?: string }) => RunAgent
+  makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   tap?: (run: string, e: AgentEvent) => void
@@ -54,7 +55,7 @@ export class Service {
     if (!p) {
       const cfg = this.d.projects[project]
       if (!cfg) throw new Error(`no project ${project}`)
-      p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, gitEnv: this.d.gitEnv, now: this.d.now, tap: this.d.tap,
+      p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, makeReviewer: this.d.makeReviewer, gitEnv: this.d.gitEnv, now: this.d.now, tap: this.d.tap,
         onWindows: w => { this.lastWindows = w; for (const l of this.windowsListeners) l(w) } })
       if (!Object.keys(this.lastWindows).length) this.lastWindows = p.runner.ingest.windows
       this.pipes.set(project, p)
