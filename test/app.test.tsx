@@ -101,14 +101,14 @@ describe('Runs screen', () => {
     const t = await screen()
     try {
       expect(await t.press('n')).toContain('New run')
-      await t.press(...'fso 204598 origin/patch/3.18.41'.split(''), 'enter')
-      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.18.41' }])
+      await t.press(...'fso 204598 origin/patch/3.18.41 repos=mobile,portal'.split(''), 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.18.41', repos: ['mobile', 'portal'] }])
     } finally { t.s.renderer.destroy() }
   })
   test('n with a malformed entry says what it needs and sends nothing', async () => {
     const t = await screen()
     try {
-      expect(await t.press('n', ...'fso abc'.split(''), 'enter')).toContain('type: <project> <ticket number> [base]')
+      expect(await t.press('n', ...'fso abc'.split(''), 'enter')).toContain('type: <project> <ticket number> [base] [repos=a,b]')
       expect(t.f.sent).toEqual([])
     } finally { t.s.renderer.destroy() }
   })

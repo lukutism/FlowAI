@@ -83,3 +83,32 @@ describe('verify: findings new against the base', () => {
     expect(r.steps.find(s => s.name === 'eslint')).toMatchObject({ status: 'ok', note: 'no matching files' })
   })
 })
+
+describe('verify per package (a monorepo whose tools run inside each package)', () => {
+  function mono() {
+    const wt = mkdtempSync(join(tmpdir(), 'flow-mono-'))
+    for (const p of ['a', 'b']) { mkdirSync(join(wt, 'packages', p, 'src'), { recursive: true }); writeFileSync(join(wt, 'packages', p, 'src/x.ts'), 'export const x = 1\n') }
+    git(wt, 'init', '-q'); git(wt, 'add', '.'); git(wt, 'commit', '-qm', 'base')
+    return wt
+  }
+  const lint: VerifyStep = { name: 'eslint', kind: 'eslint', cmd: `${TOOLS} eslint {json} {files}`, changedOnly: true, ext: ['ts'], perPackage: 'packages/*' }
+  const tsc: VerifyStep = { name: 'tsc', kind: 'tsc', cmd: `${TOOLS} tsc`, changedOnly: false, perPackage: 'packages/*' }
+  test('a changed-files step runs only in the packages with changes, files relative to it; findings name the full path', async () => {
+    const wt = mono()
+    writeFileSync(join(wt, 'packages/b/src/x.ts'), '// LINT in b\n')
+    const r = await verify(wt, [lint])
+    expect(r.steps[0]).toMatchObject({ status: 'new', newFindings: ['packages/b/src/x.ts|no-lint|// LINT in b'] })
+  })
+  test('a whole-project step runs in every package, judged against the base per package', async () => {
+    const wt = mono()
+    writeFileSync(join(wt, 'packages/a/src/x.ts'), 'export const x = 2 // ERR in a\n')
+    const r = await verify(wt, [tsc])
+    expect(r.steps[0]).toMatchObject({ status: 'new', newFindings: ['packages/a/src/x.ts|TS2322|export const x = 2 // ERR in a'] })
+  })
+  test('vitest reports read like jest\'s', async () => {
+    const wt = mono()
+    writeFileSync(join(wt, 'packages/a/src/x.ts'), '// FAIL\n')
+    const r = await verify(wt, [{ name: 'vitest', kind: 'vitest', cmd: `${TOOLS} jest {json} {files}`, changedOnly: true, ext: ['ts'], perPackage: 'packages/*' }])
+    expect(r.steps[0]!.newFindings).toEqual(['packages/a/src/x.ts|src/x.ts works'])
+  })
+})

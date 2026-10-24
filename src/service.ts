@@ -9,7 +9,7 @@ import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 
 export type Command =
-  | { cmd: 'start'; project: string; ticket: number; base?: string; kind?: 'bug' | 'feature' }
+  | { cmd: 'start'; project: string; ticket: number; base?: string; kind?: 'bug' | 'feature'; repos?: string[] }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
@@ -71,7 +71,7 @@ export class Service {
         const run = `${c.project}-${c.ticket}`
         const p = this.pipeline(c.project)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
-        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind }) })
+        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos }) })
         return { ok: true, run }
       }
       const s = this.d.store.state(c.run)

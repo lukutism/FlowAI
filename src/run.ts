@@ -22,7 +22,7 @@ export type EventBody =
   | { type: 'review.result'; findings: number }
   /** the project runs no reviewer yet: the run goes from verify to ship */
   | { type: 'review.skipped'; reason: string }
-  | { type: 'pr.opened'; url: string; number: number }
+  | { type: 'pr.opened'; url: string; number: number; repo?: string }
   | { type: 'run.blocked'; reason: string }
   | { type: 'run.waiting'; resource: string }
   | { type: 'run.paused'; window: string; until: number }
@@ -47,6 +47,8 @@ export interface RunState {
   loops: { verify: number; verifyRuns: number; review: number }
   tokens: number; compactions: number; session?: string
   pr?: { url: string; number: number }
+  /** one draft PR per repo the run changed */
+  prs?: { url: string; number: number; repo?: string }[]
   waitingFor?: string; pausedUntil?: number
   createdAt: number; updatedAt: number
 }
@@ -110,7 +112,12 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
       return go(s, e, { stage: 'build', loops, ...running })
     }
     case 'review.skipped': need(s, 'review', e); return go(s, e, { stage: 'ship', ...READY })
-    case 'pr.opened': need(s, 'ship', e); return go(s, e, { pr: { url: e.url, number: e.number }, status: 'needs-you', needs: { kind: 'pr', ask: `review draft PR #${e.number}` } })
+    case 'pr.opened': {
+      need(s, 'ship', e)
+      const prs = [...(s.prs ?? []), { url: e.url, number: e.number, ...(e.repo ? { repo: e.repo } : {}) }]
+      const ask = prs.length > 1 ? `review draft PRs ${prs.map(p => `#${p.number}`).join(', ')}` : `review draft PR #${e.number}`
+      return go(s, e, { pr: s.pr ?? { url: e.url, number: e.number }, prs, status: 'needs-you', needs: { kind: 'pr', ask } })
+    }
     case 'run.done': return go(s, e, { stage: 'done', status: 'done', needs: undefined, waitingFor: undefined, pausedUntil: undefined })
     case 'agent.asked': return go(s, e, { status: 'needs-you', needs: { kind: 'question', ask: e.question } })
     case 'human.message':

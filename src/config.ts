@@ -13,11 +13,14 @@ const github = z.object({ kind: z.literal('github'), repo: z.string().regex(/^[^
 
 const verifyStep = z.object({
   name: z.string(),
-  kind: z.enum(['tsc', 'eslint', 'jest', 'command']),
+  /** vitest: its JSON report reads like jest's */
+  kind: z.enum(['tsc', 'eslint', 'jest', 'vitest', 'command']),
   /** {files}: the changed files; {json}: a file the step writes its findings to */
   cmd: z.string(),
   changedOnly: z.boolean().default(false),
   ext: z.array(z.string()).optional(),
+  /** run inside each package ("packages/*"), with paths relative to it */
+  perPackage: z.string().optional(),
 })
 
 const repo = z.object({
@@ -28,6 +31,8 @@ const repo = z.object({
   releaseBases: z.array(z.string()).default([]),
   install: z.string().optional(),
   verify: z.array(verifyStep),
+  /** taken when a run names no repos (if none is marked, the first) */
+  default: z.boolean().default(false),
 })
 
 const project = z.object({

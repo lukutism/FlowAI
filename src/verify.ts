@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { extname, join, relative, resolve } from 'node:path'
 import type { VerifyStep } from './config.ts'
@@ -32,8 +32,9 @@ export function changedFiles(wt: string): string[] {
     .map(l => l.slice(3).split(' -> ').pop()!.replace(/^"|"$/g, '')).sort()
 }
 
-function parse(step: VerifyStep, wt: string, r: { code: number; out: string; err: string }, json?: string): Run {
-  const rel = (f: string) => relative(wt, resolve(wt, f))
+/** cwd: where the tool ran (a package of a monorepo); findings name paths from the worktree root */
+function parse(step: VerifyStep, wt: string, cwd: string, r: { code: number; out: string; err: string }, json?: string): Run {
+  const rel = (f: string) => relative(wt, resolve(cwd, f))
   if (step.kind === 'tsc') {
     const findings = [...r.out.matchAll(/^(.+?)\(\d+,\d+\): error (TS\d+): (.*)$/gm)].map(m => `${rel(m[1]!)}|${m[2]}|${m[3]!.trim()}`)
     return r.code !== 0 && !findings.length ? { error: `exit ${r.code}: ${(r.err || r.out).trim().split('\n').slice(-2).join(' | ')}` } : { findings }
@@ -50,12 +51,31 @@ function parse(step: VerifyStep, wt: string, r: { code: number; out: string; err
   }) }
 }
 
-async function runStep(step: VerifyStep, wt: string, files: string[]): Promise<Run> {
+async function runIn(step: VerifyStep, wt: string, cwd: string, files: string[]): Promise<Run> {
   const dir = mkdtempSync(join(tmpdir(), 'flow-verify-')), json = join(dir, 'report.json')
   try {
     const cmd = step.cmd.replaceAll('{files}', files.map(sh).join(' ')).replaceAll('{json}', sh(json))
-    return parse(step, wt, await exec(cmd, wt), step.cmd.includes('{json}') ? json : undefined)
+    return parse(step, wt, cwd, await exec(cmd, cwd), step.cmd.includes('{json}') ? json : undefined)
   } finally { rmSync(dir, { recursive: true, force: true }) }
+}
+
+/** the packages a perPackage step runs in ("packages/*": each folder there) */
+function packages(wt: string, glob: string): string[] {
+  const dir = glob.replace(/\/\*$/, '')
+  if (!existsSync(join(wt, dir))) return []
+  return readdirSync(join(wt, dir), { withFileTypes: true }).filter(e => e.isDirectory()).map(e => `${dir}/${e.name}`).sort()
+}
+
+/** a step on files (paths from the root); per package: in each package that has some (all packages for a whole-project step) */
+async function runStep(step: VerifyStep, wt: string, files: string[]): Promise<Run | null> {
+  if (!step.perPackage) return step.changedOnly && !files.length ? null : runIn(step, wt, wt, files)
+  const units = packages(wt, step.perPackage)
+    .map(pkg => ({ pkg, files: files.filter(f => f.startsWith(`${pkg}/`)).map(f => f.slice(pkg.length + 1)) }))
+    .filter(u => !step.changedOnly || u.files.length)
+  if (!units.length) return null
+  const runs = await Promise.all(units.map(u => runIn(step, wt, join(wt, u.pkg), u.files)))
+  const errors = runs.flatMap((r, i) => ('error' in r ? [`${units[i]!.pkg}: ${r.error}`] : []))
+  return errors.length ? { error: errors.join('; ') } : { findings: runs.flatMap(r => ('findings' in r ? r.findings : [])) }
 }
 
 /** head findings the base doesn't have, counting duplicates */
@@ -82,7 +102,7 @@ export async function verify(worktree: string, steps: VerifyStep[]): Promise<Ver
     base = await Promise.all(todo.map(t => {
       if (t.s.changedOnly && !t.files.length) return null
       const atBase = t.files.filter(f => existsSync(join(wt, f)))
-      return t.s.changedOnly && !atBase.length ? { findings: [] } : runStep(t.s, wt, atBase)
+      return t.s.changedOnly && !atBase.length ? { findings: [] } : runStep(t.s, wt, atBase).then(r => r ?? { findings: [] })
     }))
   } finally {
     const pop = git(wt, 'stash', 'pop', '--index')

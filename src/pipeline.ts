@@ -2,19 +2,23 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import { azureDraftPr, azureTicket, type Az } from './azure.ts'
-import type { Project } from './config.ts'
+import type { Project, Repo } from './config.ts'
 import { createWorktree, shipChange } from './git.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
+import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
+import type { RunState } from './run.ts'
 import { Runner, type RunAgent } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 import { changedFiles, verify } from './verify.ts'
-import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
+
+/** a repo of a run: its worktree and the base it started from */
+interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
-interface Meta extends Brief { id: number; kind: 'bug' | 'feature'; repo: string }
+interface Meta extends Brief { id: number; kind: 'bug' | 'feature'; repos: RunRepo[] }
 
 export interface PipelineDeps {
   store: EventStore
@@ -34,9 +38,9 @@ export interface PipelineDeps {
 }
 
 /**
- * A ticket from intake to a draft PR: worktree, plan turn, the plan gate, build, verify against the base (new
- * findings go back to the agent), then a stop for the human to ship. Each step runs until the run needs the
- * human, then returns; the next command (approve, message, ship) carries on from the log.
+ * A ticket from intake to draft PRs: a worktree per repo, plan turn, the plan gate, build, verify against the base
+ * (new findings go back to the agent), an independent review, then a stop for the human to ship. Each step runs
+ * until the run needs the human, then returns; the next command (approve, message, ship) carries on from the log.
  */
 export class Pipeline {
   readonly runner: Runner
@@ -52,42 +56,66 @@ export class Pipeline {
   }
 
   runDir = (run: string) => join(this.d.dataDir, 'runs', run)
-  private meta = (run: string): Meta => JSON.parse(readFileSync(join(this.runDir(run), 'run.json'), 'utf8'))
+  state = (run: string): RunState | undefined => this.d.store.state(run)
   private planFile = (run: string) => join(this.runDir(run), 'plan.md')
   private prFile = (run: string) => join(this.runDir(run), 'pr.md')
-  private repo = (m: Meta) => this.d.project.repos.find(r => r.key === m.repo)!
-  private state = (run: string) => this.d.store.state(run)!
+  private repoConfig = (key: string): Repo => this.d.project.repos.find(r => r.key === key)!
   private now = () => (this.d.now ?? Date.now)()
+  private must = (run: string) => this.d.store.state(run)!
 
-  /** kind: overrides the work item type (a Task may be a fix) */
-  async start(id: number, o: { base?: string; kind?: 'bug' | 'feature' } = {}): Promise<string> {
+  /** run.json; one written before runs had several repos (repo + worktree) reads as a single-repo run */
+  private meta(run: string): Meta {
+    const m = JSON.parse(readFileSync(join(this.runDir(run), 'run.json'), 'utf8')) as Meta & { repo?: string }
+    if (!m.repos) m.repos = [{ key: m.repo!, worktree: m.worktree, base: m.base }]
+    return m
+  }
+
+  /** the agent's folder: the worktree with one repo, the run's root with several */
+  private static layout(root: string, repos: RunRepo[]) { return repos.length === 1 ? repos[0]!.worktree : root }
+
+  /** kind: overrides the work item type (a Task may be a fix); repos: else the project's defaults; base: the first repo's */
+  async start(id: number, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[] } = {}): Promise<string> {
     const p = this.d.project
     if (p.tracker.kind !== 'azure') throw new Error(`${p.tracker.kind} tickets are not supported yet`)
     const run = `${p.key}-${id}`
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already: flow status ${run}`)
+    const keys = o.repos?.length ? o.repos : p.repos.some(r => r.default) ? p.repos.filter(r => r.default).map(r => r.key) : [p.repos[0]!.key]
+    const unknown = keys.filter(k => !p.repos.some(r => r.key === k))
+    if (unknown.length) throw new Error(`no repo ${unknown.join(', ')} in project ${p.key} (it has ${p.repos.map(r => r.key).join(', ')})`)
     const t = azureTicket(this.d.az, p.tracker, id)
-    const repo = p.repos[0]!
     const kind = o.kind ?? t.kind
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, repo: repo.key, base: o.base ?? repo.defaultBase,
-      branch: `${kind === 'bug' ? 'fix' : 'feat'}/${id}`, worktree: join(p.worktrees, String(id), repo.key) }
+    const root = join(p.worktrees, String(id))
+    const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch: `${kind === 'bug' ? 'fix' : 'feat'}/${id}`, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
     this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key, title: t.title, project: p.key, base: m.base })
-    try {
-      const w = await createWorktree({ repo: repo.path, worktree: m.worktree, branch: m.branch, base: m.base, install: repo.install })
-      if (w.notes.length) writeFileSync(join(this.runDir(run), 'setup-notes.txt'), w.notes.join('\n') + '\n')
-      this.d.store.append(run, 'engine', { type: 'setup.done' })
-    } catch (e) {
-      this.d.store.append(run, 'engine', { type: 'setup.failed', reason: (e as Error).message })
-      return run
-    }
+    if (!(await this.setup(run, m))) return run
     await this.planStep(run, t.text)
     return run
   }
 
+  /** a worktree per repo; false (and setup.failed) when one can't be made */
+  private async setup(run: string, m: Meta): Promise<boolean> {
+    const notes: string[] = []
+    try {
+      for (const r of m.repos) {
+        const c = this.repoConfig(r.key)
+        const w = await createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install })
+        notes.push(...w.notes.map(n => `${r.key}: ${n}`))
+      }
+    } catch (e) {
+      this.d.store.append(run, 'engine', { type: 'setup.failed', reason: (e as Error).message })
+      return false
+    }
+    if (notes.length) writeFileSync(join(this.runDir(run), 'setup-notes.txt'), notes.join('\n') + '\n')
+    this.d.store.append(run, 'engine', { type: 'setup.done' })
+    return true
+  }
+
   async approve(run: string, answers: Record<string, string> = {}) {
-    const s = this.state(run)
+    const s = this.must(run)
     if (s.needs?.kind !== 'plan' || !s.plan) throw new Error(`${run}: no plan is waiting for a decision (${s.status})`)
     const unknown = Object.keys(answers).filter(k => !s.plan!.questions.some(q => q.id === k))
     if (unknown.length) throw new Error(`${run}: the plan has no question ${unknown.join(', ')}`)
@@ -98,7 +126,7 @@ export class Pipeline {
 
   /** the plan's deadline passed with no answer: the engine takes the defaults (never for a held question) */
   async decideByDeadline(run: string) {
-    const s = this.state(run)
+    const s = this.must(run)
     if (s.needs?.kind !== 'plan' || !s.plan) throw new Error(`${run}: no plan is waiting for a decision`)
     if (s.needs.held) throw new Error(`${run}: the plan has a held question; only you can answer it`)
     this.d.store.append(run, 'engine', { type: 'plan.decided', by: 'deadline', answers: Object.fromEntries(s.plan.questions.map(q => [q.id, q.default])) })
@@ -110,31 +138,37 @@ export class Pipeline {
     this.d.store.append(run, 'human', { type: 'human.message', text })
     const r = await this.say(run, text)
     if (!r.ok) return
-    const s = this.state(run)
+    const s = this.must(run)
     if (s.stage === 'plan' && !s.plan) { const p = this.readPlan(run); if ('plan' in p) await this.submitPlan(run, p.plan) }
     else if (s.stage === 'build' && s.status === 'running') { this.d.store.append(run, 'agent', { type: 'build.done' }); await this.verifyLoop(run) }
   }
 
-  async ship(run: string): Promise<{ number: number; url: string }> {
-    const s = this.state(run)
+  /** a commit, a push and a draft PR for each repo the run changed */
+  async ship(run: string): Promise<{ number: number; url: string }[]> {
+    const s = this.must(run)
     if (s.needs?.kind !== 'ship') throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
     const m = this.meta(run), p = this.d.project
+    if (p.forge.kind !== 'azure') throw new Error(`${p.forge.kind} pull requests are not supported yet`)
+    const changed = m.repos.map(r => ({ r, files: changedFiles(r.worktree) })).filter(x => x.files.length)
+    if (!changed.length) throw new Error(`${run}: nothing to ship, no repo has changes`)
     const pr = existsSync(this.prFile(run)) ? readFileSync(this.prFile(run), 'utf8') : ''
     const summary = prSummary(pr, m.title)
     const body = pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`
-    const message = commitMessage({ id: m.id, title: m.title, kind: m.kind }, changedFiles(m.worktree), m.repo)
-    await shipChange({ worktree: m.worktree, branch: m.branch, message, env: this.d.gitEnv })
-    if (p.forge.kind !== 'azure') throw new Error(`${p.forge.kind} pull requests are not supported yet`)
-    const origin = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], { cwd: m.worktree })
-    const repository = new TextDecoder().decode(origin.stdout).trim().replace(/\.git$/, '').split('/').pop()!
-    const created = azureDraftPr(this.d.az, p.forge, repository, { head: m.branch, base: m.base.replace(/^origin\//, ''), title: `${m.key} ${summary}`, body, workItem: m.id })
-    this.d.store.append(run, 'human', { type: 'pr.opened', url: created.url, number: created.number })
+    const created: { number: number; url: string }[] = []
+    for (const { r, files } of changed) {
+      await shipChange({ worktree: r.worktree, branch: m.branch, message: commitMessage({ id: m.id, title: m.title, kind: m.kind }, files, r.key), env: this.d.gitEnv })
+      const origin = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], { cwd: r.worktree })
+      const repository = new TextDecoder().decode(origin.stdout).trim().replace(/\.git$/, '').split('/').pop()!
+      const c = azureDraftPr(this.d.az, p.forge, repository, { head: m.branch, base: r.base.replace(/^origin\//, ''), title: `${m.key} ${summary}`, body, workItem: m.id })
+      this.d.store.append(run, 'human', { type: 'pr.opened', url: c.url, number: c.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) })
+      created.push(c)
+    }
     return created
   }
 
   /**
-   * The same fix onto another line (release fix → develop): a new run on <to> with the shipped commits applied
-   * uncommitted, then verify and review as usual and a stop to ship. A conflict blocks the run, naming the files.
+   * The same fix onto another line (release fix → develop): a new run on <to> with each repo's shipped commits
+   * applied uncommitted, then verify and review as usual and a stop to ship. A conflict blocks it, naming the files.
    */
   async port(source: string, to = 'develop'): Promise<string> {
     const src = this.d.store.state(source)
@@ -142,29 +176,35 @@ export class Pipeline {
     const m = this.meta(source), p = this.d.project, short = to.split('/').pop()!
     const run = `${source}-${short}`
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
-    const repo = this.repo(m)
-    const pm: Meta = { ...m, base: `origin/${to}`, branch: `${m.branch}-${short}`, worktree: join(p.worktrees, `${m.id}-${short}`, m.repo) }
+    const root = join(p.worktrees, `${m.id}-${short}`)
+    const repos = m.repos.map(r => ({ key: r.key, worktree: join(root, r.key), base: `origin/${to}` }))
+    const pm: Meta = { ...m, base: `origin/${to}`, branch: `${m.branch}-${short}`, repos, worktree: Pipeline.layout(root, repos) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(pm, null, 2) + '\n')
     for (const f of ['ticket.md', 'plan.md']) if (existsSync(join(this.runDir(source), f))) writeFileSync(join(this.runDir(run), f), readFileSync(join(this.runDir(source), f)))
     const from = m.base.replace(/^origin\//, '')
     const pr = existsSync(this.prFile(source)) ? readFileSync(this.prFile(source), 'utf8') : `# ${m.title}\n`
-    writeFileSync(this.prFile(run), pr.replace(/^(#\s+.+\n?)/m, `$1\nPort of ${src.ticket} PR #${src.pr.number} (${from}) to ${to}.\n`))
+    const prs = (src.prs ?? [src.pr]).map(x => `#${x.number}`).join(', ')
+    writeFileSync(this.prFile(run), pr.replace(/^(#\s+.+\n?)/m, `$1\nPort of ${src.ticket} PR ${prs} (${from}) to ${to}.\n`))
     this.d.store.append(run, 'human', { type: 'run.created', ticket: m.key, title: m.title, project: p.key, base: pm.base })
-    try {
-      await createWorktree({ repo: repo.path, worktree: pm.worktree, branch: pm.branch, base: pm.base, install: repo.install })
-      this.d.store.append(run, 'engine', { type: 'setup.done' })
-    } catch (e) { this.d.store.append(run, 'engine', { type: 'setup.failed', reason: (e as Error).message }); return run }
-    const git = (...a: string[]) => { const r = Bun.spawnSync(['git', ...a], { cwd: pm.worktree, env: this.d.gitEnv ?? process.env }); return { code: r.exitCode, out: new TextDecoder().decode(r.stdout).trim(), err: new TextDecoder().decode(r.stderr).trim() } }
-    const commits = git('log', '--reverse', '--format=%H', `${m.base}..${m.branch}`).out.split('\n').filter(Boolean)
-    this.d.store.append(run, 'engine', { type: 'plan.submitted', summary: `Port of ${src.ticket} PR #${src.pr.number} (${from}) to ${to}`, questions: [] })
-    const pick = git('cherry-pick', '--no-commit', ...commits)
-    if (pick.code !== 0) {
-      const files = git('diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
-      this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the port conflicts in ${files.join(', ') || '(unknown files)'}: message the agent to resolve them, or resolve them by hand in ${pm.worktree}` })
+    if (!(await this.setup(run, pm))) return run
+    this.d.store.append(run, 'engine', { type: 'plan.submitted', summary: `Port of ${src.ticket} PR ${prs} (${from}) to ${to}`, questions: [] })
+    const conflicts: string[] = []
+    for (const [i, r] of repos.entries()) {
+      const git = (...a: string[]) => { const x = Bun.spawnSync(['git', ...a], { cwd: r.worktree, env: this.d.gitEnv ?? process.env }); return { code: x.exitCode, out: new TextDecoder().decode(x.stdout).trim() } }
+      const commits = git('log', '--reverse', '--format=%H', `${m.repos[i]!.base}..${m.branch}`).out.split('\n').filter(Boolean)
+      if (!commits.length) continue
+      if (git('cherry-pick', '--no-commit', ...commits).code !== 0) {
+        const files = git('diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
+        conflicts.push(...(files.length ? files : ['(unknown files)']).map(f => (repos.length > 1 ? `${r.key}/${f}` : f)))
+        continue
+      }
+      git('reset', '--quiet') // the change stays in the working tree, as an agent's would
+    }
+    if (conflicts.length) {
+      this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the port conflicts in ${conflicts.join(', ')}: message the agent to resolve them, or resolve them by hand in ${pm.worktree}` })
       return run
     }
-    git('reset', '--quiet') // the change stays in the working tree, as an agent's would
     this.d.store.append(run, 'engine', { type: 'build.done' })
     await this.verifyLoop(run)
     return run
@@ -172,7 +212,7 @@ export class Pipeline {
 
   /** a message to the run's agent; an agent with no session yet (a port's) gets the run's context first */
   private say(run: string, text: string) {
-    const s = this.state(run)
+    const s = this.must(run)
     return this.runner.turn(run, s.session ? text : contextPrompt(this.meta(run), this.planFile(run), this.prFile(run), text))
   }
 
@@ -180,7 +220,8 @@ export class Pipeline {
     const cached = this.agents.get(run)
     if (cached) return cached
     const m = this.meta(run)
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [this.runDir(run)], sandbox: this.d.project.sandbox })
+    const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.runDir(run)], sandbox: this.d.project.sandbox })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session })
     this.agents.set(run, agent)
     return agent
@@ -210,11 +251,11 @@ export class Pipeline {
     const held = plan.questions.some(q => q.held)
     const deadline = plan.questions.length && !held ? this.now() + this.d.project.plan.deadlineMinutes * 60_000 : undefined
     this.d.store.append(run, 'agent', { type: 'plan.submitted', summary: plan.summary, questions: plan.questions, ...(deadline ? { deadline } : {}) })
-    if (this.state(run).stage === 'build') await this.buildStep(run)
+    if (this.must(run).stage === 'build') await this.buildStep(run)
   }
 
   private async buildStep(run: string) {
-    const s = this.state(run)
+    const s = this.must(run)
     const answers = (s.plan?.questions ?? []).map(q => ({ id: q.id, text: q.text, answer: s.plan?.answers?.[q.id] ?? q.default }))
     const r = await this.runner.turn(run, buildPrompt(this.meta(run), answers, this.prFile(run)))
     if (!r.ok) return
@@ -222,19 +263,30 @@ export class Pipeline {
     await this.verifyLoop(run)
   }
 
+  /** verify every repo; with several repos each finding names its repo */
+  private async verifyAll(m: Meta): Promise<{ ok: boolean; findings: string[] }> {
+    let ok = true
+    const findings: string[] = []
+    for (const r of m.repos) {
+      const res = await verify(r.worktree, this.repoConfig(r.key).verify)
+      ok &&= res.ok
+      findings.push(...res.steps.flatMap(s => s.newFindings).map(f => (m.repos.length > 1 ? `${r.key}: ${f}` : f)))
+    }
+    return { ok, findings }
+  }
+
   private async verifyLoop(run: string) {
     const m = this.meta(run)
     for (;;) {
       let res
-      try { res = await verify(m.worktree, this.repo(m).verify) }
+      try { res = await this.verifyAll(m) }
       catch (e) { this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `verify could not run: ${(e as Error).message}` }); return }
-      const findings = res.steps.flatMap(s => s.newFindings)
-      this.d.store.append(run, 'engine', { type: 'verify.result', ok: res.ok, newFindings: findings })
-      let s = this.state(run)
-      let prompt = fixPrompt(findings)
+      this.d.store.append(run, 'engine', { type: 'verify.result', ok: res.ok, newFindings: res.findings })
+      let s = this.must(run)
+      let prompt = fixPrompt(res.findings)
       if (s.stage === 'review') {
         const found = await this.reviewStep(run)
-        s = this.state(run)
+        s = this.must(run)
         if (s.stage !== 'build' || !found) return // clean, skipped, or stopped for the human (review cap)
         prompt = reviewFixPrompt(found)
       }
@@ -251,11 +303,13 @@ export class Pipeline {
     const skip = (reason: string) => { this.d.store.append(run, 'engine', { type: 'review.skipped', reason }); return null }
     if (!this.d.project.review.enabled) return skip('review is off for this project')
     if (!this.d.makeReviewer) return skip('no reviewer configured')
-    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, sandbox: this.d.project.sandbox })
+    const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
+    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, allow: others, sandbox: this.d.project.sandbox })
     const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
-      const prompt = reviewPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change: changeText(m.worktree) })
+      const change = m.repos.length > 1 ? m.repos.map(r => `### ${r.key} (${r.worktree})\n${changeText(r.worktree) || '(no change)'}`).join('\n\n') : changeText(m.repos[0]!.worktree)
+      const prompt = reviewPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change })
       let r = await this.runner.turnWith(run, reviewer, prompt, { ownSession: false })
       if (!r.ok) return null
       let parsed: ReturnType<typeof parseFindings>
@@ -264,7 +318,7 @@ export class Pipeline {
         if (!r.ok) return null
         try { parsed = parseFindings(r.text) } catch (e) { return skip(`review unreadable: ${(e as Error).message} (first answer: ${(first as Error).message})`) }
       }
-      const n = this.state(run).loops.review + 1
+      const n = this.must(run).loops.review + 1
       writeFileSync(join(this.runDir(run), 'review.json'), JSON.stringify({ review: n, at: this.now(), findings: parsed.findings, dropped: parsed.dropped, below: parsed.below, note: parsed.note }, null, 2) + '\n')
       this.d.store.append(run, 'engine', { type: 'review.result', findings: parsed.findings.length })
       return parsed.findings.length ? parsed.findings : null
