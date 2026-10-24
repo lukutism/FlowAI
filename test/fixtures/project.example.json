@@ -1,0 +1,23 @@
+{
+  "key": "example",
+  "name": "Example app",
+  "tracker": { "kind": "azure", "org": "https://dev.azure.com/example", "project": "example" },
+  "forge": { "kind": "azure", "org": "https://dev.azure.com/example", "project": "example" },
+  "worktrees": "~/work/example/.worktrees",
+  "repos": [
+    {
+      "key": "mobile",
+      "path": "~/work/example/mobile",
+      "defaultBase": "origin/develop",
+      "releaseBases": ["origin/patch/*", "origin/release/*"],
+      "install": "yarn install --frozen-lockfile",
+      "verify": [
+        { "name": "tsc", "kind": "tsc", "cmd": "node_modules/.bin/tsc --noEmit --pretty false -p tsconfig.json" },
+        { "name": "eslint", "kind": "eslint", "cmd": "node_modules/.bin/eslint --format json -o {json} {files}", "changedOnly": true, "ext": ["ts", "tsx", "js", "jsx"] },
+        { "name": "jest", "kind": "jest", "cmd": "node_modules/.bin/jest --json --passWithNoTests --outputFile={json} --findRelatedTests {files}", "changedOnly": true, "ext": ["ts", "tsx", "js"] }
+      ]
+    }
+  ],
+  "agent": { "cli": "claude" },
+  "plan": { "deadlineMinutes": 30 }
+}
