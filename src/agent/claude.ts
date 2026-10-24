@@ -1,0 +1,84 @@
+import type { Subprocess } from 'bun'
+import type { Agent } from './fake.ts'
+import { parseLine, type AgentEvent } from './stream.ts'
+
+export interface ClaudeOptions {
+  /** the run's worktree */
+  cwd: string
+  /** the run's settings file (flow's hooks); added to the user's own settings, which all stay loaded */
+  settings: string
+  /** continue this session instead of starting a new one */
+  resume?: string
+  /** a model for this run; default: the user's own setting */
+  model?: string
+  /** the CLI to run; tests pass a stand-in */
+  bin?: string[]
+  env?: Record<string, string>
+}
+
+/**
+ * One `claude -p` process per run, on the user's subscription and full setup. Each turn writes one stream-json
+ * message and reads events until its result. A message written while a turn runs can be lost by the CLI
+ * (spike/FINDINGS.md), so a second turn is refused until the first has ended.
+ */
+export class ClaudeAgent implements Agent {
+  private proc?: Subprocess<'pipe', 'pipe', 'pipe'>
+  private lines?: AsyncIterator<string>
+  private stderr = ''
+  private busy = false
+
+  constructor(private o: ClaudeOptions) {}
+
+  async *turn(prompt: string): AsyncIterable<AgentEvent> {
+    if (this.busy) throw new Error('a turn is still running: send the next message after its result')
+    this.busy = true
+    try {
+      const proc = this.start()
+      proc.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } }) + '\n')
+      await proc.stdin.flush()
+      for (;;) {
+        const next = await this.lines!.next()
+        if (next.done) {
+          const code = await proc.exited
+          throw new Error(`claude exited with ${code} before the turn ended: ${this.stderr.trim().split('\n').slice(-3).join(' | ') || '(no stderr)'}`)
+        }
+        for (const e of parseLine(next.value)) {
+          yield e
+          if (e.kind === 'result') return
+        }
+      }
+    } finally { this.busy = false }
+  }
+
+  async close() {
+    const p = this.proc
+    if (!p) return
+    this.proc = undefined
+    try { p.stdin.end() } catch {}
+    const done = await Promise.race([p.exited, Bun.sleep(5000).then(() => null)])
+    if (done === null) p.kill()
+  }
+
+  private start() {
+    if (this.proc) return this.proc
+    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none', '--settings', this.o.settings, ...(this.o.resume ? ['--resume', this.o.resume] : []), ...(this.o.model ? ['--model', this.o.model] : [])]
+    const env: Record<string, string | undefined> = { ...process.env, ...this.o.env }
+    delete env.CLAUDECODE // flow may itself run inside a Claude session; the agent is not nested in it
+    const proc = Bun.spawn([...(this.o.bin ?? ['claude']), ...args], { cwd: this.o.cwd, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' })
+    this.proc = proc
+    this.lines = readLines(proc.stdout)
+    void (async () => { for await (const c of proc.stderr) this.stderr = (this.stderr + new TextDecoder().decode(c)).slice(-4000) })()
+    return proc
+  }
+}
+
+async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+  const dec = new TextDecoder()
+  let buf = ''
+  for await (const chunk of stream) {
+    buf += dec.decode(chunk, { stream: true })
+    let i: number
+    while ((i = buf.indexOf('\n')) >= 0) { yield buf.slice(0, i); buf = buf.slice(i + 1) }
+  }
+  if (buf) yield buf
+}
