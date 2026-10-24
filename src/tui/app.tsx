@@ -4,12 +4,14 @@ import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
 import type { Command, Reply } from '../service.ts'
 import type { Windows } from '../usage.ts'
+import { WAITS_FOR, type Snapshot } from '../resources.ts'
 import { attention, duration, header, hhmm, rows, tokens, type AttentionItem, type Row } from './model.ts'
 
 /** What the screen needs from the service connection (FlowClient implements it). */
 export interface FlowApi {
   runs: Map<string, RunState>
   windows: Windows
+  resources?: Snapshot
   listen(fn: (m: { type: string; notice?: { run: string; text: string } }) => void): () => void
   send(c: Command): Promise<Reply>
   events(run: string): Promise<RunEvent[]>
@@ -142,6 +144,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
           <text><strong>Runs</strong><span fg={C.muted}> {list.length}</span></text>
           <text fg={C.muted}>{`${fit('Run', 9)} ${fit('Task', titleW)} ${fit('Line', 9)}${fit('Stage', 8)}${fit('Status', 22)}${fitL('Time', 6)} ${fitL('Tokens', 6)}  ${fit('Next', 22)}`}</text>
           {list.length ? list.map((r, i) => <RunRow key={r.run} row={r} selected={i === selected} titleW={titleW} />) : <text fg={C.muted}>No runs yet. Start one: flow start &lt;project&gt; &lt;ticket&gt;</text>}
+          {api.resources ? <ResourcesPanel r={api.resources} /> : null}
         </>
       )}
       <text> </text>
@@ -164,6 +167,27 @@ function Attention({ items }: { items: AttentionItem[] }) {
           <text fg={C.muted}>{`          ${a.detail.slice(0, 110)}`}</text>
         </box>
       )) : <text fg={C.muted}>Nothing needs you.</text>}
+    </box>
+  )
+}
+
+function ResourcesPanel({ r }: { r: Snapshot }) {
+  const line = (label: string, kind: keyof Snapshot['limits']) => {
+    const held = r.holders[kind], full = held.length >= r.limits[kind]
+    return (
+      <text key={kind}>
+        <span fg={C.muted}>{fit(label, 9)}</span><span fg={full ? C.warning : C.text}>{fit(`${held.length}/${r.limits[kind]}`, 6)}</span><span fg={C.secondary}>{held.join(', ')}</span>
+      </text>
+    )
+  }
+  return (
+    <box flexDirection="column">
+      <text> </text>
+      <text><strong>Resources</strong></text>
+      {line('Agents', 'agents')}
+      {line('Builds', 'builds')}
+      {line('Devices', 'devices')}
+      {r.waiting.length ? <text><span fg={C.muted}>Waiting  </span><span fg={C.secondary}>{r.waiting.map(w => `${w.run} for ${WAITS_FOR[w.kind]}`).join(' · ')}</span></text> : null}
     </box>
   )
 }

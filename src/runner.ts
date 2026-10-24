@@ -20,6 +20,8 @@ export interface RunnerOptions {
   /** the plan windows as last saved, and where to save new ones */
   windows?: Windows
   onWindows?: (w: Windows) => void
+  /** machine-wide agent slots */
+  agentSlot?: (run: string) => Promise<() => void>
 }
 
 /** Runs agent turns for runs: waits for room in the plan windows, records what each turn reports. */
@@ -31,7 +33,7 @@ export class Runner {
     this.ingest = new Ingest(o.store, o.onWindows)
     if (o.windows) this.ingest.windows = o.windows
     this.turns = new Turns({
-      maxParallel: o.maxParallel, limits: o.limits, windows: () => this.ingest.windows, now: o.now, sleep: o.sleep,
+      maxParallel: o.maxParallel, limits: o.limits, windows: () => this.ingest.windows, now: o.now, sleep: o.sleep, slot: o.agentSlot,
       onPause: (run, g) => o.store.append(run, 'engine', { type: 'run.paused', window: g.window, until: g.until }),
       onResume: run => o.store.append(run, 'engine', { type: 'run.resumed' }),
     })

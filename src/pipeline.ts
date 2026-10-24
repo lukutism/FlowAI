@@ -11,6 +11,7 @@ import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
 import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
 import type { RunState } from './run.ts'
+import type { Resources } from './resources.ts'
 import { Runner, type RunAgent } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import type { EventStore } from './store.ts'
@@ -43,6 +44,8 @@ export interface PipelineDeps {
   forge?: Forge
   gh?: Gh
   jira?: JiraDeps
+  /** machine-wide slots shared with other runs (the service's): agent turns, builds */
+  resources?: Resources
 }
 
 /**
@@ -62,6 +65,7 @@ export class Pipeline {
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
       store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap,
+      ...(d.resources ? { agentSlot: (run: string) => d.resources!.acquire(run, 'agents') } : {}),
       windows: existsSync(usage) ? JSON.parse(readFileSync(usage, 'utf8')) : undefined,
       onWindows: w => { mkdirSync(d.dataDir, { recursive: true }); writeFileSync(usage, JSON.stringify(w) + '\n'); d.onWindows?.(w) },
     })
@@ -74,6 +78,12 @@ export class Pipeline {
   private repoConfig = (key: string): Repo => this.d.project.repos.find(r => r.key === key)!
   private now = () => (this.d.now ?? Date.now)()
   private must = (run: string) => this.d.store.state(run)!
+
+  /** a heavy step (an install, verify) holds a shared build slot while it runs */
+  private async building<T>(run: string, fn: () => Promise<T>): Promise<T> {
+    const free = this.d.resources ? await this.d.resources.acquire(run, 'builds') : () => {}
+    try { return await fn() } finally { free() }
+  }
 
   /** run.json; one written before runs had several repos (repo + worktree) reads as a single-repo run */
   private meta(run: string): Meta {
@@ -123,7 +133,7 @@ export class Pipeline {
     try {
       for (const r of m.repos) {
         const c = this.repoConfig(r.key)
-        const w = await createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install })
+        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install }))
         notes.push(...w.notes.map(n => `${r.key}: ${n}`))
       }
     } catch (e) {
@@ -286,11 +296,11 @@ export class Pipeline {
   }
 
   /** verify every repo; with several repos each finding names its repo */
-  private async verifyAll(m: Meta): Promise<{ ok: boolean; findings: string[] }> {
+  private async verifyAll(run: string, m: Meta): Promise<{ ok: boolean; findings: string[] }> {
     let ok = true
     const findings: string[] = []
     for (const r of m.repos) {
-      const res = await verify(r.worktree, this.repoConfig(r.key).verify)
+      const res = await this.building(run, () => verify(r.worktree, this.repoConfig(r.key).verify))
       ok &&= res.ok
       findings.push(...res.steps.flatMap(s => s.newFindings).map(f => (m.repos.length > 1 ? `${r.key}: ${f}` : f)))
     }
@@ -301,7 +311,7 @@ export class Pipeline {
     const m = this.meta(run)
     for (;;) {
       let res
-      try { res = await this.verifyAll(m) }
+      try { res = await this.verifyAll(run, m) }
       catch (e) { this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `verify could not run: ${(e as Error).message}` }); return }
       this.d.store.append(run, 'engine', { type: 'verify.result', ok: res.ok, newFindings: res.findings })
       let s = this.must(run)

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { z } from 'zod'
@@ -72,3 +72,15 @@ export function parseProject(json: unknown, source: string): Project {
 }
 
 export const loadProject = (file: string): Project => parseProject(JSON.parse(readFileSync(file, 'utf8')), file)
+
+/** ~/.config/flow/flow.json: what holds for the whole machine (all projects share its slots) */
+const settings = z.object({
+  limits: z.object({ agents: z.number().int().min(1).default(2), builds: z.number().int().min(1).default(2), devices: z.number().int().min(1).default(4) }).default({}),
+})
+export type Settings = z.infer<typeof settings>
+
+export function loadSettings(file: string): Settings {
+  const r = settings.safeParse(existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {})
+  if (r.success) return r.data
+  throw new Error(r.error.issues.map(i => `${file}: ${i.path.join('.')}: ${i.message}`).join('\n'))
+}

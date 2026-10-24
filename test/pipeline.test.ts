@@ -7,6 +7,7 @@ import type { Az } from '../src/azure.ts'
 import { parseProject } from '../src/config.ts'
 import { Pipeline } from '../src/pipeline.ts'
 import { EventStore } from '../src/store.ts'
+import { Resources } from '../src/resources.ts'
 
 // Whole runs: a real git project (origin + main checkout), a stand-in az, stand-in tools for verify, and a fake
 // agent whose turns change files the way a real agent would.
@@ -16,7 +17,7 @@ const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const result = (text = 'done') => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 's-1', usage: { input_tokens: 1000, output_tokens: 100 } })
 const turn = (effect?: (prompt: string) => void, text?: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), result(text)].join('\n'), effect })
 
-function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean } = {}) {
+function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-pipe-'))
   const origin = join(root, 'origin.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin])
@@ -50,9 +51,10 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   const store = new EventStore(':memory:')
   const reviewer = new FakeAgent(o.review ?? [])
   const reviewers: { cwd: string; settings: string }[] = []
-  const pipe = new Pipeline({ store, project, az, dataDir, gitEnv: env, makeAgent: o => { agents.push(o); return agent },
+  const resources = o.resources?.(store)
+  const pipe = new Pipeline({ store, project, az, dataDir, gitEnv: env, makeAgent: o => { agents.push(o); return agent }, ...(resources ? { resources } : {}),
     ...(o.review ? { makeReviewer: (x: { cwd: string; settings: string }) => { reviewers.push(x); return reviewer } } : {}) })
-  return { pipe, store, agent, reviewer, reviewers, azCalls, origin, main, wt, runDir, agents, root }
+  return { pipe, store, agent, reviewer, reviewers, azCalls, origin, main, wt, runDir, agents, root, resources }
 }
 const review = (findings: object[]): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'rev-1', model: 'm', apiKeySource: 'none' }),
   JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: `Checked.\n\n\`\`\`json\n${JSON.stringify(findings)}\n\`\`\``, num_turns: 1, session_id: 'rev-1', usage: { input_tokens: 500, output_tokens: 50 } })].join('\n') })
@@ -273,5 +275,39 @@ describe('port: the same fix onto another line', () => {
     const s = await shipped()
     await s.t.pipe.port(s.run, 'develop')
     await expect(s.t.pipe.port(s.run, 'develop')).rejects.toThrow(/exists already/)
+  })
+})
+
+describe('shared slots', () => {
+  const slots = (store: EventStore) => new Resources({ agents: 1, builds: 1, devices: 1 }, {
+    onWait: (run, kind) => store.append(run, 'engine', { type: 'run.waiting', resource: kind === 'builds' ? 'a build slot' : kind }),
+    onGo: run => store.append(run, 'engine', { type: 'run.resumed' }),
+  })
+  test('the build slot is taken by another run: setup waits, saying so, and goes on when it frees', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))], { resources: slots })
+    const other = await t.resources!.acquire('another-run', 'builds')
+    setTimeout(other, 50)
+    const run = await t.pipe.start(186278)
+    const types = t.store.events(run).map(e => e.type)
+    expect(types.slice(0, 4)).toEqual(['run.created', 'run.waiting', 'run.resumed', 'setup.done'])
+    expect(t.store.events(run)[1]).toMatchObject({ resource: 'a build slot' })
+    expect(t.resources!.snapshot().holders.builds).toEqual([])
+  })
+  test('verify holds a build slot while it runs and gives it back', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))], { resources: slots })
+    const seen: string[][] = []
+    t.resources!.onChange(s => seen.push(s.holders.builds))
+    await t.pipe.start(186278)
+    expect(seen.some(h => h.includes('example-186278'))).toBe(true)
+    expect(t.resources!.snapshot().holders).toEqual({ agents: [], builds: [], devices: [] })
+  })
+  test('agent turns use the shared agent slots: a second run\'s turn waits for the first', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))], { resources: slots })
+    const held = await t.resources!.acquire('another-run', 'agents')
+    // the other run lets go once this one is seen waiting (and after 3 s at the latest, so a broken wait can't hang)
+    t.store.subscribe(e => { if (e.type === 'run.waiting') held() })
+    setTimeout(held, 3000)
+    const run = await t.pipe.start(186278)
+    expect(t.store.events(run).some(e => e.type === 'run.waiting' && e.resource === 'agents')).toBe(true)
   })
 })

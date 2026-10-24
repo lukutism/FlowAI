@@ -4,6 +4,7 @@ import type { RunEvent, RunState } from './run.ts'
 import type { Command, Notice, Reply, Service } from './service.ts'
 import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
+import type { Snapshot } from './resources.ts'
 
 /** the files of a run the screen may read */
 export const RUN_FILES = ['ticket.md', 'plan.md', 'pr.md', 'review.json'] as const
@@ -13,13 +14,14 @@ export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'fil
 export type Request = RequestBody & { id: number }
 
 export type Message =
-  | { type: 'snapshot'; runs: RunState[]; windows: Windows }
+  | { type: 'snapshot'; runs: RunState[]; windows: Windows; resources?: Snapshot }
+  | { type: 'resources'; resources: Snapshot }
   | { type: 'event'; event: RunEvent; state: RunState }
   | { type: 'windows'; windows: Windows }
   | { type: 'notice'; notice: Notice }
   | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: false; error: string } }
 
-type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows'>
+type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources'>
 
 /**
  * The service's socket: localhost only, and only with the token from a file only the user can read; a web page
@@ -37,7 +39,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
     websocket: {
       open(ws) {
         ws.subscribe('all')
-        ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows() } satisfies Message))
+        ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows(), resources: o.service.resources() } satisfies Message))
       },
       message(ws, raw) {
         let r: Request
@@ -60,6 +62,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
     o.store.subscribe(e => publish({ type: 'event', event: e, state: o.store.state(e.run)! })),
     o.service.onNotice(n => publish({ type: 'notice', notice: n })),
     o.service.onWindows(w => publish({ type: 'windows', windows: w })),
+    o.service.onResources(r => publish({ type: 'resources', resources: r })),
   ]
   return { port: server.port!, stop: () => { offs.forEach(f => f()); server.stop(true) } }
 }

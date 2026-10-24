@@ -73,6 +73,14 @@ describe('Service: the background process that drives runs', () => {
     const svc = new Service({ store: new EventStore(':memory:'), projects: {}, az: () => ({ code: 1, out: '', err: '' }), dataDir: root, makeAgent: () => new FakeAgent([]) })
     expect(svc.windows().week?.utilization).toBe(0.59)
   })
+  test('the service shares one set of slots across runs; a run waiting for one says for what, in words', async () => {
+    const t = setup(d => [turn(planWith(d.data, '- Q1: x? — default: y'))])
+    // the default allows 2 builds at once: another run holds both
+    const held = [await t.svc.slots.acquire('another', 'builds'), await t.svc.slots.acquire('another', 'builds')]
+    t.store.subscribe(e => { if (e.type === 'run.waiting') held.forEach(f => f()) })
+    t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 }); await t.svc.idle()
+    expect(t.store.events('ex-1').find(e => e.type === 'run.waiting')).toMatchObject({ resource: 'a build slot' })
+  })
   test('commands for a run that doesn\'t exist, or an unknown project, are refused at once', () => {
     const t = setup(() => [])
     expect(t.svc.dispatch({ cmd: 'approve', run: 'ex-9' })).toMatchObject({ ok: false, error: expect.stringMatching(/no run ex-9/) })

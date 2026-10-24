@@ -4,6 +4,7 @@ import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
 import type { Project } from './config.ts'
 import { Pipeline } from './pipeline.ts'
+import { DEFAULT_LIMITS, Resources, WAITS_FOR, type Limits, type Snapshot } from './resources.ts'
 import type { RunAgent } from './runner.ts'
 import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
@@ -28,6 +29,8 @@ export interface ServiceDeps {
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   tap?: (run: string, e: AgentEvent) => void
+  /** machine-wide slot limits (~/.config/flow/flow.json) */
+  limits?: Limits
 }
 
 /**
@@ -41,7 +44,14 @@ export class Service {
   private windowsListeners = new Set<(w: Windows) => void>()
   private lastWindows: Windows = {}
 
+  /** the machine-wide slots every run shares */
+  readonly slots: Resources
+
   constructor(private d: ServiceDeps) {
+    this.slots = new Resources(d.limits ?? DEFAULT_LIMITS, {
+      onWait: (run, kind) => { if (d.store.state(run)) d.store.append(run, 'engine', { type: 'run.waiting', resource: WAITS_FOR[kind] }) },
+      onGo: run => { if (d.store.state(run)) d.store.append(run, 'engine', { type: 'run.resumed' }) },
+    })
     // the windows the last turn reported, saved by the pipeline: the screen shows them before any new turn
     const saved = join(d.dataDir, 'usage.json')
     if (existsSync(saved)) try { this.lastWindows = JSON.parse(readFileSync(saved, 'utf8')) } catch {}
@@ -50,13 +60,15 @@ export class Service {
   onNotice(fn: (n: Notice) => void) { this.notices.add(fn); return () => { this.notices.delete(fn) } }
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }
   windows(): Windows { return this.lastWindows }
+  resources(): Snapshot { return this.slots.snapshot() }
+  onResources(fn: (s: Snapshot) => void) { return this.slots.onChange(fn) }
 
   private pipeline(project: string): Pipeline {
     let p = this.pipes.get(project)
     if (!p) {
       const cfg = this.d.projects[project]
       if (!cfg) throw new Error(`no project ${project}`)
-      p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, makeReviewer: this.d.makeReviewer, gitEnv: this.d.gitEnv, now: this.d.now, tap: this.d.tap,
+      p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, makeReviewer: this.d.makeReviewer, resources: this.slots, gitEnv: this.d.gitEnv, now: this.d.now, tap: this.d.tap,
         onWindows: w => { this.lastWindows = w; for (const l of this.windowsListeners) l(w) } })
       if (!Object.keys(this.lastWindows).length) this.lastWindows = p.runner.ingest.windows
       this.pipes.set(project, p)

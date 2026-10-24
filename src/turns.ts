@@ -9,6 +9,8 @@ export interface TurnsOptions {
   sleep?: (ms: number) => Promise<void>
   onPause?: (run: string, gate: Extract<TurnGate, { ok: false }>) => void
   onResume?: (run: string) => void
+  /** machine-wide agent slots (the service's); without it, maxParallel counts this scheduler's turns only */
+  slot?: (run: string) => Promise<() => void>
 }
 
 /**
@@ -29,6 +31,11 @@ export class Turns {
       if (!paused) { paused = true; this.o.onPause?.(run, g) }
       // re-check at least every minute: a new report from another run may show room earlier
       await sleep(Math.max(1000, Math.min(g.until - now(), 60_000)))
+    }
+    if (this.o.slot) {
+      const release = await this.o.slot(run)
+      if (paused) this.o.onResume?.(run)
+      return release
     }
     while (this.active >= this.o.maxParallel) await new Promise<void>(r => this.waiters.push(r))
     this.active++

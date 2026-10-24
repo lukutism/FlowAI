@@ -7,19 +7,22 @@ import { serve } from '../src/server.ts'
 import type { Command, Reply } from '../src/service.ts'
 import { EventStore } from '../src/store.ts'
 import type { Windows } from '../src/usage.ts'
+import type { Snapshot } from '../src/resources.ts'
 
 // The screen and the CLI talk to the background service over a local WebSocket with a token only the user can
 // read (a web page could otherwise reach ws://localhost and press "ship").
 function fakeService() {
-  const notice = new Set<(n: { run: string; text: string }) => void>(), wins = new Set<(w: Windows) => void>()
+  const notice = new Set<(n: { run: string; text: string }) => void>(), wins = new Set<(w: Windows) => void>(), res = new Set<(r: Snapshot) => void>()
   const sent: Command[] = []
   return {
-    sent, emitNotice: (n: { run: string; text: string }) => notice.forEach(f => f(n)), emitWindows: (w: Windows) => wins.forEach(f => f(w)),
+    sent, emitNotice: (n: { run: string; text: string }) => notice.forEach(f => f(n)), emitWindows: (w: Windows) => wins.forEach(f => f(w)), emitResources: (r: Snapshot) => res.forEach(f => f(r)),
     svc: {
       dispatch: (c: Command): Reply => { sent.push(c); return 'run' in c && c.run === 'nope' ? { ok: false, error: 'no run nope' } : { ok: true, run: 'run' in c ? c.run : 'x' } },
       windows: (): Windows => ({ week: { utilization: 0.59, resetsAt: 1, status: 'allowed' } }),
       onNotice: (f: (n: { run: string; text: string }) => void) => { notice.add(f); return () => notice.delete(f) },
       onWindows: (f: (w: Windows) => void) => { wins.add(f); return () => wins.delete(f) },
+      resources: (): Snapshot => ({ limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: ['fso-1'], builds: [], devices: [] }, waiting: [] }),
+      onResources: (f: (r: Snapshot) => void) => { res.add(f); return () => res.delete(f) },
     },
   }
 }
@@ -72,6 +75,14 @@ describe('the service socket', () => {
     t.f.emitWindows({ fiveHour: { utilization: 0.4, resetsAt: 2, status: 'allowed' } })
     await w
     expect(c.windows.fiveHour?.utilization).toBe(0.4)
+  })
+  test('the shared slots come with the snapshot and are pushed when they change', async () => {
+    const t = start(), c = await t.connect()
+    expect(c.resources?.holders.agents).toEqual(['fso-1'])
+    const got = new Promise(r => c.listen(m => m.type === 'resources' && r(m)))
+    t.f.emitResources({ limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: [], builds: ['fso-1'], devices: [] }, waiting: [{ run: 'fso-2', kind: 'builds' }] })
+    await got
+    expect(c.resources?.waiting).toEqual([{ run: 'fso-2', kind: 'builds' }])
   })
   test('the run detail can read its events and its plan; other files are refused', async () => {
     const t = start(), c = await t.connect()

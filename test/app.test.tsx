@@ -143,6 +143,19 @@ describe('Runs screen', () => {
       expect(await t.frame()).toContain('fso-104: commit refused: subject too long')
     } finally { t.s.renderer.destroy() }
   })
+  test('the Resources panel: each kind of slot, who holds them, who waits for what', async () => {
+    const f = api()
+    f.a.resources = { limits: { agents: 2, builds: 1, devices: 4 }, holders: { agents: ['fso-105', 'fso-103'], builds: ['fso-103'], devices: [] }, waiting: [{ run: 'fso-104', kind: 'builds' }] }
+    const s = await testRender(<App api={f.a} now={() => NOW} onQuit={() => {}} />, { width: 130, height: 34 })
+    try {
+      await act(async () => { await Bun.sleep(1) }); await s.renderOnce()
+      const fr = s.captureCharFrame()
+      expect(fr).toMatch(/Agents +2\/2 +fso-105, fso-103/)
+      expect(fr).toMatch(/Builds +1\/1 +fso-103/)
+      expect(fr).toMatch(/Devices +0\/4/)
+      expect(fr).toContain('Waiting  fso-104 for a build slot')
+    } finally { s.renderer.destroy() }
+  })
   test('no runs: says how to start one', async () => {
     const t = await screen([])
     try { expect(await t.frame()).toContain('No runs yet. Start one: flow start <project> <ticket>') } finally { t.s.renderer.destroy() }

@@ -2,6 +2,7 @@ import type { RunEvent, RunState } from './run.ts'
 import type { Message, RequestBody, RunFile } from './server.ts'
 import type { Command, Reply } from './service.ts'
 import type { Windows } from './usage.ts'
+import type { Snapshot } from './resources.ts'
 
 type Pending = (m: Extract<Message, { type: 'reply' }>['reply']) => void
 
@@ -9,6 +10,7 @@ type Pending = (m: Extract<Message, { type: 'reply' }>['reply']) => void
 export class FlowClient {
   readonly runs = new Map<string, RunState>()
   windows: Windows = {}
+  resources?: Snapshot
   private listeners = new Set<(m: Message) => void>()
   private pending = new Map<number, Pending>()
   private nextId = 1
@@ -57,7 +59,8 @@ export class FlowClient {
   }
 
   private take(m: Message) {
-    if (m.type === 'snapshot') { this.runs.clear(); for (const r of m.runs) this.runs.set(r.id, r); this.windows = m.windows }
+    if (m.type === 'snapshot') { this.runs.clear(); for (const r of m.runs) this.runs.set(r.id, r); this.windows = m.windows; this.resources = m.resources }
+    else if (m.type === 'resources') this.resources = m.resources
     else if (m.type === 'event') this.runs.set(m.state.id, m.state)
     else if (m.type === 'windows') this.windows = m.windows
     else if (m.type === 'reply') { this.pending.get(m.id)?.(m.reply); this.pending.delete(m.id) }
