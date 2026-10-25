@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { background, canBind, freePort, until } from './device.ts'
-import { fill, tail } from './sh.ts'
+import { fill, fillSh, livePids, tail } from './sh.ts'
 
 /**
  * A run's own dev server (a web app's): the repo's command on a free port, in the background in its own process
@@ -15,7 +15,7 @@ export async function startDevServer(o: { run: string; repo: string; cmd: string
   const vars = { port, run: o.run, worktree: o.worktree, runDir: o.runDir }
   const log = join(o.runDir, 'devserver.log')
   const state: DevServerState = { run: o.run, repo: o.repo, port, url: fill(o.url, vars), pids: [] }
-  state.pids.push(background(fill(o.cmd, vars), o.worktree, log))
+  state.pids.push(background(fillSh(o.cmd, vars), o.worktree, log))
   const timeout = o.readyTimeoutMs ?? 300_000
   if (!(await until(async () => !canBind(port), timeout))) {
     await stopDevServer(state, o.runDir)
@@ -26,8 +26,8 @@ export async function startDevServer(o: { run: string; repo: string; cmd: string
 }
 
 export async function stopDevServer(state: DevServerState, runDir: string) {
-  for (const pid of state.pids) { try { process.kill(-pid, 'SIGTERM') } catch {} try { process.kill(pid, 'SIGTERM') } catch {} }
+  for (const pid of livePids(state.pids)) { try { process.kill(-pid, 'SIGTERM') } catch {} try { process.kill(pid, 'SIGTERM') } catch {} }
   await Bun.sleep(200)
-  for (const pid of state.pids) { try { process.kill(-pid, 'SIGKILL') } catch {} }
+  for (const pid of livePids(state.pids)) { try { process.kill(-pid, 'SIGKILL') } catch {} }
   rmSync(join(runDir, 'devserver.json'), { force: true })
 }

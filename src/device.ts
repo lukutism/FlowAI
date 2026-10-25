@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fill, sh, tail } from './sh.ts'
+import { fill, fillSh, livePids, sh, tail } from './sh.ts'
 
 /**
  * A run's own device (emulator or simulator) and its Metro, from the project's commands. flow owns the lifecycle:
@@ -67,22 +67,22 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
   const timeout = o.readyTimeoutMs ?? 180_000
   const deviceLog = join(o.runDir, 'device.log'), metroLog = join(o.runDir, 'metro.log')
   try {
-    if (cmds.prepare) await must('prepare', fill(cmds.prepare, vars), o.worktree)
+    if (cmds.prepare) await must('prepare', fillSh(cmds.prepare, vars), o.worktree)
     if (cmds.create) {
-      const out = await must('creating the device', fill(cmds.create, vars), o.runDir)
+      const out = await must('creating the device', fillSh(cmds.create, vars), o.runDir)
       if (!state.id) state.id = out.trim().split('\n').filter(Boolean).pop() ?? ''
     }
     if (!state.id) throw new Error('the device has no id: give "id" or a "create" that prints it')
     vars.id = state.id
-    if (cmds.bootStays) state.pids.push(background(fill(cmds.boot, vars), o.runDir, deviceLog))
-    else await must('booting the device', fill(cmds.boot, vars), o.runDir)
-    if (!(await until(async () => (await sh(fill(cmds.ready, vars), o.runDir)).code === 0, timeout)))
+    if (cmds.bootStays) state.pids.push(background(fillSh(cmds.boot, vars), o.runDir, deviceLog))
+    else await must('booting the device', fillSh(cmds.boot, vars), o.runDir)
+    if (!(await until(async () => (await sh(fillSh(cmds.ready, vars), o.runDir)).code === 0, timeout)))
       throw new Error(`device ${state.id} not ready after ${Math.round(timeout / 1000)} s:\n${existsSync(deviceLog) ? tail(readFileSync(deviceLog, 'utf8')) : '(no device log)'}`)
-    state.pids.push(background(fill(o.spec.metro, vars), o.worktree, metroLog))
+    state.pids.push(background(fillSh(o.spec.metro, vars), o.worktree, metroLog))
     const metroUp = () => fetch(`http://127.0.0.1:${metroPort}/status`).then(r => r.text()).then(t => t.includes('packager-status:running'), () => false)
     if (!(await until(metroUp, Math.max(timeout, 60_000))))
       throw new Error(`Metro did not answer on :${metroPort}:\n${existsSync(metroLog) ? tail(readFileSync(metroLog, 'utf8')) : '(no Metro log)'}`)
-    if (cmds.install) await must('installing the app', fill(cmds.install, vars), o.worktree)
+    if (cmds.install) await must('installing the app', fillSh(cmds.install, vars), o.worktree)
     writeFileSync(join(o.runDir, 'device.json'), JSON.stringify(state, null, 2) + '\n')
     return state
   } catch (e) {
@@ -95,13 +95,13 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
 export async function stopDevice(state: DeviceState, spec: DeviceSpec, runDir: string) {
   const cmds = spec[state.platform]
   const vars = { run: state.run, id: state.id, consolePort: state.consolePort, metroPort: state.metroPort, runDir, template: cmds?.template }
-  if (cmds?.stop && state.id) await sh(fill(cmds.stop, vars), runDir)
-  for (const pid of state.pids) {
+  if (cmds?.stop && state.id) await sh(fillSh(cmds.stop, vars), runDir)
+  for (const pid of livePids(state.pids)) {
     try { process.kill(-pid, 'SIGTERM') } catch {}
     try { process.kill(pid, 'SIGTERM') } catch {}
   }
   await Bun.sleep(200)
-  for (const pid of state.pids) { try { process.kill(-pid, 'SIGKILL') } catch {} }
-  if (cmds?.remove) await sh(fill(cmds.remove, vars), runDir)
+  for (const pid of livePids(state.pids)) { try { process.kill(-pid, 'SIGKILL') } catch {} }
+  if (cmds?.remove) await sh(fillSh(cmds.remove, vars), runDir)
   rmSync(join(runDir, 'device.json'), { force: true })
 }

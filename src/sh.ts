@@ -2,6 +2,12 @@
 
 /** {name} → its value; unknown names stay as written */
 export const fill = (cmd: string, vars: Record<string, string | number | undefined>) => cmd.replace(/\{(\w+)\}/g, (m, k: string) => (vars[k] === undefined ? m : String(vars[k])))
+/** a value as one shell word: plain ones as they are, others single-quoted; empty is no word */
+const word = (v: string) => (v === '' || /^[\w./:=@+,%-]+$/.test(v) ? v : `'${v.replace(/'/g, `'\\''`)}'`)
+/** {name} → its value as one shell word (values come from tickets and forms); unknown names stay as written */
+export const fillSh = (cmd: string, vars: Record<string, string | number | undefined>) => cmd.replace(/\{(\w+)\}/g, (m, k: string) => (vars[k] === undefined ? m : word(String(vars[k]))))
+/** the process ids in a run's state file that are safe to signal: never 0, 1 or negative (kill(-1) is everything) */
+export const livePids = (pids: unknown): number[] => (Array.isArray(pids) ? pids : []).filter((p): p is number => Number.isInteger(p) && p > 1)
 export const tail = (s: string, n = 5) => s.trim().split('\n').slice(-n).join('\n')
 
 export async function sh(cmd: string, cwd: string, env?: Record<string, string | undefined>) {

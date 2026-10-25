@@ -9,7 +9,7 @@ import type { Project, Repo } from './config.ts'
 import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { startDevServer, stopDevServer, type DevServerState } from './devserver.ts'
 import { createWorktree, shipChange } from './git.ts'
-import { fill, sh, tail } from './sh.ts'
+import { fillSh, sh, tail } from './sh.ts'
 import { slug } from './slug.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
@@ -180,7 +180,7 @@ export class Pipeline {
     const r = this.patchRepo()
     const [customer, app] = patch.split('/')
     if (!r?.patches?.check || !customer || !app) return { ok: true, text: '' }
-    const res = await sh(fill(r.patches.check, { customer, app, base }), r.path, this.d.gitEnv)
+    const res = await sh(fillSh(r.patches.check, { customer, app, base }), r.path, this.d.gitEnv)
     return { ok: res.code === 0, text: tail(res.out || res.err, 1) }
   }
 
@@ -200,7 +200,7 @@ export class Pipeline {
     let patch: Meta['patch']
     if (o.patch) {
       const [customer, app, ...more] = o.patch.split('/')
-      if (!customer || !app || more.length) throw new Error(`--patch is <customer>/<app>, not "${o.patch}"`)
+      if (!customer || !app || more.length || !/^[\w.-]+$/.test(customer + app)) throw new Error(`--patch is <customer>/<app>, not "${o.patch}"`)
       const repo = keys.find(k => this.repoConfig(k).patches)
       if (!repo) throw new Error(`no repo of this run has patch commands (patches in the repo's config): ${keys.join(', ')}`)
       patch = { customer, app, repo }
@@ -209,6 +209,8 @@ export class Pipeline {
     const kind = o.kind ?? t.kind
     const root = join(p.worktrees, String(id))
     const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
+    // bases reach git and the project's shell commands: plain ref names only
+    for (const r of repos) if (!/^[A-Za-z0-9][\w./-]*$/.test(r.base) || r.base.includes('..') || r.base.endsWith('/')) throw new Error(`base "${r.base}" is not a branch name`)
     const branch = task ? `${kind === 'bug' ? 'fix' : 'feat'}/${id}` : p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
     const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(task ? { task: true } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
@@ -265,7 +267,7 @@ export class Pipeline {
   private async applyPatch(run: string, m: Meta) {
     const { customer, app, repo } = m.patch!
     const r = m.repos.find(x => x.key === repo)!, c = this.repoConfig(repo)
-    const res = await sh(fill(c.patches!.apply, { customer, app, base: r.base, main: c.path }), r.worktree, this.d.gitEnv)
+    const res = await sh(fillSh(c.patches!.apply, { customer, app, base: r.base, main: c.path }), r.worktree, this.d.gitEnv)
     if (res.code !== 0) throw new Error(tail(res.err || res.out) || `the apply command exited ${res.code}`)
     const git = gitIn(r.worktree, this.d.gitEnv)
     if (git('diff', '--cached', '--quiet').code === 0) throw new Error(`the apply command staged nothing (${tail(res.out, 2) || 'no output'})`)
@@ -288,7 +290,7 @@ export class Pipeline {
     git('reset', '--soft', '-q', `${commit}~1`)
     try {
       if (added.length) git('add', '-N', '--', ...added) // new files belong in the patch too
-      const res = await sh(fill(c.patches!.writeBack, { customer, app, base: r.base, dryRun: dryRun ? '--dry-run' : '' }), r.worktree, this.d.gitEnv)
+      const res = await sh(fillSh(c.patches!.writeBack, { customer, app, base: r.base, dryRun: dryRun ? '--dry-run' : '' }), r.worktree, this.d.gitEnv)
       const out = (res.out + res.err).trim()
       if (res.code !== 0) throw new Error(`the write-back${dryRun ? ' dry run' : ''} failed (exit ${res.code}):\n${tail(out)}`)
       return `${out}${added.length ? `\nnew files included: ${added.join(', ')}` : ''}\n`
@@ -466,7 +468,7 @@ export class Pipeline {
     if (cached) return cached
     const m = this.meta(run)
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.runDir(run)], sandbox: this.d.project.sandbox })
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.planFile(run), this.prFile(run)], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent
@@ -549,7 +551,7 @@ export class Pipeline {
     if (!this.d.project.review.enabled) return skip('review is off for this project')
     if (!this.d.makeReviewer) return skip('no reviewer configured')
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
-    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, allow: others, sandbox: this.d.project.sandbox })
+    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox })
     const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')

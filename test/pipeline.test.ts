@@ -76,8 +76,13 @@ describe('a ticket to a draft PR', () => {
     expect(t.agent.prompts[0]).toContain('It crashes.')
     expect(t.agent.prompts[0]).toContain(join(t.runDir, 'plan.md'))
     expect(t.agents[0]).toMatchObject({ cwd: t.wt })
-    // the agent's settings: flow's guard on this worktree, the run folder allowed
-    expect(readFileSync(t.agents[0]!.settings, 'utf8')).toContain(t.runDir)
+    // the agent's settings: flow's guard on this worktree; of the run folder only plan.md and pr.md (run.json,
+    // device.json and the settings themselves are flow's), and flow's token is not to be read
+    const settings = readFileSync(t.agents[0]!.settings, 'utf8')
+    const allow = /FLOW_ALLOW='([^']*)'/.exec(settings)![1]!.split(':')
+    expect(allow).toEqual(expect.arrayContaining([join(t.runDir, 'plan.md'), join(t.runDir, 'pr.md')]))
+    expect(allow).not.toContain(t.runDir)
+    expect(settings).toContain(`FLOW_DENY='${join(t.root, 'data', 'token')}'`)
 
     await t.pipe.ship(run)
     expect(git(t.origin, 'log', '-1', '--format=%s', 'fix/186278')).toBe('fix(mobile): #186278 Asset list crashes')
@@ -309,5 +314,18 @@ describe('shared slots', () => {
     setTimeout(held, 3000)
     const run = await t.pipe.start(186278)
     expect(t.store.events(run).some(e => e.type === 'run.waiting' && e.resource === 'agents')).toBe(true)
+  })
+})
+
+describe('pipeline: values from forms and tickets are checked before they reach git or a shell', () => {
+  test('a base that is not a plain ref name is refused', async () => {
+    const t = setup(() => [])
+    for (const base of ['--upload-pack=x', 'origin/develop;rm -rf ~', 'origin/a..b', 'a b'])
+      await expect(t.pipe.start(186278, { base })).rejects.toThrow(/not a branch name/)
+    await expect(t.pipe.start(186278, { bases: { mobile: '-x' } })).rejects.toThrow(/not a branch name/)
+  })
+  test('a customer patch is two plain names', async () => {
+    const t = setup(() => [])
+    await expect(t.pipe.start(186278, { patch: 'acme/$(id)' })).rejects.toThrow(/--patch/)
   })
 })

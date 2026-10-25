@@ -50,3 +50,30 @@ describe('the OS sandbox, when the project asks for one', () => {
     expect(JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w' }), 'utf8')).sandbox).toBeUndefined()
   })
 })
+
+describe('the run\'s settings: what the security review closed', () => {
+  test('a guard that cannot run blocks the tool instead of letting it through (exit 2)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-sb-'))
+    const s = JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w' }), 'utf8'))
+    const broken = (s.hooks.PreToolUse[0].hooks[0].command as string).replace(/'[^']*guard\.ts'/, "'/nonexistent/guard.ts'")
+    const p = Bun.spawn(['sh', '-c', broken], { stdin: new Blob(['{}']), stdout: 'pipe', stderr: 'pipe' })
+    expect(await p.exited).toBe(2)
+    expect(await new Response(p.stderr).text()).toMatch(/flow guard/)
+  })
+  test('flow\'s token: Read and Grep denied by rule, shell reads by the sandbox and the guard', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-sb-'))
+    const s = JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w', deny: ['/data/flow/token'], sandbox: { enabled: true } }), 'utf8'))
+    expect(s.permissions.deny).toEqual(['Read(//data/flow/token)'])
+    expect(s.sandbox.filesystem.denyRead).toEqual(['/data/flow/token'])
+    expect(s.hooks.PreToolUse[0].hooks[0].command).toContain("FLOW_DENY='/data/flow/token'")
+  })
+  test('folders on PATH stay unwritable even inside a writable folder (a planted yarn or bun would run outside the sandbox)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-sb-')), home = require('node:os').homedir() as string
+    const path = process.env.PATH
+    process.env.PATH = `${home}/.bun/bin:/usr/bin:${home}/.local/bin`
+    try {
+      const s = JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w', sandbox: { enabled: true, filesystem: { allowWrite: ['~/.bun', '~/.cache', `${home}/.local/bin`] } } }), 'utf8'))
+      expect(s.sandbox.filesystem.denyWrite).toEqual([`${home}/.bun/bin`, `${home}/.local/bin`])
+    } finally { process.env.PATH = path }
+  })
+})

@@ -87,3 +87,116 @@ describe('guard: file edits stay inside the worktree', () => {
     expect(guard({ tool_name: 'mcp__mobile-db__query', tool_input: {} }, { worktree: wt })).toBeNull()
   })
 })
+
+describe('guard: the ways around it found in the security review are closed', () => {
+  test.each([
+    // quoting, paths and wrappers don't hide the program
+    'git "push"',
+    "'git' push origin x",
+    '/usr/bin/git push',
+    '\\git push',
+    'command git push',
+    'timeout 60 git push',
+    'env -i PATH=/bin git commit -m x',
+    'nice -n 5 git push',
+    'echo x | xargs -n1 git push',
+    'git --git-dir=.git --work-tree=. push',
+    'git -C mobile -c core.pager=cat push',
+    // command substitution runs, even inside double quotes
+    'echo "$(git push)"',
+    'echo `git commit -m x`',
+    'x=$(git push 2>&1)',
+    // shells and interpreters: their payload is checked too
+    'bash -c "git push"',
+    "sh -lc 'git commit -am wip'",
+    'zsh -c "cd mobile && git push"',
+    'eval "git push"',
+    `node -e "require('child_process').execSync('git push')"`,
+    `python3 -c "import os; os.system('git commit -m x')"`,
+    // aliases and config that turn a harmless name into a publish
+    'git -c alias.p=push p',
+    'git config alias.p push',
+    'git config --global alias.p push',
+    'git config core.hooksPath /tmp/h',
+    'git config --unset core.fsmonitor',
+    'git config set core.fsmonitor x',
+    // moving branches flow ships from
+    'git branch -f develop HEAD',
+    'git branch -m other',
+    'git checkout -B develop',
+    'git switch -C develop',
+    'git symbolic-ref HEAD refs/heads/other',
+    'git pull origin develop',
+  ])('refused: %s', c => expect(bash(c)).toMatchObject({ deny: true }))
+  test.each([
+    'git config --get user.email',
+    'git config user.email',
+    'git config -l',
+    'git config get user.name',
+    'git -c core.pager=cat log -3',
+    'bash -c "yarn lint && yarn tsc"',
+    'node -e "console.log(process.version)"',
+    'git checkout -b fix/x',
+    'git symbolic-ref --short HEAD',
+    'timeout 600 yarn jest src/a.test.ts',
+    'git log --format="%H $(subject)"',
+  ])('allowed: %s', c => expect(bash(c)).toBeNull())
+  test('a long run of options is checked at once (no runaway matching)', () => {
+    const t = performance.now()
+    expect(bash('git ' + '-x '.repeat(20000) + '!')).toBeNull()
+    expect(bash('curl ' + '-X '.repeat(20000) + 'https://dev.azure.com/x')).toBeDefined()
+    expect(performance.now() - t).toBeLessThan(500)
+  })
+})
+
+describe('guard: the code host\'s generic API calls write too', () => {
+  test.each([
+    'az rest --method post --uri https://dev.azure.com/o/p/_apis/wit/workitems/1',
+    'az rest -m PATCH --uri https://dev.azure.com/o/_apis/x',
+    'az rest --uri https://dev.azure.com/o/_apis/x --body "{}"',
+    'az devops invoke --area wit --resource workitems --http-method PATCH',
+    'gh workflow run deploy.yml',
+    'gh run rerun 12',
+    'gh secret set TOKEN',
+    'gh api --method=DELETE repos/o/r/git/refs/heads/x',
+    'curl -XPOST https://api.github.com/repos/o/r/issues',
+    'curl -T body.json https://dev.azure.com/o/p/_apis/x',
+  ])('refused: %s', c => expect(bash(c)).toMatchObject({ deny: true }))
+  test.each([
+    'az rest --uri https://dev.azure.com/o/p/_apis/wit/workitems/1',
+    'az devops invoke --area wit --resource workitems --route-parameters id=1',
+    'gh api -X GET repos/o/r/pulls',
+    'gh run view 12 --log',
+  ])('reading is allowed: %s', c => expect(bash(c)).toBeNull())
+})
+
+describe('guard: what the agent must not touch', () => {
+  test('git\'s own files and Claude Code\'s settings, inside the worktree too', () => {
+    expect(edit(`${wt}/.git/config`)).toMatchObject({ deny: true })
+    expect(edit(`${wt}/.git`, 'Write')).toMatchObject({ deny: true })
+    expect(edit(`${wt}/node_modules/x/.git/hooks/pre-commit`, 'Write')).toMatchObject({ deny: true })
+    expect(edit(`${wt}/.claude/settings.local.json`, 'Write')).toMatchObject({ deny: true })
+    expect(edit(`${wt}/.claude/settings.json`)).toMatchObject({ deny: true })
+    expect(edit(`${wt}/.gitignore`)).toBeNull()
+    expect(edit(`${wt}/docs/claude/settings.md`)).toBeNull()
+  })
+  test('a symlink in the worktree that points out of it is outside', () => {
+    const { mkdtempSync, symlinkSync, realpathSync } = require('node:fs') as typeof import('node:fs')
+    const root = realpathSync(mkdtempSync(require('node:path').join(require('node:os').homedir(), '.flow-guard-test-')))
+    try {
+      symlinkSync('/etc', `${root}/etc`)
+      const g = (f: string) => guard({ tool_name: 'Write', tool_input: { file_path: f } }, { worktree: root })
+      expect(g(`${root}/etc/hosts`)).toMatchObject({ deny: true })
+      expect(g(`${root}/src/new.ts`)).toBeNull()
+    } finally { require('node:fs').rmSync(root, { recursive: true, force: true }) }
+  })
+  test('shell commands that name flow\'s token are refused', () => {
+    const home = require('node:os').homedir() as string
+    const ctx = { worktree: wt, deny: [`${home}/.local/share/flow/token`] }
+    const b = (command: string) => guard({ tool_name: 'Bash', tool_input: { command } }, ctx)
+    expect(b(`head -c 64 ${home}/.local/share/flow/token`)).toMatchObject({ deny: true })
+    expect(b('cat ~/.local/share/flow/token')).toMatchObject({ deny: true })
+    expect(b('cat $HOME/.local/share/flow/token')).toMatchObject({ deny: true })
+    expect(b(`ls ${home}/.local/share/flow/runs`)).toBeNull()
+  })
+})
