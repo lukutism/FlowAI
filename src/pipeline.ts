@@ -126,7 +126,7 @@ export class Pipeline {
   private static layout(root: string, repos: RunRepo[]) { return repos.length === 1 ? repos[0]!.worktree : root }
 
   /** kind: overrides the work item type (a Task may be a fix); repos: else the project's defaults; base: the first repo's */
-  /** the run a ticket gets ("fso-204598", "spk-SGL-692"); throws for something that isn't one of the project's tickets */
+  /** the run a ticket gets ("fso-204598", "shop-SGL-692"); throws for something that isn't one of the project's tickets */
   runId(ticket: number | string): string {
     const parsed = this.tracker.parseKey(String(ticket))
     const p = this.d.project

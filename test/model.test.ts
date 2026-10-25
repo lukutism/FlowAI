@@ -98,24 +98,24 @@ const ev = (run: string, at: number, body: Record<string, unknown>, actor: RunEv
 describe('filter, sort and group the runs table', () => {
   const runs = [
     run('fso-1', { title: 'Fix asset list crash', stage: 'verify', createdAt: min(30), tokens: 900 }),
-    run('spk-2', { project: 'spk', title: 'Add export endpoint', stage: 'build', createdAt: min(10), tokens: 5000 }),
+    run('shop-2', { project: 'shop', title: 'Add export endpoint', stage: 'build', createdAt: min(10), tokens: 5000 }),
     run('fso-3', { title: 'Update release branch', stage: 'build', status: 'failed', needs: { kind: 'setup', ask: 'x' }, createdAt: min(20) }),
   ]
   test('field filters (project, status, stage) and any text, together', () => {
     expect(filterRuns(runs, 'project:fso').map(r => r.id)).toEqual(['fso-1', 'fso-3'])
     expect(filterRuns(runs, 'status:failed').map(r => r.id)).toEqual(['fso-3'])
-    expect(filterRuns(runs, 'stage:build export').map(r => r.id)).toEqual(['spk-2'])
+    expect(filterRuns(runs, 'stage:build export').map(r => r.id)).toEqual(['shop-2'])
     expect(filterRuns(runs, 'CRASH').map(r => r.id)).toEqual(['fso-1'])
     expect(filterRuns(runs, '').length).toBe(3)
   })
   test('sort: newest, oldest, latest activity, most tokens', () => {
-    expect(rows(runs, NOW, 'newest').map(r => r.run)).toEqual(['spk-2', 'fso-3', 'fso-1'])
-    expect(rows(runs, NOW, 'oldest').map(r => r.run)).toEqual(['fso-1', 'fso-3', 'spk-2'])
-    expect(rows(runs, NOW, 'tokens').map(r => r.run)).toEqual(['spk-2', 'fso-1', 'fso-3'])
+    expect(rows(runs, NOW, 'newest').map(r => r.run)).toEqual(['shop-2', 'fso-3', 'fso-1'])
+    expect(rows(runs, NOW, 'oldest').map(r => r.run)).toEqual(['fso-1', 'fso-3', 'shop-2'])
+    expect(rows(runs, NOW, 'tokens').map(r => r.run)).toEqual(['shop-2', 'fso-1', 'fso-3'])
   })
   test('group by stage, in stage order, with counts and tokens; a collapsed group hides its runs', () => {
     const g = groupRows(rows(runs, NOW, 'newest'), runs, new Set(['verify']))
-    expect(g.map(x => (x.kind === 'group' ? `${x.collapsed ? '▸' : '▾'}${x.stage} ${x.count} ${x.tokens}` : x.row.run))).toEqual(['▾build 2 5k', 'spk-2', 'fso-3', '▸verify 1 1k'])
+    expect(g.map(x => (x.kind === 'group' ? `${x.collapsed ? '▸' : '▾'}${x.stage} ${x.count} ${x.tokens}` : x.row.run))).toEqual(['▾build 2 5k', 'shop-2', 'fso-3', '▸verify 1 1k'])
     expect(g.find(x => x.kind === 'group' && x.stage === 'verify')).toMatchObject({ collapsed: true })
   })
   test('done runs from before today are hidden unless asked for; the footer says how many', () => {
@@ -123,7 +123,7 @@ describe('filter, sort and group the runs table', () => {
     expect(filterRuns(all, '').map(r => r.id)).not.toContain('old')
     expect(filterRuns(all, 'status:done').map(r => r.id)).toEqual(['old'])
     expect(footer(all, filterRuns(all, ''), '', NOW)).toBe('3 of 4 runs · 1 done before today hidden')
-    expect(footer(all, filterRuns(all, 'project:spk'), 'project:spk', NOW)).toBe('1 of 4 runs match')
+    expect(footer(all, filterRuns(all, 'project:shop'), 'project:shop', NOW)).toBe('1 of 4 runs match')
   })
 })
 

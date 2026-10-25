@@ -5,19 +5,19 @@ import { join } from 'node:path'
 import { EventStore } from '../src/store.ts'
 import { TransitionError } from '../src/run.ts'
 
-const created = { type: 'run.created', ticket: 'SPK-212', title: 'Migrate push to FCM v1', project: 'example', base: 'origin/main' } as const
+const created = { type: 'run.created', ticket: 'Shop-212', title: 'Migrate push to FCM v1', project: 'example', base: 'origin/main' } as const
 let clock = Date.parse('2026-10-24T12:00:00Z')
 const store = (file = ':memory:') => new EventStore(file, () => (clock += 1000))
 
 describe('EventStore: the append-only log every screen and number comes from', () => {
   test('append numbers events in order and stamps the time; state is the fold of the run\'s events', () => {
     const s = store()
-    const a = s.append('SPK-212', 'human', created)
-    const b = s.append('SPK-212', 'engine', { type: 'setup.done' })
+    const a = s.append('Shop-212', 'human', created)
+    const b = s.append('Shop-212', 'engine', { type: 'setup.done' })
     expect(b.seq).toBe(a.seq + 1)
     expect(b.at).toBeGreaterThan(a.at)
-    expect(s.state('SPK-212')).toMatchObject({ ticket: 'SPK-212', stage: 'plan', status: 'running' })
-    expect(s.events('SPK-212').map(e => [e.type, e.actor])).toEqual([['run.created', 'human'], ['setup.done', 'engine']])
+    expect(s.state('Shop-212')).toMatchObject({ ticket: 'Shop-212', stage: 'plan', status: 'running' })
+    expect(s.events('Shop-212').map(e => [e.type, e.actor])).toEqual([['run.created', 'human'], ['setup.done', 'engine']])
   })
   test('an event the run can\'t take is refused and never stored', () => {
     const s = store()

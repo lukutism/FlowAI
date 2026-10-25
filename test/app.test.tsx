@@ -389,13 +389,13 @@ describe('the design: header, sort, group, filter, activity, message line', () =
     } finally { t.s.renderer.destroy() }
   })
   test('/ filters by field and text; esc clears it', async () => {
-    const list = [...runs, base('spk-7', { project: 'spk', title: 'Order text' })]
+    const list = [...runs, base('shop-7', { project: 'shop', title: 'Order text' })]
     const t = await screen(list)
     try {
-      const f = await t.press('/', ...'project:spk'.split(''), 'enter')
-      expect(f).toContain('filter project:spk')
+      const f = await t.press('/', ...'project:shop'.split(''), 'enter')
+      expect(f).toContain('filter project:shop')
       expect(f).toContain('1 of 4 runs match')
-      expect(f).toContain('∿ flow  spk')
+      expect(f).toContain('∿ flow  shop')
       expect(f).toMatch(/#7 +Order text/)
       expect(f).not.toMatch(/#103 +Title/)
       expect(await t.press('esc')).toContain('filter none')
@@ -583,17 +583,17 @@ describe('the mouse', () => {
 })
 
 describe('projects and the attention list from the keyboard', () => {
-  const mixed = [...runs, base('spk-7', { project: 'spk', title: 'Order text' })]
+  const mixed = [...runs, base('shop-7', { project: 'shop', title: 'Order text' })]
   test('p opens the project picker with each project\'s runs; choosing one filters the screen to it', async () => {
-    const t = await screen(mixed, undefined, { projects: [...projects, { ...projects[0]!, key: 'spk', name: 'SPK' }] })
+    const t = await screen(mixed, undefined, { projects: [...projects, { ...projects[0]!, key: 'shop', name: 'Shop' }] })
     try {
       const f = await t.press('p')
       expect(f).toMatch(/✓ all projects +4 runs/)
       expect(f).toMatch(/fso +FSO +3 runs/)
-      expect(f).toMatch(/spk +SPK +1 run/)
+      expect(f).toMatch(/shop +Shop +1 run/)
       const g = await t.press('j', 'j', 'enter')
-      expect(g).toContain('∿ flow  spk ▾')
-      expect(g).toContain('filter project:spk')
+      expect(g).toContain('∿ flow  shop ▾')
+      expect(g).toContain('filter project:shop')
       expect(g).toMatch(/#7 +Order text/)
       expect(g).not.toMatch(/#103 +Title fso-103/)
       expect(await t.press('p', 'k', 'k', 'enter')).toContain('∿ flow  all projects ▾') // the picker opens on the current project
@@ -648,7 +648,7 @@ describe('projects and the attention list from the keyboard', () => {
 describe('the new-run form', () => {
   const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const, 'ios' as const], patches: ['mobile'], deadlineMinutes: 30, defaults: ['mobile'], devServers: ['portal'],
     repoMatch: { mobile: '\\bmobile\\b|\\bapp\\b', portal: '\\bportal\\b|\\bweb\\b' }, patchApps: { cmms: 'cmms|maintenance', product: 'product|picking|material' } }
-  const spk = { ...fso, key: 'spk', name: 'SPK', tracker: 'jira' as const, patches: [], devServers: [] }
+  const shop = { ...fso, key: 'shop', name: 'Shop', tracker: 'jira' as const, patches: [], devServers: [] }
   const found = { run: 'fso-204598', exists: false, key: '#204598', title: 'Picking – Remaining Required Quantity', kind: 'feature' as const, type: 'Task', url: 'u', board: 'acme-hub', customer: 'ACME', tags: ['3.18'], comments: 3 }
   const query = (o: { lookup?: unknown; fail?: string } = {}) => async (q: { q: string; base?: string }) => {
     if (q.q === 'bases') return { mobile: ['origin/develop', 'origin/patch/3.20.7', 'origin/patch/3.18.41'], portal: ['origin/develop'] }
@@ -661,7 +661,7 @@ describe('the new-run form', () => {
   const typeIn = async (t: Awaited<ReturnType<typeof screen>>, text: string) => { for (const k of text) await act(async () => { t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(400) }) }
   const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
   test('n opens it; the ticket is looked up as you type: its title, type, board, customer; the base and patch it points at', async () => {
-    const t = await screen(runs, undefined, { projects: [fso, spk], query: query() as FlowApi['query'] })
+    const t = await screen(runs, undefined, { projects: [fso, shop], query: query() as FlowApi['query'] })
     try {
       expect(await t.press('n')).toContain('a ticket to a draft PR')
       await typeIn(t, '204598')
@@ -678,7 +678,7 @@ describe('the new-run form', () => {
     } finally { t.s.renderer.destroy() }
   })
   test('it refuses to start what would fail, and says why; with the fields fixed it starts the run', async () => {
-    const t = await screen(runs, undefined, { projects: [fso, spk], query: query() as FlowApi['query'] })
+    const t = await screen(runs, undefined, { projects: [fso, shop], query: query() as FlowApi['query'] })
     try {
       await t.press('n'); await typeIn(t, '204598')
       const refused = await keys(t, 'enter')
@@ -754,9 +754,9 @@ describe('the new-run form', () => {
     } finally { u.s.renderer.destroy() }
   })
   test('it opens on the project you are filtered to, else the one of your latest run', async () => {
-    const t = await screen([base('spk-1', { project: 'spk', createdAt: NOW - 60_000 }), base('fso-2', { createdAt: NOW - 600_000 })], undefined, { projects: [fso, spk], query: query() as FlowApi['query'] })
+    const t = await screen([base('shop-1', { project: 'shop', createdAt: NOW - 60_000 }), base('fso-2', { createdAt: NOW - 600_000 })], undefined, { projects: [fso, shop], query: query() as FlowApi['query'] })
     try {
-      expect(await t.press('n')).toMatch(/\(•\) spk/)
+      expect(await t.press('n')).toMatch(/\(•\) shop/)
       await t.press('esc', '/', ...'project:fso'.split(''), 'enter')
       const f = await t.press('n')
       expect(f).toContain('New run · FSO') // the screen's project: not asked
@@ -777,14 +777,14 @@ describe('the new-run form', () => {
     } finally { t.s.renderer.destroy() }
   })
   test('esc closes it; the Start button can be clicked', async () => {
-    const t = await screen(runs, undefined, { projects: [spk], query: query({ lookup: { ...found, run: 'spk-SGL-692', key: 'SGL-692', tags: [], customer: '', board: 'SGL' } }) as FlowApi['query'] })
+    const t = await screen(runs, undefined, { projects: [shop], query: query({ lookup: { ...found, run: 'shop-SGL-692', key: 'SGL-692', tags: [], customer: '', board: 'SGL' } }) as FlowApi['query'] })
     try {
       await t.press('n')
       expect(await t.press('esc')).not.toContain('a ticket to a draft PR')
       await t.press('n'); await typeIn(t, 'SGL-692')
       const p = at(await t.frame(), '↵ Start run')
       await act(async () => { await t.s.mockMouse.click(p.x + 2, p.y) })
-      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'spk', ticket: 'SGL-692', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'shop', ticket: 'SGL-692', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
     } finally { t.s.renderer.destroy() }
   })
 })
