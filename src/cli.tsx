@@ -139,7 +139,7 @@ async function serveCmd() {
   const projects = Object.fromEntries((existsSync(PROJECTS) ? readdirSync(PROJECTS) : []).filter(f => f.endsWith('.json')).map(f => { const p = loadProject(join(PROJECTS, f)); return [p.key, p] }))
   const s = store()
   s.subscribe(showEvent)
-  const svc = new Service({ store: s, projects, limits: loadSettings(join(PROJECTS, '..', 'flow.json')).limits, az: realAz, dataDir: DATA, makeAgent: o => new ClaudeAgent(o), makeReviewer: o => new ClaudeAgent({ ...o, permissionMode: 'plan' }), tap: (_, e) => showAgent(e) })
+  const svc = new Service({ store: s, projects, projectsDir: PROJECTS, limits: loadSettings(join(PROJECTS, '..', 'flow.json')).limits, az: realAz, dataDir: DATA, makeAgent: o => new ClaudeAgent(o), makeReviewer: o => new ClaudeAgent({ ...o, permissionMode: 'plan' }), tap: (_, e) => showAgent(e) })
   svc.onNotice(n => console.log(`notice ${n.run}: ${n.text}`))
   const srv = serve({ service: svc, store: s, dataDir: DATA, port: 0, token: token(DATA) })
   announce(DATA, srv.port)

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { KeyEvent } from '@opentui/core'
 import { RunDetail, stopShells, type DetailApi, type DetailKeys, type PaletteAction } from './detail.tsx'
 import { NewRunForm, type FormApi } from './form.tsx'
+import { ProjectSettings } from './settings.tsx'
 import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
 import type { Command, ProjectSummary, Reply } from '../service.ts'
@@ -42,6 +43,7 @@ type Mode =
   | { kind: 'ship'; run: string }
   | { kind: 'message'; run: string; text: string }
   | { kind: 'new' }
+  | { kind: 'settings'; project: string }
   | { kind: 'detail'; run: string }
   | { kind: 'filter'; text: string }
   | { kind: 'projects'; index: number }
@@ -58,6 +60,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const [notice, setNotice] = useState<string | null>(null)
   const detailKeys = useRef<DetailKeys | null>(null)
   const formKeys = useRef<DetailKeys | null>(null)
+  const settingsKeys = useRef<DetailKeys | null>(null)
+  const [projSel, setProjSel] = useState(0)
   /** the run detail's own commands, for the palette while it is open */
   const detailCmds = useRef<(() => PaletteAction[]) | null>(null)
   /** the command palette: over whatever is open (the runs, a tab, a run's detail), which stays as it is */
@@ -171,7 +175,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     }
     // in a run's detail its panes take the keys first (a shell or the message box being typed in takes them all)
     if (mode.kind === 'detail' && raw && detailKeys.current?.(raw, typed)) return
-    if (mode.kind === 'new') { if (raw) formKeys.current?.(raw, typed); return }    // typing goes through the latest state: keys can arrive faster than the screen redraws
+    if (mode.kind === 'new') { if (raw) formKeys.current?.(raw, typed); return }
+    if (mode.kind === 'settings' && raw && settingsKeys.current?.(raw, typed)) return    // typing goes through the latest state: keys can arrive faster than the screen redraws
     const edit = (f: (text: string) => string) => setMode(prev => ('text' in prev ? ({ ...prev, text: f(prev.text) } as Mode) : prev))
     const input = (m: Extract<Mode, { text: string }>, enter: (text: string) => void) => {
       if (name === 'escape') return setMode({ kind: 'list' })
@@ -216,6 +221,14 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed >= '1' && typed <= String(TABS.length)) return goTab(TABS[Number(typed) - 1]!)
     if (typed === 'p' && mode.kind !== 'detail') return setMode({ kind: 'projects', index: Math.max(0, choices.findIndex(c => c.key === (/project:(\S+)/.exec(filter)?.[1] ?? ''))) })
     if (typed === 'n') return setMode({ kind: 'new' })
+    if (tab === 'Projects' && mode.kind === 'list') {
+      const n = (api.projects ?? []).length
+      if (name === 'down' || typed === 'j') return setProjSel(i => Math.min(i + 1, Math.max(0, n - 1)))
+      if (name === 'up' || typed === 'k') return setProjSel(i => Math.max(i - 1, 0))
+      const p = (api.projects ?? [])[Math.min(projSel, n - 1)]
+      if (name === 'return' && p) return setMode({ kind: 'settings', project: p.key })
+      return
+    }
     if (tab !== 'Runs' && mode.kind !== 'detail') return
     if (name === 'tab' && mode.kind !== 'detail') return setFocus(f => (f === 'runs' && att.length ? 'attention' : 'runs'))
     // one cursor through both lists: down past the last item needing you goes into the runs, up from the first run back
@@ -261,6 +274,14 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const bars = api.resources ? resourceBars(api.resources) : []
   const inline = mode.kind === 'approve' || mode.kind === 'ship' ? mode.run : undefined
   const message = notice ?? (L.message ? lastMessage(recent, t) : '')
+  if (mode.kind === 'settings') return (
+    <box flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => {}} />
+      <ProjectSettings api={api} project={mode.project} width={width} height={height} bind={k => { settingsKeys.current = k }}
+        onBack={() => setMode({ kind: 'list' })} onSaved={text => setNotice(text)} />
+      {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
+    </box>
+  )
   const detailRun = mode.kind === 'detail' ? api.runs.get(mode.run) : undefined
   if (detailRun) return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -301,7 +322,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
           </>
         ) : tab === 'Queue' ? <QueueView runs={all} resources={api.resources} now={t} />
         : tab === 'Metrics' ? <MetricsView runs={all} projects={api.projects ?? []} />
-        : <ProjectsView projects={api.projects ?? []} runs={all} />}
+        : <ProjectsView projects={api.projects ?? []} runs={all} selected={projSel} onOpen={i => { if (i === projSel) { const p = (api.projects ?? [])[i]; if (p) setMode({ kind: 'settings', project: p.key }) } else setProjSel(i) }} />}
       <text> </text>
       {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} fixed={/project:(\S+)/.test(filter)} bind={k => { formKeys.current = k }}
         onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
@@ -550,16 +571,33 @@ function MetricsView({ runs, projects }: { runs: RunState[]; projects: ProjectSu
   )
 }
 
-function ProjectsView({ projects, runs }: { projects: ProjectSummary[]; runs: RunState[] }) {
+function ProjectsView({ projects, runs, selected, onOpen }: { projects: ProjectSummary[]; runs: RunState[]; selected: number; onOpen: (i: number) => void }) {
+  const sel = projects[Math.min(selected, projects.length - 1)]
+  const tool = (k: string) => (k === 'jira' ? 'Jira' : k === 'github' ? 'GitHub' : 'Azure DevOps')
   return (
     <box flexDirection="column">
-      <text><strong>Projects</strong><span fg={C.muted}>   from ~/.config/flow/projects/&lt;key&gt;.json</span></text>
-      {projects.length ? projects.map(p => (
-        <box key={p.key} flexDirection="column">
-          <text><strong>{fit(p.key, 8)}</strong><span fg={C.text}>{fit(p.name, 24)}</span><span fg={C.secondary}>{`tickets ${p.tracker === 'jira' ? 'Jira' : 'Azure DevOps'} · PRs ${p.forge === 'github' ? 'GitHub' : 'Azure DevOps'} · ${runs.filter(r => r.project === p.key).length} runs`}</span></text>
-          <text fg={C.muted}>{`        repos ${p.repos.join(', ')}${p.devices.length ? ` · devices ${p.devices.join(', ')}` : ''}${p.patches.length ? ` · customer patches in ${p.patches.join(', ')}` : ''} · plan defaults after ${p.deadlineMinutes} min`}</text>
+      <text><strong>Projects</strong><span fg={C.muted}>{`  ${projects.length}   `}</span><strong>↵</strong><span fg={C.muted}> settings</span></text>
+      <text fg={C.muted}>{`   ${fit('Key', 8)}${fit('Name', 22)}${fit('Tickets', 16)}${fit('PRs', 16)}${fit('Repos', 8)}${fit('Devices', 15)}${fit('Patches', 10)}Runs`}</text>
+      {projects.length ? projects.map((p, i) => (
+        <box key={p.key} backgroundColor={i === selected ? C.selected : undefined} onMouseDown={() => onOpen(i)}>
+          <text><span fg={C.accent}>{i === selected ? '▌  ' : '   '}</span><strong>{fit(p.key, 8)}</strong><span fg={C.text}>{fit(p.name, 22)}</span><span fg={C.secondary}>{`${fit(tool(p.tracker), 16)}${fit(tool(p.forge), 16)}${fit(String(p.repos.length), 8)}${fit(p.devices.join(', ') || '–', 15)}${fit(p.patches.length ? 'yes' : '–', 10)}${runs.filter(r => r.project === p.key).length}`}</span></text>
         </box>
       )) : <text fg={C.muted}>The service has not reported its projects.</text>}
+      {sel ? (
+        <box flexDirection="column">
+          <text> </text>
+          <text><strong>{` ${sel.key}`}</strong><span fg={C.faint}>{`  ~/.config/flow/projects/${sel.key}.json`}</span></text>
+          {[
+            ['Tickets', `${tool(sel.tracker)}${sel.tracker === 'azure' ? ' · any board of the organisation' : ''}`],
+            ['PRs', `${tool(sel.forge)} · drafts`],
+            ['Repos', sel.repos.map(r => (sel.defaults?.includes(r) ? `${r} (default)` : r)).join(' · ')],
+            ['Agents', `${sel.maxParallel ?? 2} at once${sel.usage ? ` · turns stop at ${Math.round(sel.usage.fiveHour * 100)}% of 5 h, ${Math.round(sel.usage.week * 100)}% of the week` : ''}`],
+            ['Sandbox', sel.sandbox ? `${sel.sandbox.enabled ? 'on' : 'off'} · ${sel.sandbox.writable} writable folders · ${sel.sandbox.domains} network domains${sel.sandbox.strict ? ' · strict' : ''}` : 'none'],
+            ['Review', sel.review === false ? 'off' : 'an independent reviewer before ship'],
+            ['Plan', `defaults taken after ${sel.deadlineMinutes} min; held questions wait for you`],
+          ].map(([k, v]) => <text key={k}><span fg={C.muted}>{`   ${fit(k!, 10)}`}</span><span fg={C.secondary}>{v}</span></text>)}
+        </box>
+      ) : null}
     </box>
   )
 }
@@ -567,7 +605,7 @@ function ProjectsView({ projects, runs }: { projects: ProjectSummary[]; runs: Ru
 /** the key line: [what it shows, the key's name (return, escape) or character; 'palette' for ^K; '' for none] */
 const KEYS = {
   detail: [['esc back', 'escape'], ['a approve', 'a'], ['m message', 'm'], ['S ship', 'S'], ['p port', 'p'], ['^K commands', 'palette'], ['q quit', 'q']],
-  tabs: [['1–4 tabs', ''], ['^K or : commands', 'palette'], ['n new', 'n'], ['q quit', 'q']],
+  tabs: [['1–4 tabs', ''], ['↑↓ move', ''], ['↵ settings (Projects)', 'return'], ['^K or : commands', 'palette'], ['n new', 'n'], ['q quit', 'q']],
   compact: [['⇥ focus', 'tab'], ['↵ open', 'return'], ['n new', 'n'], ['a approve', 'a'], ['m msg', 'm'], ['S ship', 'S'], ['p project', 'p'], ['^K', 'palette'], ['q quit', 'q']],
   runs: [['⇥ focus', 'tab'], ['↑↓ move', ''], ['↵ open', 'return'], ['n new', 'n'], ['a approve', 'a'], ['m message', 'm'], ['S ship', 'S'], ['p project', 'p'], ['s sort', 's'], ['g group', 'g'], ['/ filter', '/'], ['^K commands', 'palette'], ['q quit', 'q']],
 } as const

@@ -79,9 +79,10 @@ export type Message =
   | { type: 'windows'; windows: Windows }
   | { type: 'notice'; notice: Notice }
   | { type: 'agent'; run: string; entry: Entry }
+  | { type: 'projects'; projects: ProjectSummary[] }
   | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: true; changes: Change[] } | { ok: true; diffs: FileDiff[] } | { ok: true; data: unknown } | { ok: false; error: string } }
 
-type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent' | 'query'>
+type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent' | 'query' | 'onProjects'>
 
 /** how many of the latest events the screen gets on connect (its Activity) */
 export const RECENT = 300
@@ -140,6 +141,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
     o.service.onWindows(w => publish({ type: 'windows', windows: w })),
     o.service.onResources(r => publish({ type: 'resources', resources: r })),
     o.service.onAgent((run, entry) => publish({ type: 'agent', run, entry })),
+    o.service.onProjects(projects => publish({ type: 'projects', projects })),
   ]
   return { port: server.port!, stop: () => { offs.forEach(f => f()); server.stop(true) } }
 }

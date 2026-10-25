@@ -506,8 +506,9 @@ describe('the other tabs', () => {
     try {
       expect(await t.press('3')).toMatch(/fso +4 +1 +3 +2 +1\.8M +1\.8M/)
       const p = await t.press('4')
-      expect(p).toMatch(/fso +FSO +tickets Azure DevOps · PRs Azure DevOps · 4 runs/)
-      expect(p).toContain('repos mobile, portal · devices android · customer patches in mobile · plan defaults after 30 min')
+      expect(p).toMatch(/fso +FSO +Azure DevOps +Azure DevOps +2 +android +yes +4/)
+      expect(p).toMatch(/Repos +mobile · portal/)
+      expect(p).toMatch(/Plan +defaults taken after 30 min/)
     } finally { t.s.renderer.destroy() }
   })
 })
@@ -528,7 +529,7 @@ describe('the mouse', () => {
   }
   test('a tab is clicked to open it', async () => {
     const t = await screen(runs, undefined, { projects })
-    try { expect(await click(t, '4 Projects')).toContain('from ~/.config/flow/projects/<key>.json') } finally { t.s.renderer.destroy() }
+    try { expect(await click(t, '4 Projects')).toMatch(/Projects +1 +↵ settings/) } finally { t.s.renderer.destroy() }
   })
   test('a click selects a run; a click on the selected run opens it', async () => {
     const t = await screen()
@@ -791,5 +792,76 @@ describe('the overlays sit in the middle of the screen', () => {
         expect(Math.abs(left - right)).toBeLessThanOrEqual(2)
       } finally { t.s.renderer.destroy() }
     }
+  })
+})
+
+describe('project settings', () => {
+  const raw = {
+    key: 'fso', name: 'FSO', worktrees: '~/fso/.flow/worktrees',
+    tracker: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'field-service-os' }, forge: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'field-service-os' },
+    repos: [{ key: 'mobile', path: '~/fso/m', defaultBase: 'origin/develop', verify: [] }, { key: 'portal', path: '~/fso/p', defaultBase: 'origin/develop', verify: [] }],
+    sandbox: { enabled: true, filesystem: { allowWrite: ['~/.npm'] } },
+  }
+  const summary = [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const], patches: [], deadlineMinutes: 30, defaults: ['mobile'], maxParallel: 2, usage: { fiveHour: 0.9, week: 0.95 }, review: true, sandbox: { enabled: true, writable: 1, domains: 0, strict: false } }]
+  const open = async (reply: (c: Command) => { ok: true; run: string } | { ok: false; error: string } = () => ({ ok: true, run: '' })) => {
+    const t = await screen(runs, undefined, { projects: summary, query: (async (q: { q: string }) => (q.q === 'projectFile' ? { path: '/home/me/.config/flow/projects/fso.json', json: raw } : [])) as FlowApi['query'] })
+    t.f.a.send = async c => { t.f.sent.push(c); return reply(c) }
+    return t
+  }
+  const k = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const x of ks) await act(async () => { x === 'enter' ? t.s.mockInput.pressEnter() : x === 'esc' ? t.s.mockInput.pressEscape() : x === 'tab' ? t.s.mockInput.pressKey('\t') : x === 'backspace' ? t.s.mockInput.pressKey('\b') : x === ' ' ? t.s.mockInput.pressKey(' ') : t.s.mockInput.pressKey(x); if (x === 'esc') await Bun.sleep(80) }); await act(async () => { await Bun.sleep(20) }); return t.frame() }
+  test('4 Projects: each project and what it is set to; ↵ opens its settings', async () => {
+    const t = await open()
+    try {
+      const f = await t.press('4')
+      expect(f).toMatch(/▌  fso +FSO +Azure DevOps +Azure DevOps +2 +android/)
+      expect(f).toMatch(/Sandbox +on · 1 writable folders · 0 network domains/)
+      const g = await k(t, 'enter')
+      expect(g).toMatch(/fso  FSO +settings/)
+      expect(g).toMatch(/General[\s\S]*Permissions[\s\S]*Naming/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a toggle changed, shown against the file, saved on y', async () => {
+    const t = await open()
+    try {
+      await t.press('4'); await k(t, 'enter')
+      await k(t, 'j', 'j', 'j', 'j', 'enter') // Permissions, its first field: the sandbox on
+      const f = await k(t, ' ')
+      expect(f).toMatch(/▌ On +\[ \] off/)
+      expect(f).toContain('1 change not saved')
+      const r = await k(t, 'S')
+      expect(r).toContain("Save fso's settings?")
+      expect(r).toMatch(/sandbox\.enabled[\s\S]*- true +\+ false/)
+      await k(t, 'y')
+      expect(t.f.sent).toEqual([{ cmd: 'saveProject', project: 'fso', json: { ...raw, sandbox: { ...raw.sandbox, enabled: false } } }])
+      expect(await t.frame()).not.toContain('change not saved')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a list: added to in its editor; a text typed; leaving with changes asks once', async () => {
+    const t = await open()
+    try {
+      await t.press('4'); await k(t, 'enter', 'j', 'j', 'j', 'j', 'enter')
+      await k(t, 'j', 'j', 'j', 'enter') // Writable
+      await k(t, 'a', ...'~/.m2'.split(''), 'enter')
+      expect(await t.frame()).toContain('▸ ~/.m2')
+      await k(t, 'enter')
+      expect(await t.frame()).toMatch(/Writable +~\/\.npm  ~\/\.m2/)
+      const r = await k(t, 'S')
+      expect(r).toMatch(/sandbox\.filesystem\.allowWrite[\s\S]*\+ ~\/\.m2/)
+      await k(t, 'n', 'tab', 'k', 'k', 'k', 'k', 'tab', 'j', 'enter') // General → Name
+      for (let i = 0; i < 3; i++) await k(t, 'backspace')
+      await k(t, ...'Field Service OS'.split(''), 'enter')
+      expect(await t.frame()).toMatch(/Name +Field Service OS/)
+      expect(await k(t, 'esc')).toContain('2 changes not saved: S shows and saves them · esc again leaves without them')
+      expect(await k(t, 'esc')).toMatch(/Projects +1/)
+      expect(t.f.sent).toEqual([])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a save refused names what is wrong', async () => {
+    const t = await open(() => ({ ok: false, error: 'fso.json: repos: Array must contain at least 1 element(s)' }))
+    try {
+      await t.press('4'); await k(t, 'enter', 'enter', 'j')
+      await k(t, 'enter', 'x', 'enter', 'S', 'y')
+      expect(await t.frame()).toContain('fso.json: repos: Array must contain at least 1 element(s)')
+    } finally { t.s.renderer.destroy() }
   })
 })

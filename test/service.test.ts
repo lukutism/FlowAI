@@ -107,6 +107,27 @@ describe('Service: the background process that drives runs', () => {
     expect(pushed).toEqual(tr.map(e => `ex-1 ${e.kind}`))
     expect(readTranscript(t.data, 'nope')).toEqual([])
   })
+  test('a project\'s settings: read as written, saved only when they are valid, and new runs get them at once', async () => {
+    const t = setup(() => [])
+    const dir = mkdtempSync(join(tmpdir(), 'flow-projects-'))
+    const raw = { key: 'ex', name: 'Ex', worktrees: join(t.data, 'wt'), tracker: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' }, forge: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' },
+      repos: [{ key: 'mobile', path: '/r', defaultBase: 'origin/develop', verify: [] }] }
+    writeFileSync(join(dir, 'ex.json'), JSON.stringify(raw, null, 2))
+    const svc = new Service({ store: new EventStore(':memory:'), projects: { ex: parseProject(raw, 'ex.json') }, projectsDir: dir, az: () => ({ code: 1, out: '', err: '' }), dataDir: t.data, makeAgent: () => new FakeAgent([]) })
+    expect(await svc.query({ q: 'projectFile', project: 'ex' })).toEqual({ path: join(dir, 'ex.json'), json: raw })
+    const pushed: string[] = []
+    svc.onProjects(ps => pushed.push(ps.map(p => p.name).join()))
+    // a mistake is named, and nothing is written
+    expect(svc.dispatch({ cmd: 'saveProject', project: 'ex', json: { ...raw, repos: [] } })).toMatchObject({ ok: false, error: expect.stringMatching(/repos/) })
+    expect(JSON.parse(require('node:fs').readFileSync(join(dir, 'ex.json'), 'utf8')).repos).toHaveLength(1)
+    // a good change is written (the old file kept beside it) and taken at once
+    expect(svc.dispatch({ cmd: 'saveProject', project: 'ex', json: { ...raw, name: 'Example', plan: { deadlineMinutes: 45 } } })).toEqual({ ok: true, run: '' })
+    expect(JSON.parse(require('node:fs').readFileSync(join(dir, 'ex.json'), 'utf8'))).toMatchObject({ name: 'Example', plan: { deadlineMinutes: 45 } })
+    expect(JSON.parse(require('node:fs').readFileSync(join(dir, 'ex.json.bak'), 'utf8')).name).toBe('Ex')
+    expect(svc.projects().find(p => p.key === 'ex')).toMatchObject({ name: 'Example', deadlineMinutes: 45 })
+    expect(pushed).toEqual(['Example'])
+    expect(svc.dispatch({ cmd: 'saveProject', project: 'ex', json: { ...raw, key: 'other' } })).toMatchObject({ ok: false, error: expect.stringMatching(/key/) })
+  })
   test('commands for a run that doesn\'t exist, or an unknown project, are refused at once', () => {
     const t = setup(() => [])
     expect(t.svc.dispatch({ cmd: 'approve', run: 'ex-9' })).toMatchObject({ ok: false, error: expect.stringMatching(/no run ex-9/) })

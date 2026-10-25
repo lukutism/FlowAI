@@ -93,6 +93,13 @@ export class Pipeline {
     })
   }
 
+  /** the project's settings changed (saved from the screen): new runs and steps use them from now on */
+  reconfigure(project: Project) {
+    this.d.project = project
+    this.tracker = trackerFor(project, { az: this.d.az, ...this.d.jira })
+    this.forge = forgeFor(project, { az: this.d.az, gh: this.d.gh })
+  }
+
   runDir = (run: string) => join(this.d.dataDir, 'runs', run)
   state = (run: string): RunState | undefined => this.d.store.state(run)
   private planFile = (run: string) => join(this.runDir(run), 'plan.md')

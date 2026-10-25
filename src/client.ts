@@ -105,6 +105,7 @@ export class FlowClient {
     else if (m.type === 'resources') this.resources = m.resources
     else if (m.type === 'event') { this.runs.set(m.state.id, m.state); this.recent = [...this.recent, m.event].slice(-RECENT) }
     else if (m.type === 'windows') this.windows = m.windows
+    else if (m.type === 'projects') this.projects = m.projects
     else if (m.type === 'reply') { this.pending.get(m.id)?.(m.reply); this.pending.delete(m.id) }
     for (const l of this.listeners) l(m)
   }

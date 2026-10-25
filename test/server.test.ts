@@ -25,6 +25,7 @@ function fakeService() {
       onWindows: (f: (w: Windows) => void) => { wins.add(f); return () => wins.delete(f) },
       resources: (): Snapshot => ({ limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: ['fso-1'], builds: [], devices: [] }, waiting: [] }),
       onAgent: (f: (run: string, e: Entry) => void) => { agent.add(f); return () => agent.delete(f) },
+      onProjects: () => () => {},
       query: async (q: { q: string }) => { if (q.q === 'lookup') return { title: 'Picking quantity' }; throw new Error('no such ticket') },
       projects: () => [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const], patches: ['mobile'], deadlineMinutes: 30 }],
       onResources: (f: (r: Snapshot) => void) => { res.add(f); return () => res.delete(f) },

@@ -1,8 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
-import type { Project } from './config.ts'
+import { parseProject, type Project } from './config.ts'
 import { Pipeline } from './pipeline.ts'
 import { DEFAULT_LIMITS, Resources, WAITS_FOR, type Limits, type Snapshot } from './resources.ts'
 import type { RunAgent } from './runner.ts'
@@ -18,6 +18,8 @@ export type Command =
   | { cmd: 'port'; run: string; to?: string }
   /** stop the run's device and free its slot (ship does it too) */
   | { cmd: 'release'; run: string }
+  /** a project's settings as edited: checked, then written to its file (the old one kept as .bak) and used at once */
+  | { cmd: 'saveProject'; project: string; json: Record<string, unknown> }
 
 /** what the screen shows of a project */
 export interface ProjectSummary {
@@ -26,6 +28,9 @@ export interface ProjectSummary {
   defaults?: string[]; devServers?: string[]
   /** for the form's suggestions: each repo's pattern on a ticket's platform and tags; patch apps by pattern */
   repoMatch?: Record<string, string>; patchApps?: Record<string, string>
+  /** for the Projects tab */
+  maxParallel?: number; usage?: { fiveHour: number; week: number }; review?: boolean
+  sandbox?: { enabled: boolean; writable: number; domains: number; strict: boolean }
 }
 
 /** what the new-run form asks before a run exists */
@@ -35,6 +40,7 @@ export type Query =
   | { q: 'refs'; project: string; repo: string }
   | { q: 'patches'; project: string }
   | { q: 'checkPatch'; project: string; patch: string; base: string }
+  | { q: 'projectFile'; project: string }
 
 export type Reply = { ok: true; run: string } | { ok: false; error: string }
 export interface Notice { run: string; text: string }
@@ -51,6 +57,8 @@ export interface ServiceDeps {
   tap?: (run: string, e: AgentEvent) => void
   /** machine-wide slot limits (~/.config/flow/flow.json) */
   limits?: Limits
+  /** where the projects' files are (~/.config/flow/projects): their settings are read from and saved to <key>.json */
+  projectsDir?: string
 }
 
 /**
@@ -64,6 +72,7 @@ export class Service {
   private windowsListeners = new Set<(w: Windows) => void>()
   private lastWindows: Windows = {}
   private agentListeners = new Set<(run: string, e: Entry) => void>()
+  private projectListeners = new Set<(p: ProjectSummary[]) => void>()
 
   /** the machine-wide slots every run shares */
   readonly slots: Resources
@@ -81,6 +90,24 @@ export class Service {
   onNotice(fn: (n: Notice) => void) { this.notices.add(fn); return () => { this.notices.delete(fn) } }
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }
   windows(): Windows { return this.lastWindows }
+  onProjects(fn: (p: ProjectSummary[]) => void) { this.projectListeners.add(fn); return () => { this.projectListeners.delete(fn) } }
+  private projectFile(key: string): string {
+    if (!this.d.projectsDir || !this.d.projects[key] || !/^[a-z0-9-]+$/.test(key)) throw new Error(`no settings file for project ${key}`)
+    return join(this.d.projectsDir, `${key}.json`)
+  }
+  /** a project's settings saved: checked first (a mistake is named, nothing written), then taken by new runs */
+  private saveProject(key: string, json: Record<string, unknown>) {
+    const file = this.projectFile(key)
+    const parsed = parseProject(json, `${key}.json`)
+    if (parsed.key !== key) throw new Error(`${key}.json: key: a project's key can't change (it names its runs); add a new project instead`)
+    if (existsSync(file)) copyFileSync(file, `${file}.bak`)
+    writeFileSync(file, JSON.stringify(json, null, 2) + '\n')
+    this.d.projects[key] = parsed
+    this.pipes.get(key)?.reconfigure(parsed)
+    const ps = this.projects()
+    for (const l of this.projectListeners) l(ps)
+  }
+
   /** each entry of an agent session as it happens (also kept in the run's transcript) */
   onAgent(fn: (run: string, e: Entry) => void) { this.agentListeners.add(fn); return () => { this.agentListeners.delete(fn) } }
   private record(run: string, e: Entry) {
@@ -92,7 +119,9 @@ export class Service {
     return Object.values(this.d.projects).map(p => ({ key: p.key, name: p.name, tracker: p.tracker.kind, forge: p.forge.kind, repos: p.repos.map(r => r.key),
       devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes,
       defaults: (p.repos.some(r => r.default) ? p.repos.filter(r => r.default) : p.repos.slice(0, 1)).map(r => r.key), devServers: p.repos.filter(r => r.devServer).map(r => r.key),
-      repoMatch: Object.fromEntries(p.repos.filter(r => r.match).map(r => [r.key, r.match!])), patchApps: p.patchApps }))
+      repoMatch: Object.fromEntries(p.repos.filter(r => r.match).map(r => [r.key, r.match!])), patchApps: p.patchApps,
+      maxParallel: p.agent.maxParallel, usage: p.usage, review: p.review.enabled,
+      sandbox: p.sandbox ? (sb => ({ enabled: !!sb.enabled, writable: sb.filesystem?.allowWrite?.length ?? 0, domains: sb.network?.allowedDomains?.length ?? 0, strict: !!sb.network?.strictAllowlist }))(p.sandbox as { enabled?: boolean; filesystem?: { allowWrite?: string[] }; network?: { allowedDomains?: string[]; strictAllowlist?: boolean } }) : undefined }))
   }
 
   /** the new-run form's questions: a ticket, each repo's bases, the customer patches, whether one fits a base */
@@ -102,6 +131,7 @@ export class Service {
     if (q.q === 'bases') return Object.fromEntries(this.d.projects[q.project]!.repos.map(r => [r.key, p.bases(r.key)]))
     if (q.q === 'patches') return p.patchChoices()
     if (q.q === 'refs') return p.refs(q.repo)
+    if (q.q === 'projectFile') { const path = this.projectFile(q.project); return { path, json: JSON.parse(readFileSync(path, 'utf8')) } }
     return p.checkPatch(q.patch, q.base)
   }
   onResources(fn: (s: Snapshot) => void) { return this.slots.onChange(fn) }
@@ -124,6 +154,7 @@ export class Service {
   /** accept or refuse at once; the work itself runs in the background */
   dispatch(c: Command): Reply {
     try {
+      if (c.cmd === 'saveProject') { this.saveProject(c.project, c.json); return { ok: true, run: '' } }
       if (c.cmd === 'start') {
         const p = this.pipeline(c.project)
         const run = c.task?.trim() && !String(c.ticket).trim() ? p.taskRunId(c.task) : p.runId(c.ticket)
