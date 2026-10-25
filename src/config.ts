@@ -41,7 +41,11 @@ const repo = z.object({
    * customer patches: apply puts the customer's patch in the new worktree, staged ({customer} {app} {base} {main});
    * writeBack writes the worktree's whole change back as that patch ({customer} {app} {base} {dryRun}: --dry-run or nothing)
    */
-  patches: z.object({ apply: z.string(), writeBack: z.string() }).optional(),
+  patches: z.object({
+    apply: z.string(), writeBack: z.string(),
+    /** for the new-run form: prints the customer/app pairs, one a line; and says whether {customer}/{app} has a patch for {base} (exit 0) */
+    choices: z.string().optional(), check: z.string().optional(),
+  }).optional(),
 })
 
 /** a run's own device (emulator or simulator) and Metro; the commands and placeholders are in device.ts */

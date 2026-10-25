@@ -11,7 +11,7 @@ import { appendTranscript, type Entry } from './transcript.ts'
 import type { Windows } from './usage.ts'
 
 export type Command =
-  | { cmd: 'start'; project: string; ticket: number | string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean }
+  | { cmd: 'start'; project: string; ticket: number | string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
@@ -20,7 +20,18 @@ export type Command =
   | { cmd: 'release'; run: string }
 
 /** what the screen shows of a project */
-export interface ProjectSummary { key: string; name: string; tracker: 'azure' | 'jira'; forge: 'azure' | 'github'; repos: string[]; devices: ('android' | 'ios')[]; patches: string[]; deadlineMinutes: number }
+export interface ProjectSummary {
+  key: string; name: string; tracker: 'azure' | 'jira'; forge: 'azure' | 'github'; repos: string[]; devices: ('android' | 'ios')[]; patches: string[]; deadlineMinutes: number
+  /** the repos a run gets when it names none; the repos with a dev server */
+  defaults?: string[]; devServers?: string[]
+}
+
+/** what the new-run form asks before a run exists */
+export type Query =
+  | { q: 'lookup'; project: string; ticket: number | string }
+  | { q: 'bases'; project: string }
+  | { q: 'patches'; project: string }
+  | { q: 'checkPatch'; project: string; patch: string; base: string }
 
 export type Reply = { ok: true; run: string } | { ok: false; error: string }
 export interface Notice { run: string; text: string }
@@ -76,7 +87,17 @@ export class Service {
   resources(): Snapshot { return this.slots.snapshot() }
   projects(): ProjectSummary[] {
     return Object.values(this.d.projects).map(p => ({ key: p.key, name: p.name, tracker: p.tracker.kind, forge: p.forge.kind, repos: p.repos.map(r => r.key),
-      devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes }))
+      devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes,
+      defaults: (p.repos.some(r => r.default) ? p.repos.filter(r => r.default) : p.repos.slice(0, 1)).map(r => r.key), devServers: p.repos.filter(r => r.devServer).map(r => r.key) }))
+  }
+
+  /** the new-run form's questions: a ticket, each repo's bases, the customer patches, whether one fits a base */
+  async query(q: Query): Promise<unknown> {
+    const p = this.pipeline(q.project)
+    if (q.q === 'lookup') return p.lookup(q.ticket)
+    if (q.q === 'bases') return Object.fromEntries(this.d.projects[q.project]!.repos.map(r => [r.key, p.bases(r.key)]))
+    if (q.q === 'patches') return p.patchChoices()
+    return p.checkPatch(q.patch, q.base)
   }
   onResources(fn: (s: Snapshot) => void) { return this.slots.onChange(fn) }
 
@@ -103,7 +124,7 @@ export class Service {
         const run = p.runId(c.ticket)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
-        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer }) })
+        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model }) })
         return { ok: true, run }
       }
       // a run just started may not be recorded yet (its ticket is still being read): it is busy, not missing

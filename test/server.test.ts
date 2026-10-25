@@ -25,6 +25,7 @@ function fakeService() {
       onWindows: (f: (w: Windows) => void) => { wins.add(f); return () => wins.delete(f) },
       resources: (): Snapshot => ({ limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: ['fso-1'], builds: [], devices: [] }, waiting: [] }),
       onAgent: (f: (run: string, e: Entry) => void) => { agent.add(f); return () => agent.delete(f) },
+      query: async (q: { q: string }) => { if (q.q === 'lookup') return { title: 'Picking quantity' }; throw new Error('no such ticket') },
       projects: () => [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const], patches: ['mobile'], deadlineMinutes: 30 }],
       onResources: (f: (r: Snapshot) => void) => { res.add(f); return () => res.delete(f) },
     },
@@ -137,6 +138,11 @@ describe('the service socket', () => {
     g('branch', 'base-line', 'HEAD'); g('add', '.'); g('commit', '-qm', 'the change')
     writeFileSync(join(t.data, 'runs', 'fso-1', 'run.json'), JSON.stringify({ repos: [{ key: 'mobile', worktree: wt, base: 'base-line' }] }))
     expect(await c.changes('fso-1')).toEqual([{ repo: 'mobile', file: 'a.ts', added: 2, removed: 1, status: 'M' }, { repo: 'mobile', file: 'new.ts', added: 2, removed: 0, status: 'A' }])
+  })
+  test('the new-run form\'s questions get their answers, or the error', async () => {
+    const c = await start().connect()
+    expect(await c.query({ q: 'lookup', project: 'fso', ticket: 1 })).toEqual({ title: 'Picking quantity' })
+    await expect(c.query({ q: 'bases', project: 'fso' })).rejects.toThrow(/no such ticket/)
   })
   test('the run detail can read its events and its plan; other files are refused', async () => {
     const t = start(), c = await t.connect()

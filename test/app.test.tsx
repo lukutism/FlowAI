@@ -103,43 +103,6 @@ describe('Runs screen', () => {
       expect(await t.press('esc', 'j', 'enter', 'p')).toContain('#103 has no draft PR to port yet')
     } finally { t.s.renderer.destroy() }
   })
-  test('n starts a run: project, ticket number and an optional base, typed in place', async () => {
-    const t = await screen()
-    try {
-      expect(await t.press('n')).toContain('New run')
-      await t.press(...'fso 204598 origin/patch/3.18.41 repos=mobile,portal'.split(''), 'enter')
-      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.18.41', repos: ['mobile', 'portal'] }])
-    } finally { t.s.renderer.destroy() }
-  })
-  test('n takes a Jira key as the ticket too', async () => {
-    const t = await screen()
-    try {
-      await t.press('n', ...'spk SGL-692'.split(''), 'enter')
-      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'spk', ticket: 'SGL-692' }])
-    } finally { t.s.renderer.destroy() }
-  })
-  test('n with device=android asks for the run\'s own device', async () => {
-    const t = await screen()
-    try {
-      await t.press('n', ...'fso 204598 device=android'.split(''), 'enter')
-      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, device: 'android' }])
-      expect(await t.press('n', ...'fso 1 device=tv'.split(''), 'enter')).toContain('device is android or ios')
-    } finally { t.s.renderer.destroy() }
-  })
-  test('n with patch=<customer>/<app> starts a customer patch run', async () => {
-    const t = await screen()
-    try {
-      await t.press('n', ...'fso 204598 origin/patch/3.18.41 patch=acme/product'.split(''), 'enter')
-      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.18.41', patch: 'acme/product' }])
-    } finally { t.s.renderer.destroy() }
-  })
-  test('n with a malformed entry says what it needs and sends nothing', async () => {
-    const t = await screen()
-    try {
-      expect(await t.press('n', ...'fso'.split(''), 'enter')).toContain('type: <project> <ticket> [base] [repos=a,b] [device=android|ios] [patch=customer/app]')
-      expect(t.f.sent).toEqual([])
-    } finally { t.s.renderer.destroy() }
-  })
   test('m: typing a message (q included, it does not quit), enter sends it', async () => {
     const t = await screen()
     try {
@@ -481,7 +444,7 @@ describe('the mouse', () => {
     try {
       expect(await click(t, 's sort')).toContain('sort oldest')
       expect(await click(t, 'g group')).toContain('group stage')
-      expect(await click(t, 'n new')).toContain('New run')
+      expect(await click(t, 'n new')).toContain('a ticket to a draft PR')
     } finally { t.s.renderer.destroy() }
   })
   test('the wheel over the table moves the selection', async () => {
@@ -550,6 +513,102 @@ describe('projects and the attention list from the keyboard', () => {
       const p = at(await t.frame(), 'Ready to ship')
       await act(async () => { await t.s.mockMouse.click(p.x, p.y) })
       expect(await t.frame()).toMatch(/▌#104 /)
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe('the new-run form', () => {
+  const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const, 'ios' as const], patches: ['mobile'], deadlineMinutes: 30, defaults: ['mobile'], devServers: ['portal'] }
+  const spk = { ...fso, key: 'spk', name: 'SPK', tracker: 'jira' as const, patches: [], devServers: [] }
+  const found = { run: 'fso-204598', exists: false, key: '#204598', title: 'Picking – Remaining Required Quantity', kind: 'feature' as const, type: 'Task', url: 'u', board: 'iwb-hub', customer: 'IWB', tags: ['3.18'], comments: 3 }
+  const query = (o: { lookup?: unknown; fail?: string } = {}) => async (q: { q: string; base?: string }) => {
+    if (q.q === 'bases') return { mobile: ['origin/develop', 'origin/patch/3.20.7', 'origin/patch/3.18.41'], portal: ['origin/develop'] }
+    if (q.q === 'patches') return ['iwb/product', 'nordex/cmms']
+    if (q.q === 'checkPatch') return q.base === 'origin/patch/3.18.41' ? { ok: false, text: 'no iwb/product patch for 3.18.41 (newest 3.18.39)' } : { ok: true, text: 'iwb/product 3.20.7' }
+    if (o.fail) throw new Error(o.fail)
+    return o.lookup ?? found
+  }
+  const typeIn = async (t: Awaited<ReturnType<typeof screen>>, text: string) => { for (const k of text) await act(async () => { t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(400) }) }
+  const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
+  test('n opens it; the ticket is looked up as you type: its title, type, board, customer; the base and patch it points at', async () => {
+    const t = await screen(runs, undefined, { projects: [fso, spk], query: query() as FlowApi['query'] })
+    try {
+      expect(await t.press('n')).toContain('a ticket to a draft PR')
+      await typeIn(t, '204598')
+      const f = await t.frame()
+      expect(f).toContain('204598')
+      expect(f).toContain('✓ Task · iwb-hub')
+      expect(f).toContain('Picking – Remaining Required Quantity')
+      expect(f).toContain('customer IWB · 3 comments · tags 3.18')
+      expect(f).toMatch(/Base +origin\/patch\/3\.18\.41 ▾ +the ticket's release line/)
+      expect(f).toMatch(/\(•\) feature/)
+      expect(f).toMatch(/Patch +\( \) none +\(•\) iwb\/product/)
+      expect(f).toContain('⚠ no iwb/product patch for 3.18.41 (newest 3.18.39)')
+      expect(f).toContain('apply the iwb/product')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('it refuses to start what would fail, and says why; with the fields fixed it starts the run', async () => {
+    const t = await screen(runs, undefined, { projects: [fso, spk], query: query() as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      const refused = await keys(t, 'enter')
+      expect(refused).toContain('the customer patch does not fit this base')
+      expect(refused).toMatch(/▌ Patch/) // the focus goes to what is wrong
+      expect(t.f.sent).toEqual([])
+      // up to the base: ← to 3.20.7, where the patch fits
+      await keys(t, 'up', 'up', 'up', 'up', 'left')
+      expect(await t.frame()).toContain('✓ iwb/product 3.20.7')
+      // a device: down to Device, → android
+      await keys(t, 'down', 'down', 'down', 'right')
+      await keys(t, 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.20.7', kind: 'feature', repos: ['mobile'], device: 'android', patch: 'iwb/product' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('repos are toggled with space; a repo with a dev server offers one; the model can be chosen', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query({ lookup: { ...found, tags: [], customer: '', board: 'fso' } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      await keys(t, 'tab', 'tab', 'tab', 'right', ' ')
+      const f = await t.frame()
+      expect(f).toMatch(/\[x\] mobile +\[x\] portal/)
+      expect(f).toMatch(/Dev server +\(•\) none +\( \) portal/)
+      await keys(t, 'tab', 'tab', 'right', 'tab', 'tab', 'right', 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/develop', kind: 'feature', repos: ['mobile', 'portal'], devServer: true, model: 'opus' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a ticket that can\'t be read, or that has a run already, is not started', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query({ fail: 'az boards work-item show 9 failed: not found' }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '9')
+      expect(await t.frame()).toContain('✕ az boards work-item show 9 failed: not found')
+      await keys(t, 'enter')
+      expect(t.f.sent).toEqual([])
+    } finally { t.s.renderer.destroy() }
+    const u = await screen(runs, undefined, { projects: [fso], query: query({ lookup: { ...found, exists: true } }) as FlowApi['query'] })
+    try {
+      await u.press('n'); await typeIn(u, '204598')
+      expect(await u.frame()).toContain('fso-204598 exists already')
+      expect(await keys(u, 'enter')).toContain('fso-204598 exists already: open it from the runs')
+      expect(u.f.sent).toEqual([])
+    } finally { u.s.renderer.destroy() }
+  })
+  test('it opens on the project you are filtered to, else the one of your latest run', async () => {
+    const t = await screen([base('spk-1', { project: 'spk', createdAt: NOW - 60_000 }), base('fso-2', { createdAt: NOW - 600_000 })], undefined, { projects: [fso, spk], query: query() as FlowApi['query'] })
+    try {
+      expect(await t.press('n')).toMatch(/\(•\) spk/)
+      await t.press('esc', '/', ...'project:fso'.split(''), 'enter')
+      expect(await t.press('n')).toMatch(/\(•\) fso/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('esc closes it; the Start button can be clicked', async () => {
+    const t = await screen(runs, undefined, { projects: [spk], query: query({ lookup: { ...found, run: 'spk-SGL-692', key: 'SGL-692', tags: [], customer: '', board: 'SGL' } }) as FlowApi['query'] })
+    try {
+      await t.press('n')
+      expect(await t.press('esc')).not.toContain('a ticket to a draft PR')
+      await t.press('n'); await typeIn(t, 'SGL-692')
+      const p = at(await t.frame(), '↵ Start run')
+      await act(async () => { await t.s.mockMouse.click(p.x + 2, p.y) })
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'spk', ticket: 'SGL-692', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
     } finally { t.s.renderer.destroy() }
   })
 })

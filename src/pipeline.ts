@@ -25,7 +25,7 @@ import { changedFiles, verify } from './verify.ts'
 interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
-interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string }
+interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string; model?: string }
 
 /** a project's git in a worktree (its env), for flow's own local steps */
 const gitIn = (cwd: string, env?: Record<string, string | undefined>) => (...a: string[]) => {
@@ -39,7 +39,7 @@ export interface PipelineDeps {
   az: Az
   /** flow's own data: the event log and one folder per run */
   dataDir: string
-  makeAgent: (o: { cwd: string; settings: string; resume?: string }) => RunAgent
+  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string }) => RunAgent
   /** a fresh, read-only reviewer session per review; without it the review is skipped */
   makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
@@ -123,7 +123,42 @@ export class Pipeline {
   }
 
   /** patch: "<customer>/<app>", the customer patch the change goes on (in the run's repo that has patch commands) */
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean } = {}): Promise<string> {
+  /** the new-run form's look at a ticket before a run exists */
+  async lookup(ticket: number | string) {
+    const run = this.runId(ticket)
+    const t = await this.tracker.read(this.tracker.parseKey(String(ticket))!.id)
+    return { run, exists: !!this.d.store.state(run), key: t.key, title: t.title, kind: t.kind, type: t.type ?? '', url: t.url, board: t.board ?? '', customer: t.customer ?? '', tags: t.tags ?? [], comments: t.comments ?? 0, area: t.area ?? '' }
+  }
+
+  /** a repo's bases to start from: its default, then the branches its release patterns match, newest version first */
+  bases(repo: string): string[] {
+    const c = this.repoConfig(repo)
+    const refs = c.releaseBases.length ? new TextDecoder().decode(Bun.spawnSync(['git', 'for-each-ref', '--format=%(refname:short)', ...c.releaseBases.map(p => `refs/remotes/${p}`)], { cwd: c.path }).stdout).split('\n').filter(Boolean) : []
+    const ver = (r: string) => (/(\d+)\.(\d+)\.(\d+)/.exec(r) ?? []).slice(1).map(Number)
+    const newer = (a: string, b: string) => { const [x, y] = [ver(a), ver(b)]; for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0); return a.localeCompare(b) }
+    return [c.defaultBase, ...refs.filter(r => r !== c.defaultBase).sort(newer)]
+  }
+
+  private patchRepo() { return this.d.project.repos.find(r => r.patches) }
+
+  /** the customer/app pairs the project has patches for */
+  async patchChoices(): Promise<string[]> {
+    const r = this.patchRepo()
+    if (!r?.patches?.choices) return []
+    const res = await sh(r.patches.choices, r.path, this.d.gitEnv)
+    return res.code === 0 ? res.out.split('\n').map(x => x.trim()).filter(x => /^[\w.-]+\/[\w.-]+$/.test(x)) : []
+  }
+
+  /** whether customer/app has a patch for the base, in the project's words */
+  async checkPatch(patch: string, base: string): Promise<{ ok: boolean; text: string }> {
+    const r = this.patchRepo()
+    const [customer, app] = patch.split('/')
+    if (!r?.patches?.check || !customer || !app) return { ok: true, text: '' }
+    const res = await sh(fill(r.patches.check, { customer, app, base }), r.path, this.d.gitEnv)
+    return { ok: res.code === 0, text: tail(res.out || res.err, 1) }
+  }
+
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string } = {}): Promise<string> {
     const p = this.d.project
     const run = this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
@@ -147,7 +182,7 @@ export class Pipeline {
     const root = join(p.worktrees, String(id))
     const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
     const branch = p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}) }
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
@@ -401,7 +436,7 @@ export class Pipeline {
     const m = this.meta(run)
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
     const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.runDir(run)], sandbox: this.d.project.sandbox })
-    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session })
+    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent
   }

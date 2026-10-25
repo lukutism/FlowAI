@@ -3,7 +3,13 @@ import type { Project } from './config.ts'
 import { jiraTracker, type JiraDeps } from './jira.ts'
 
 /** A ticket as flow and the agent read it. id: the work item number (Azure) or the key (Jira). */
-export interface Ticket { id: number | string; key: string; title: string; kind: 'bug' | 'feature'; url: string; text: string }
+export interface Ticket {
+  id: number | string; key: string; title: string; kind: 'bug' | 'feature'; url: string; text: string
+  /** for the new-run form's suggestions: the tracker's own type, the board it is on, the customer named on it, tags */
+  type?: string; board?: string; customer?: string; tags?: string[]; comments?: number
+  /** the product area it belongs to (which app of a customer's) */
+  area?: string
+}
 
 /** Where tickets come from: it recognises its keys and reads a ticket. */
 export interface Tracker {

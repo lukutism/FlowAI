@@ -181,3 +181,19 @@ describe('the palette\'s matching', () => {
 describe('durations past ten hours', () => {
   test('keep their minutes', () => { expect(duration(12 * 3_600_000 + 30 * 60_000)).toBe('12h 30m') })
 })
+
+import { suggestBase, suggestPatch } from '../src/tui/form.tsx'
+describe('the new-run form\'s suggestions', () => {
+  const pairs = ['iwb/cmms', 'iwb/metering', 'iwb/product', 'nordex/cmms']
+  test('the patch: the customer named on the ticket, else in its board; the app its area names, or the only one', () => {
+    expect(suggestPatch({ customer: 'IWB', board: 'x', area: 'Product App' }, pairs)).toBe('iwb/product')
+    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub', area: 'CMMS' }, pairs)).toBe('iwb/cmms')
+    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub' }, pairs)).toBeUndefined() // three apps: you choose
+    expect(suggestPatch({ customer: 'Nordex', board: 'x' }, pairs)).toBe('nordex/cmms')
+    expect(suggestPatch({ customer: '', board: 'field-service-os' }, pairs)).toBeUndefined()
+  })
+  test('the base: the newest branch of the ticket\'s release tag', () => {
+    expect(suggestBase(['3.18', 'Picking'], ['origin/develop', 'origin/patch/3.20.7', 'origin/patch/3.18.41', 'origin/patch/3.18.39'])).toBe('origin/patch/3.18.41')
+    expect(suggestBase(['Picking'], ['origin/develop'])).toBeUndefined()
+  })
+})

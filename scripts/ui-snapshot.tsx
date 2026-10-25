@@ -1,6 +1,6 @@
 /**
  * The screen as text, from the running service (started if needed): for checking the UI without a terminal.
- *   bun scripts/ui-snapshot.tsx [--open]      --open: the selected run's detail too
+ *   bun scripts/ui-snapshot.tsx [--open] [--new <ticket>]   --open: the selected run's detail; --new: the new-run form for a ticket
  */
 import { act } from 'react'
 import { homedir } from 'node:os'
@@ -15,4 +15,11 @@ const s = await testRender(<App api={c} onQuit={() => {}} />, { width: Number(pr
 const show = async (title: string) => { await act(async () => { await Bun.sleep(300) }); await s.renderOnce(); console.log(`--- ${title}\n${s.captureCharFrame().split('\n').filter(l => l.trim()).join('\n')}`) }
 await show('runs')
 if (process.argv.includes('--open')) { await act(async () => { s.mockInput.pressEnter() }); await show('detail') }
+const nw = process.argv.indexOf('--new')
+if (nw > 0) {
+  await act(async () => { s.mockInput.pressKey('n') })
+  for (const k of process.argv[nw + 1] ?? '') await act(async () => { s.mockInput.pressKey(k) })
+  await act(async () => { await Bun.sleep(Number(process.env.WAIT ?? 4000)) })
+  await show('new run')
+}
 s.renderer.destroy(); c.close(); process.exit(0)

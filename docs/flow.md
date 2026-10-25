@@ -31,14 +31,14 @@ weekly windows, which flow reads from the CLI after every turn.
 | `1`–`4` | Tabs: Runs, Queue (who waits for which slot, paused runs, plan deadlines), Metrics (per project), Projects |
 | `p` | The project picker: all projects, or one (`fso`, `spk`, …) with its runs; the header shows which |
 | `⇥` | Move the focus between the runs table and Needs attention; `j`/`k`, `↵` and the action keys work on the focused item |
-| `n` | Start a run: `<project> <ticket> [base] [repos=a,b] [device=android\|ios] [patch=customer/app]` (the ticket: a number or a Jira key) |
+| `n` | The new-run form: project, ticket (looked up as you type: title, type, board, customer, tags), base (the default and the release lines, the ticket's release tag preselected), kind, repos, device, dev server, customer patch (the one the ticket points at, checked against the base), model; what will happen and the free slots. It refuses what would fail and says why |
 | `a` | Approve a plan: the confirm opens under its item with the defaults (and says if the build will wait for a slot); `y`, or `e` to type other answers |
 | `m` | Message a run's agent |
 | `S` | Ship a verified run: commit, push, draft PR (a patch run: the write-back) |
 | `p` in a run's detail | Port a shipped run to develop (also in the commands) |
 | `s` / `g` / `/` | Sort (newest, oldest, latest activity, tokens) / group by stage (`↵` on a group folds it) / filter: `project:fso status:needs-you stage:build` or any text; `esc` clears it |
 | `ctrl+k` or `:` | Commands: every action for the selected run, filters, sorts, tabs, typed to narrow |
-| `↵` / `esc` | A run's detail (plan, answers, findings, review, PR, timeline) / back |
+| `↵` / `esc` | A run's detail / back. The run on the left (what it needs, plan and answers, verify and review, the files it changed, the timeline, its files); panes on the right: Agent (the session live, with a box to message it), Metro and Dev server (their logs), Shell (a real shell in the worktree: `i` types into it, `ctrl+]` leaves); `[` `]` switch panes, `v` splits a pane with the shell |
 
 The mouse works too: click a tab, a run (a second click opens it), an item's key hint, a confirm's answer, a command,
 or any key in the bottom line; the wheel over the table moves the selection. To select text for copying while the
@@ -48,7 +48,7 @@ Narrow terminals (80–99 columns) drop the project and token columns, show the 
 below 80×24 the screen says how big it needs to be.
 
 The same as commands: `flow start | approve | message | ship | port | release | status | log` (`flow start` takes
-`--repos a,b`, `--base`, `--kind bug|feature`, `--device android|ios`, `--patch <customer>/<app>`). With the service running they go through it
+`--repos a,b`, `--base`, `--kind bug|feature`, `--device android|ios`, `--dev-server`, `--patch <customer>/<app>`, `--model`). With the service running they go through it
 and follow the run until it needs you; without it they run in the terminal.
 
 **Slots.** All runs on the machine share three kinds of slot: agent turns, builds (installs, verify, app builds) and
@@ -88,10 +88,19 @@ Some products ship per-customer variants as a patch on top of a release. A run s
   flow then commits it locally, in that worktree only: never pushed, and without commit hooks, so nothing reformats
   the customer's code. The agent is told the patch is there.
 - **Verify and review** compare against that commit, so they see only the fix, not the patch's own lines.
+- **The form** lists the patches (`patches.choices`, one `customer/app` a line) and checks the chosen one against the
+  base before the run starts (`patches.check`, exit 0 when there is one).
 - **Ship** writes the patch back instead of opening a PR, in two steps. The first `ship` runs `patches.writeBack`
   with `{dryRun}` = `--dry-run` on the whole change (the patch, the fix, new files) and saves its report as
   `patch-report.txt`; the second `ship` runs it for real and the run is done. For the write-back flow moves HEAD back
   off the local commit and puts the worktree back exactly afterwards.
+
+### A run's own dev server
+
+A run started with `--dev-server` (or Dev server in the form) gets its own dev server for the repo that has one
+(`devServer` in the repo's config: a command with `{port}`, the first port to try, the url). It starts during setup
+in a build slot on a port no other run holds, and counts as ready once it listens; the agent is told the url, its
+output feeds the run detail's Dev server pane, and ship or `flow release` stop it.
 
 ### A run's own device
 

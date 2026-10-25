@@ -10,7 +10,7 @@ export const realAz: Az = args => {
 }
 
 export interface AzureRef { org: string; project: string }
-export interface Ticket { id: number; key: string; title: string; kind: 'bug' | 'feature'; url: string; text: string }
+export interface Ticket { id: number; key: string; title: string; kind: 'bug' | 'feature'; url: string; text: string; type?: string; board?: string; customer?: string; tags?: string[]; comments?: number; area?: string }
 
 export function htmlToText(html: string): string {
   return html
@@ -44,6 +44,8 @@ export function azureTicket(az: Az, t: AzureRef, id: number): Ticket {
   return {
     id, key: `#${id}`, title: String(f['System.Title'] ?? ''), kind: f['System.WorkItemType'] === 'Bug' ? 'bug' : 'feature',
     url: `${t.org}/${project}/_workitems/edit/${id}`, text: sections.join('\n\n'),
+    type: f['System.WorkItemType'] ?? '', board: project, customer: (f['Custom.CustomerName'] ?? '').trim(),
+    tags: (f['System.Tags'] ?? '').split(';').map(x => x.trim()).filter(Boolean), comments: comments.length, area: (f['Custom.SolutionArea'] ?? '').trim(),
   }
 }
 

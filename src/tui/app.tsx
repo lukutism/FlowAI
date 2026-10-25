@@ -2,6 +2,7 @@ import { useKeyboard, useTerminalDimensions } from '@opentui/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { KeyEvent } from '@opentui/core'
 import { RunDetail, stopShells, type DetailApi, type DetailKeys } from './detail.tsx'
+import { NewRunForm, type FormApi } from './form.tsx'
 import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
 import type { Command, ProjectSummary, Reply } from '../service.ts'
@@ -13,7 +14,7 @@ import {
 } from './model.ts'
 
 /** What the screen needs from the service connection (FlowClient implements it). */
-export interface FlowApi extends DetailApi {
+export interface FlowApi extends DetailApi, FormApi {
   runs: Map<string, RunState>
   windows: Windows
   resources?: Snapshot
@@ -40,7 +41,7 @@ type Mode =
   | { kind: 'approve'; run: string; editing: boolean; text: string }
   | { kind: 'ship'; run: string }
   | { kind: 'message'; run: string; text: string }
-  | { kind: 'new'; text: string }
+  | { kind: 'new' }
   | { kind: 'detail'; run: string }
   | { kind: 'filter'; text: string }
   | { kind: 'palette'; text: string; index: number }
@@ -50,7 +51,6 @@ type Mode =
 /** an entry of the command palette: what it says, and what choosing it does */
 interface Action { label: string; hint?: string; run: () => void }
 
-const NEW_HELP = '<project> <ticket> [base] [repos=a,b] [device=android|ios] [patch=customer/app]'
 
 export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { api: FlowApi; now?: () => number; onQuit?: () => void }) {
   const [, setTick] = useState(0)
@@ -58,6 +58,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
   const [notice, setNotice] = useState<string | null>(null)
   const detailKeys = useRef<DetailKeys | null>(null)
+  const formKeys = useRef<DetailKeys | null>(null)
   const [tab, setTab] = useState<Tab>('Runs')
   const [sort, setSort] = useState<Sort>('newest')
   const [grouped, setGrouped] = useState(false)
@@ -128,7 +129,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (state.pr) a.push({ label: `Port ${state.ticket} to develop`, run: () => ask.port(state) })
       if (state.device) a.push({ label: `Stop ${state.ticket}'s device`, hint: `${state.device.platform} ${state.device.id}`, run: () => ask.release(state) })
     }
-    a.push({ label: 'New run', hint: NEW_HELP, run: () => setMode({ kind: 'new', text: '' }) })
+    a.push({ label: 'New run', hint: 'n', run: () => setMode({ kind: 'new' }) })
     a.push({ label: 'Choose a project', hint: 'p', run: () => setMode({ kind: 'projects', index: 0 }) })
     a.push({ label: 'Show runs that need you', hint: 'status:needs-you', run: () => { setFilter('status:needs-you'); goTab('Runs') } })
     a.push({ label: 'Show failed and blocked runs', hint: 'status:failed', run: () => { setFilter('status:failed'); goTab('Runs') } })
@@ -146,7 +147,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const handle = (name: string, typed: string, ctrl = false, raw?: KeyEvent) => {
     const key = { ctrl }
     // in a run's detail its panes take the keys first (a shell or the message box being typed in takes them all)
-    if (mode.kind === 'detail' && raw && detailKeys.current?.(raw, typed)) return    // typing goes through the latest state: keys can arrive faster than the screen redraws
+    if (mode.kind === 'detail' && raw && detailKeys.current?.(raw, typed)) return
+    if (mode.kind === 'new') { if (raw) formKeys.current?.(raw, typed); return }    // typing goes through the latest state: keys can arrive faster than the screen redraws
     const edit = (f: (text: string) => string) => setMode(prev => ('text' in prev ? ({ ...prev, text: f(prev.text), ...(prev.kind === 'palette' ? { index: 0 } : {}) } as Mode) : prev))
     const input = (m: Extract<Mode, { text: string }>, enter: (text: string) => void) => {
       if (name === 'escape') return setMode({ kind: 'list' })
@@ -171,16 +173,6 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       return
     }
     if (mode.kind === 'filter') return input(mode, text => { setFilter(text.trim()); setSelected(0); setMode({ kind: 'list' }) })
-    if (mode.kind === 'new') return input(mode, text => {
-      const [project, ticket, ...rest] = text.trim().split(/\s+/)
-      if (!project || !ticket) return setNotice(`type: ${NEW_HELP}`)
-      const repos = rest.find(x => x.startsWith('repos='))?.slice(6).split(',').filter(Boolean)
-      const device = rest.find(x => x.startsWith('device='))?.slice(7)
-      if (device && device !== 'android' && device !== 'ios') return setNotice('device is android or ios')
-      const patch = rest.find(x => x.startsWith('patch='))?.slice(6)
-      const base = rest.find(x => !x.includes('='))
-      void send({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), ...(repos?.length ? { repos } : {}), ...(device ? { device: device as 'android' | 'ios' } : {}), ...(patch ? { patch } : {}) }, `starting ${project}-${ticket}`)
-    })
     if (mode.kind === 'message') return input(mode, text => { if (text.trim()) void send({ cmd: 'message', run: mode.run, text: text.trim() }, `message sent to ${mode.run}`) })
     if (mode.kind === 'approve' && mode.editing) return input(mode, text => {
       if (!text.trim()) return
@@ -209,7 +201,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'q') { stopShells(); return onQuit() }
     if (typed >= '1' && typed <= String(TABS.length)) return goTab(TABS[Number(typed) - 1]!)
     if (typed === 'p' && mode.kind !== 'detail') return setMode({ kind: 'projects', index: Math.max(0, choices.findIndex(c => c.key === (/project:(\S+)/.exec(filter)?.[1] ?? ''))) })
-    if (typed === 'n') return setMode({ kind: 'new', text: '' })
+    if (typed === 'n') return setMode({ kind: 'new' })
     if (tab !== 'Runs' && mode.kind !== 'detail') return
     if (name === 'tab' && mode.kind !== 'detail') return setFocus(f => (f === 'runs' && att.length ? 'attention' : 'runs'))
     if (focus === 'attention' && mode.kind !== 'detail') {
@@ -295,6 +287,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         : tab === 'Metrics' ? <MetricsView runs={all} projects={api.projects ?? []} />
         : <ProjectsView projects={api.projects ?? []} runs={all} />}
       <text> </text>
+      {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} bind={k => { formKeys.current = k }}
+        onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
       {mode.kind === 'projects' ? <ProjectPicker choices={choices} index={mode.index} current={/project:(\S+)/.exec(filter)?.[1] ?? ''} onPick={pickProject} /> : null}
       {mode.kind === 'palette' ? <Palette text={mode.text} found={found} index={mode.index} onPick={a => { setMode({ kind: 'list' }); a.run() }} /> : null}
       <Bar mode={mode} run={mode.kind === 'message' ? api.runs.get(mode.run) : undefined} message={message} compact={!L.tabNames} tab={tab} onKey={handle} />
@@ -556,12 +550,6 @@ const KEYS = {
 } as const
 
 function Bar({ mode, run, message, compact, tab, onKey }: { mode: Mode; run?: RunState; message: string; compact: boolean; tab: Tab; onKey: (name: string, typed: string, ctrl?: boolean) => void }) {
-  if (mode.kind === 'new') return (
-    <box flexDirection="column">
-      {message ? <text fg={C.accent}>{message}</text> : null}
-      <text><span fg={C.accent}>New run </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   {NEW_HELP} · ↵ start · esc cancel</span></text>
-    </box>
-  )
   if (mode.kind === 'filter') return (
     <box flexDirection="column">
       <text><span fg={C.accent}>Filter </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ apply · esc cancel</span></text>
