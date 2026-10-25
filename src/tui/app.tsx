@@ -1,5 +1,5 @@
 import { useKeyboard, useTerminalDimensions } from '@opentui/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
 import type { Command, ProjectSummary, Reply } from '../service.ts'
@@ -136,8 +136,9 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   }
   const found = mode.kind === 'palette' ? actions().filter(x => match(mode.text, x.label)) : []
 
-  useKeyboard(key => {
-    const name = key.name, typed = key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : ''
+  /** a key, from the keyboard or from a click on its hint: name for special keys (return, escape, …), typed for characters */
+  const handle = (name: string, typed: string, ctrl = false) => {
+    const key = { ctrl }
     // typing goes through the latest state: keys can arrive faster than the screen redraws
     const edit = (f: (text: string) => string) => setMode(prev => ('text' in prev ? ({ ...prev, text: f(prev.text), ...(prev.kind === 'palette' ? { index: 0 } : {}) } as Mode) : prev))
     const input = (m: Extract<Mode, { text: string }>, enter: (text: string) => void) => {
@@ -206,7 +207,24 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'S') return ask.ship(state)
     if (typed === 'm') return ask.message(state)
     if (typed === 'p') return ask.port(state)
-  })
+  }
+  useKeyboard(key => handle(key.name, key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : '', key.ctrl))
+
+  // the mouse: a click selects (a second click on the selected run opens it), the wheel moves the selection
+  const clickItem = (i: number) => {
+    const x = items[i]
+    if (!x) return
+    setSelected(i)
+    if (x.kind === 'group') { const next = new Set(collapsed); next.has(x.stage) ? next.delete(x.stage) : next.add(x.stage); setCollapsed(next) }
+    else if (i === sel && mode.kind === 'list') ask.open(api.runs.get(x.row.run)!)
+  }
+  const scroll = (down: boolean) => setSelected(x => Math.max(0, Math.min(Math.min(x, items.length - 1) + (down ? 1 : -1), items.length - 1)))
+  const clickAttention = (a: AttentionItem, act: boolean) => {
+    const i = items.findIndex(x => x.kind === 'row' && x.row.run === a.run)
+    if (i >= 0) setSelected(i)
+    const r = api.runs.get(a.run)
+    if (act && r) ask[a.action](r)
+  }
 
   if (L.tooSmall) return <box paddingLeft={1}><text fg={C.warning}>{L.text}</text></box>
 
@@ -215,7 +233,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const message = notice ?? (L.message ? lastMessage(recent, t) : '')
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
-      <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} />
+      <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} />
       <text>
         <span fg={C.accent}>● </span><span fg={C.text}>{h.active}</span><span fg={C.muted}> active   </span>
         <span fg={C.warning}>▲ </span><span fg={C.text}>{h.needYou}</span><span fg={C.muted}> need you   </span>
@@ -227,15 +245,15 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       {mode.kind === 'detail' && api.runs.get(mode.run) ? <DetailView run={api.runs.get(mode.run)!} detail={detail} now={t} />
         : tab === 'Runs' ? (
           <>
-            <Attention items={att} shown={L.attentionShown} two={L.twoLineAttention} inline={inline} mode={mode} runs={api.runs} resources={api.resources} />
+            <Attention items={att} shown={L.attentionShown} two={L.twoLineAttention} inline={inline} mode={mode} runs={api.runs} resources={api.resources} onItem={clickAttention} onKey={k => handle('', k)} />
             <text> </text>
-            <text>
-              <strong>Runs</strong><span fg={C.muted}> {filter ? `${shown.length} of ${all.length}` : shown.length}   </span>
-              <strong>s</strong><span fg={C.muted}> sort </span><span fg={C.secondary}>{sort}   </span>
-              <strong>g</strong><span fg={C.muted}> group </span><span fg={C.secondary}>{grouped ? 'stage' : 'none'}   </span>
-              <strong>/</strong><span fg={C.muted}> filter </span><span fg={filter ? C.accent : C.secondary}>{filter || 'none'}</span>
-            </text>
-            <Table items={items} selected={sel} rowsShown={L.tableRows} width={width - 2} cols={{ project: L.project, tokens: L.tokens, track: L.track }} />
+            <box flexDirection="row">
+              <text><strong>Runs</strong><span fg={C.muted}> {filter ? `${shown.length} of ${all.length}` : shown.length}   </span></text>
+              <Click on={() => handle('', 's')}><text><strong>s</strong><span fg={C.muted}> sort </span><span fg={C.secondary}>{sort}   </span></text></Click>
+              <Click on={() => handle('', 'g')}><text><strong>g</strong><span fg={C.muted}> group </span><span fg={C.secondary}>{grouped ? 'stage' : 'none'}   </span></text></Click>
+              <Click on={() => handle('', '/')}><text><strong>/</strong><span fg={C.muted}> filter </span><span fg={filter ? C.accent : C.secondary}>{filter || 'none'}</span></text></Click>
+            </box>
+            <Table items={items} selected={sel} rowsShown={L.tableRows} width={width - 2} cols={{ project: L.project, tokens: L.tokens, track: L.track }} onClick={clickItem} onScroll={scroll} />
             <text fg={C.muted}>{list.length ? footer(all, shown, filter, t) : ''}</text>
             {L.bottom ? (L.split
               ? <Bottom bars={bars} waiting={api.resources?.waiting ?? []} feed={state ? activity(recent, state.id).slice(0, 5) : []} run={state?.ticket} width={width - 2} />
@@ -247,38 +265,49 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         : tab === 'Metrics' ? <MetricsView runs={all} projects={api.projects ?? []} />
         : <ProjectsView projects={api.projects ?? []} runs={all} />}
       <text> </text>
-      {mode.kind === 'palette' ? <Palette text={mode.text} found={found} index={mode.index} /> : null}
-      <Bar mode={mode} run={mode.kind === 'message' ? api.runs.get(mode.run) : undefined} message={message} compact={!L.tabNames} tab={tab} />
+      {mode.kind === 'palette' ? <Palette text={mode.text} found={found} index={mode.index} onPick={a => { setMode({ kind: 'list' }); a.run() }} /> : null}
+      <Bar mode={mode} run={mode.kind === 'message' ? api.runs.get(mode.run) : undefined} message={message} compact={!L.tabNames} tab={tab} onKey={handle} />
     </box>
   )
 }
 
-function Tabs({ tab, names, filter, connected }: { tab: Tab; names: boolean; filter: string; connected: boolean }) {
+/** something the mouse can press */
+function Click({ on, children }: { on: () => void; children: ReactNode }) {
+  return <box onMouseDown={on}>{children}</box>
+}
+
+function Tabs({ tab, names, filter, connected, onTab }: { tab: Tab; names: boolean; filter: string; connected: boolean; onTab: (i: number) => void }) {
   const project = /project:(\S+)/.exec(filter)?.[1]
   return (
-    <text>
-      <span fg={C.accent}>∿ </span><strong>flow</strong><span fg={C.muted}>  {project ?? 'all projects'}   </span>
-      {TABS.map((x, i) => (x === tab
-        ? <span key={x}><strong>{`${i + 1} ${x}`}</strong>{'  '}</span>
-        : <span key={x} fg={C.muted}>{names ? `${i + 1} ${x}  ` : `${i + 1}  `}</span>))}
-      <span fg={connected ? C.success : C.danger}>{'  ● '}</span><span fg={C.muted}>{connected ? 'connected' : 'disconnected'}</span>
-    </text>
+    <box flexDirection="row">
+      <text><span fg={C.accent}>∿ </span><strong>flow</strong><span fg={C.muted}>  {project ?? 'all projects'}   </span></text>
+      {TABS.map((x, i) => (
+        <Click key={x} on={() => onTab(i)}>
+          {x === tab ? <text><strong>{`${i + 1} ${x}`}</strong>{'  '}</text> : <text fg={C.muted}>{names ? `${i + 1} ${x}  ` : `${i + 1}  `}</text>}
+        </Click>
+      ))}
+      <text><span fg={connected ? C.success : C.danger}>{'  ● '}</span><span fg={C.muted}>{connected ? 'connected' : 'disconnected'}</span></text>
+    </box>
   )
 }
 
-function Attention({ items, shown, two, inline, mode, runs, resources }: { items: AttentionItem[]; shown: number; two: boolean; inline?: string; mode: Mode; runs: Map<string, RunState>; resources?: Snapshot }) {
+function Attention({ items, shown, two, inline, mode, runs, resources, onItem, onKey }: { items: AttentionItem[]; shown: number; two: boolean; inline?: string; mode: Mode; runs: Map<string, RunState>; resources?: Snapshot; onItem: (a: AttentionItem, act: boolean) => void; onKey: (k: string) => void }) {
   return (
     <box flexDirection="column">
       <text><strong>Needs attention</strong><span fg={C.warning}> {items.length}</span>{items.length ? <span fg={C.faint}>   held first, then by deadline</span> : null}</text>
       {items.length ? items.slice(0, Math.max(shown, inline ? items.findIndex(a => a.run === inline) + 1 : 0)).map(a => (
         <box key={a.run} flexDirection="column">
-          <text>
-            <span fg={C.secondary}>{fit(a.ticket, 9)}</span> <strong>{fit(a.title, two ? 34 : 26)}</strong> {two ? <span fg={C.muted}>{fit(a.line, 9)}</span> : null}
-            <span fg={TONE[a.tone]}> ◆ {fit(a.label, 15)}</span><span fg={C.secondary}>{fit(a.when, 18)}</span>
-            <strong>{a.key}</strong><span fg={C.secondary}> {a.action}</span>
-          </text>
-          {two ? <text fg={C.muted}>{`          ${a.detail.slice(0, 110)}`}</text> : null}
-          {inline === a.run ? <Confirm mode={mode} run={runs.get(a.run)} resources={resources} /> : null}
+          <box flexDirection="row">
+            <Click on={() => onItem(a, false)}>
+              <text>
+                <span fg={C.secondary}>{fit(a.ticket, 9)}</span> <strong>{fit(a.title, two ? 34 : 26)}</strong> {two ? <span fg={C.muted}>{fit(a.line, 9)}</span> : null}
+                <span fg={TONE[a.tone]}> ◆ {fit(a.label, 15)}</span><span fg={C.secondary}>{fit(a.when, 18)}</span>
+              </text>
+            </Click>
+            <Click on={() => onItem(a, true)}><text><strong>{a.key}</strong><span fg={C.secondary}> {a.action}</span></text></Click>
+          </box>
+          {two ? <Click on={() => onItem(a, false)}><text fg={C.muted}>{`          ${a.detail.slice(0, 110)}`}</text></Click> : null}
+          {inline === a.run ? <Confirm mode={mode} run={runs.get(a.run)} resources={resources} onKey={onKey} /> : null}
         </box>
       )) : <text fg={C.muted}>Nothing needs you.</text>}
       {items.length > Math.max(shown, 1) && !inline ? <text fg={C.faint}>{`          and ${items.length - shown} more below`}</text> : null}
@@ -287,7 +316,12 @@ function Attention({ items, shown, two, inline, mode, runs, resources }: { items
 }
 
 /** the confirm under the item it acts on: what happens, and what it will wait for */
-function Confirm({ mode, run, resources }: { mode: Mode; run?: RunState; resources?: Snapshot }) {
+/** a key and what it does, pressable */
+function Hint({ k, label, tone = C.secondary, on }: { k: string; label: string; tone?: string; on: () => void }) {
+  return <Click on={on}><text><strong>{k}</strong><span fg={tone}>{` ${label}`}</span><span>{'   '}</span></text></Click>
+}
+
+function Confirm({ mode, run, resources, onKey }: { mode: Mode; run?: RunState; resources?: Snapshot; onKey: (k: string) => void }) {
   if (!run) return null
   const builds = resources ? resources.holders.builds.length >= resources.limits.builds : false
   const queue = builds ? ` Builds are full, so ${run.ticket} waits for a build slot${resources!.waiting.length ? ` (${resources!.waiting.length} waiting)` : ''}.` : ''
@@ -296,18 +330,18 @@ function Confirm({ mode, run, resources }: { mode: Mode; run?: RunState; resourc
     <box flexDirection="column">
       <text>{'          '}<strong>{`Approve ${run.ticket} with the defaults and start the build?`}</strong><span fg={C.secondary}>{queue}</span></text>
       {(run.plan?.questions ?? []).map(q => <text key={q.id} fg={C.secondary}>{`            ${q.id}${q.held ? ' (held)' : ''} ${q.text} → ${q.default}`}</text>)}
-      <text>{'          '}<strong>y</strong><span fg={C.warning}> approve</span><span fg={C.muted}>   </span><strong>e</strong><span fg={C.secondary}> other answers</span><span fg={C.muted}>   </span><strong>n</strong><span fg={C.secondary}> cancel</span></text>
+      <box flexDirection="row"><text>{'          '}</text><Hint k="y" label="approve" tone={C.warning} on={() => onKey('y')} /><Hint k="e" label="other answers" on={() => onKey('e')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
     </box>
   )
   if (mode.kind === 'ship' && run.patch) {
     const real = run.needs?.kind === 'patch'
-    return <text>{'          '}<strong>{real ? `Write the patch back for ${run.ticket}?` : `Check the write-back for ${run.ticket}?`}</strong><span fg={C.secondary}>{real ? ' the patch and the fix, as the dry run showed   ' : ' a dry run, nothing written   '}</span><strong>y</strong><span fg={C.success}> {real ? 'write back' : 'check'}</span><span fg={C.muted}>   </span><strong>n</strong><span fg={C.secondary}> cancel</span></text>
+    return <box flexDirection="row"><text>{'          '}<strong>{real ? `Write the patch back for ${run.ticket}?` : `Check the write-back for ${run.ticket}?`}</strong><span fg={C.secondary}>{real ? ' the patch and the fix, as the dry run showed   ' : ' a dry run, nothing written   '}</span></text><Hint k="y" label={real ? 'write back' : 'check'} tone={C.success} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   }
-  if (mode.kind === 'ship') return <text>{'          '}<strong>{`Ship ${run.ticket}?`}</strong><span fg={C.secondary}> commit, push, open a draft PR   </span><strong>y</strong><span fg={C.success}> ship</span><span fg={C.muted}>   </span><strong>n</strong><span fg={C.secondary}> cancel</span></text>
+  if (mode.kind === 'ship') return <box flexDirection="row"><text>{'          '}<strong>{`Ship ${run.ticket}?`}</strong><span fg={C.secondary}> commit, push, open a draft PR   </span></text><Hint k="y" label="ship" tone={C.success} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   return null
 }
 
-function Table({ items, selected, rowsShown, width, cols }: { items: Grouped[]; selected: number; rowsShown: number; width: number; cols: { project: boolean; tokens: boolean; track: boolean } }) {
+function Table({ items, selected, rowsShown, width, cols, onClick, onScroll }: { items: Grouped[]; selected: number; rowsShown: number; width: number; cols: { project: boolean; tokens: boolean; track: boolean }; onClick: (i: number) => void; onScroll: (down: boolean) => void }) {
   const stageW = cols.track ? 12 : 8, statusW = 20, nextW = width >= 120 ? 24 : 18
   const fixed = 10 + (cols.project ? 7 : 0) + 10 + stageW + statusW + 7 + (cols.tokens ? 7 : 0) + 1 + nextW
   const titleW = Math.max(12, width - fixed)
@@ -316,18 +350,18 @@ function Table({ items, selected, rowsShown, width, cols }: { items: Grouped[]; 
   const head = `${fit('Run', 9)} ${fit('Task', titleW)}${cols.project ? ` ${fit('Proj', 6)}` : ''} ${fit('Line', 9)}${fit('Stage', stageW)}${fit('Status', statusW)}${fitL('Time', 6)} ${cols.tokens ? `${fitL('Tokens', 6)} ` : ''} ${fit('Next', nextW)}`
   if (!items.length) return <box flexDirection="column"><text fg={C.muted}>{head}</text><text fg={C.muted}>No runs. Start one with n, or flow start &lt;project&gt; &lt;ticket&gt;</text></box>
   return (
-    <box flexDirection="column">
+    <box flexDirection="column" onMouseScroll={e => { const d = e.scroll?.direction; if (d === 'up' || d === 'down') onScroll(d === 'down') }}>
       <text fg={C.muted}>{head}</text>
       {visible.map((x, i) => {
         const on = first + i === selected
         if (x.kind === 'group') return (
-          <box key={`g-${x.stage}`} backgroundColor={on ? C.selected : undefined}>
+          <box key={`g-${x.stage}`} backgroundColor={on ? C.selected : undefined} onMouseDown={() => onClick(first + i)}>
             <text><span fg={C.secondary}>{x.collapsed ? '▸ ' : '▾ '}</span><strong>{x.stage}</strong><span fg={C.muted}>{`  ${x.count} run${x.count === 1 ? '' : 's'} · ${x.tokens} tokens`}</span></text>
           </box>
         )
         const r = x.row
         return (
-          <box key={r.run} backgroundColor={on ? C.selected : undefined}>
+          <box key={r.run} backgroundColor={on ? C.selected : undefined} onMouseDown={() => onClick(first + i)}>
             <text>
               <span fg={on ? C.text : C.secondary}>{fit(r.ticket, 9)} </span>
               <span fg={r.tone === 'success' && !on ? C.muted : C.text}>{fit(r.title, titleW)}</span>
@@ -374,12 +408,12 @@ function ResourcesLine({ bars }: { bars: ReturnType<typeof resourceBars> }) {
   return <text>{bars.map(b => <span key={b.kind}><span fg={C.muted}>{`${b.label} `}</span><span fg={b.full ? C.warning : C.text}>{`${b.holders.length}/${b.used.length}`}</span><span fg={C.muted}>{b.waiting.length ? ` (${b.waiting.length} waiting)` : ''}{'   '}</span></span>)}</text>
 }
 
-function Palette({ text, found, index }: { text: string; found: Action[]; index: number }) {
+function Palette({ text, found, index, onPick }: { text: string; found: Action[]; index: number; onPick: (a: Action) => void }) {
   return (
     <box position="absolute" top={5} left={10} width={70} flexDirection="column" border borderStyle="rounded" borderColor={C.accent} backgroundColor={C.panel} zIndex={10} paddingLeft={1} paddingRight={1}>
       <text><span fg={C.accent}>› </span><span fg={C.text}>{text}▏</span><span fg={C.muted}>{`   ${found.length} result${found.length === 1 ? '' : 's'}`}</span></text>
       {found.slice(0, 10).map((a, i) => (
-        <box key={a.label} backgroundColor={i === index ? C.selected : undefined}>
+        <box key={a.label} backgroundColor={i === index ? C.selected : undefined} onMouseDown={() => onPick(a)}>
           <text><span fg={i === index ? C.text : C.secondary}>{fit(a.label, 34)}</span><span fg={C.muted}>{a.hint ? fit(a.hint, 30) : ''}</span></text>
         </box>
       ))}
@@ -532,7 +566,15 @@ function ReviewView({ json }: { json: string }) {
   )
 }
 
-function Bar({ mode, run, message, compact, tab }: { mode: Mode; run?: RunState; message: string; compact: boolean; tab: Tab }) {
+/** the key line: [what it shows, the key's name (return, escape) or character; 'palette' for ^K; '' for none] */
+const KEYS = {
+  detail: [['esc back', 'escape'], ['a approve', 'a'], ['m message', 'm'], ['S ship', 'S'], ['p port', 'p'], ['^K commands', 'palette'], ['q quit', 'q']],
+  tabs: [['1–6 tabs', ''], ['^K or : commands', 'palette'], ['n new', 'n'], ['q quit', 'q']],
+  compact: [['↑↓ move', ''], ['↵ open', 'return'], ['n new', 'n'], ['a approve', 'a'], ['m msg', 'm'], ['S ship', 'S'], ['^K cmds', 'palette'], ['q quit', 'q']],
+  runs: [['↑↓/jk move', ''], ['↵ open', 'return'], ['n new', 'n'], ['a approve', 'a'], ['m message', 'm'], ['S ship', 'S'], ['p port', 'p'], ['s sort', 's'], ['g group', 'g'], ['/ filter', '/'], ['^K commands', 'palette'], ['q quit', 'q']],
+} as const
+
+function Bar({ mode, run, message, compact, tab, onKey }: { mode: Mode; run?: RunState; message: string; compact: boolean; tab: Tab; onKey: (name: string, typed: string, ctrl?: boolean) => void }) {
   if (mode.kind === 'new') return (
     <box flexDirection="column">
       {message ? <text fg={C.accent}>{message}</text> : null}
@@ -546,14 +588,15 @@ function Bar({ mode, run, message, compact, tab }: { mode: Mode; run?: RunState;
     </box>
   )
   if (mode.kind === 'message' && run) return <text><span fg={C.accent}>Message {run.ticket} </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ send · esc cancel</span></text>
-  const keys = mode.kind === 'detail' ? 'esc back   a approve   m message   S ship   p port   ^K commands   q quit'
-    : tab !== 'Runs' ? '1–6 tabs   ^K or : commands   n new   q quit'
-    : compact ? '↑↓ move  ↵ open  n new  a approve  m msg  S ship  ^K cmds  q quit'
-    : '↑↓/jk move   ↵ open   n new   a approve   m message   S ship   p port   s sort   g group   / filter   ^K commands   q quit'
+  const keys = mode.kind === 'detail' ? KEYS.detail : tab !== 'Runs' ? KEYS.tabs : compact ? KEYS.compact : KEYS.runs
+  const press = (k: string) => (k === 'palette' ? onKey('k', '', true) : k === 'return' || k === 'escape' ? onKey(k, '') : onKey('', k))
+  const gap = compact ? '  ' : '   '
   return (
     <box flexDirection="column">
       {message ? <text fg={message.startsWith('✕') ? C.danger : message.startsWith('✓') ? C.success : C.accent}>{message}</text> : null}
-      <text fg={C.muted}>{keys}</text>
+      <box flexDirection="row">
+        {keys.map(([label, k]) => (k ? <Click key={label} on={() => press(k)}><text fg={C.muted}>{label + gap}</text></Click> : <text key={label} fg={C.muted}>{label + gap}</text>))}
+      </box>
     </box>
   )
 }

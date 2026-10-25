@@ -369,3 +369,64 @@ describe('the other tabs', () => {
     } finally { t.s.renderer.destroy() }
   })
 })
+
+/** where a text is on the screen (first match), for clicking it */
+const at = (frame: string, text: string) => {
+  const lines = frame.split('\n')
+  const y = lines.findIndex(l => l.includes(text))
+  if (y < 0) throw new Error(`"${text}" is not on the screen`)
+  return { x: lines[y]!.indexOf(text) + 1, y }
+}
+
+describe('the mouse', () => {
+  const click = async (t: Awaited<ReturnType<typeof screen>>, text: string) => {
+    const p = at(await t.frame(), text)
+    await act(async () => { await t.s.mockMouse.click(p.x, p.y) })
+    return t.frame()
+  }
+  test('a tab is clicked to open it', async () => {
+    const t = await screen(runs, undefined, { projects })
+    try { expect(await click(t, '6 Projects')).toContain('from ~/.config/flow/projects/<key>.json') } finally { t.s.renderer.destroy() }
+  })
+  test('a click selects a run; a click on the selected run opens it', async () => {
+    const t = await screen()
+    try {
+      expect(await click(t, 'Title fso-103   ')).toMatch(/Activity +#103/)
+      expect(await click(t, 'Title fso-103   ')).toContain('Plan')
+      expect(await click(t, 'esc back')).toContain('Needs attention')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('an item\'s key hint acts on it; the confirm\'s answers are clickable', async () => {
+    const t = await screen()
+    try {
+      expect(await click(t, 'a approve')).toContain('Approve #105 with the defaults and start the build?')
+      await click(t, 'y approve')
+      expect(t.f.sent).toEqual([{ cmd: 'approve', run: 'fso-105' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('sort, group and the key line can be clicked', async () => {
+    const t = await screen()
+    try {
+      expect(await click(t, 's sort')).toContain('sort oldest')
+      expect(await click(t, 'g group')).toContain('group stage')
+      expect(await click(t, 'n new')).toContain('New run')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('the wheel over the table moves the selection', async () => {
+    const t = await screen()
+    try {
+      const lines = (await t.frame()).split('\n'), y = lines.findIndex(l => /#104 +Title fso-104 +fso/.test(l)) // the table's row, not the attention item
+      await act(async () => { await t.s.mockMouse.scroll(5, y, 'down'); await t.s.mockMouse.scroll(5, y, 'down') })
+      expect(await t.frame()).toMatch(/Activity +#103/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a command in the palette is clicked to run it', async () => {
+    const list = [base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
+    const t = await screen(list)
+    try {
+      await t.press('ctrl+k')
+      await click(t, 'Port #104 to develop')
+      expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
+    } finally { t.s.renderer.destroy() }
+  })
+})

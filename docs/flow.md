@@ -38,6 +38,10 @@ weekly windows, which flow reads from the CLI after every turn.
 | `ctrl+k` or `:` | Commands: every action for the selected run, filters, sorts, tabs, typed to narrow |
 | `↵` / `esc` | A run's detail (plan, answers, findings, review, PR, timeline) / back |
 
+The mouse works too: click a tab, a run (a second click opens it), an item's key hint, a confirm's answer, a command,
+or any key in the bottom line; the wheel over the table moves the selection. To select text for copying while the
+screen has the mouse, hold Option (Terminal, iTerm2) or Shift (most others).
+
 Narrow terminals (80–99 columns) drop the project and token columns, show the stage as a word and one line per item;
 below 80×24 the screen says how big it needs to be.
 
