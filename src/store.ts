@@ -39,6 +39,9 @@ export class EventStore {
 
   since(seq: number): RunEvent[] { return this.rows('SELECT * FROM events WHERE seq > ? ORDER BY seq', seq) }
 
+  /** the last n events of all runs, oldest first */
+  recent(n: number): RunEvent[] { return this.rows('SELECT * FROM (SELECT * FROM events ORDER BY seq DESC LIMIT ?) ORDER BY seq', n) }
+
   subscribe(fn: (e: RunEvent) => void): () => void {
     this.listeners.add(fn)
     return () => { this.listeners.delete(fn) }

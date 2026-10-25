@@ -27,13 +27,19 @@ weekly windows, which flow reads from the CLI after every turn.
 
 | | |
 |---|---|
-| `flow` | The screen: what needs you, every run, your plan windows. Starts the background service if needed. |
+| `flow` | The screen: what needs you, every run, the slots, the selected run's activity, your plan windows. Starts the background service if needed. |
+| `1`–`6` | Tabs: Runs, Queue (who waits for which slot, paused runs, plan deadlines), Resources (slots and plan windows), Activity (every run's events), Metrics (per project), Projects |
 | `n` | Start a run: `<project> <ticket> [base] [repos=a,b] [device=android\|ios] [patch=customer/app]` (the ticket: a number or a Jira key) |
-| `a` | Approve a plan: its questions with their defaults; `y`, or `e` to type other answers |
+| `a` | Approve a plan: the confirm opens under its item with the defaults (and says if the build will wait for a slot); `y`, or `e` to type other answers |
 | `m` | Message a run's agent |
-| `s` | Ship a verified run: commit, push, draft PR |
+| `S` | Ship a verified run: commit, push, draft PR (a patch run: the write-back) |
 | `p` | Port a shipped run to develop |
+| `s` / `g` / `/` | Sort (newest, oldest, latest activity, tokens) / group by stage (`↵` on a group folds it) / filter: `project:fso status:needs-you stage:build` or any text; `esc` clears it |
+| `ctrl+k` or `:` | Commands: every action for the selected run, filters, sorts, tabs, typed to narrow |
 | `↵` / `esc` | A run's detail (plan, answers, findings, review, PR, timeline) / back |
+
+Narrow terminals (80–99 columns) drop the project and token columns, show the stage as a word and one line per item;
+below 80×24 the screen says how big it needs to be.
 
 The same as commands: `flow start | approve | message | ship | port | release | status | log` (`flow start` takes
 `--repos a,b`, `--base`, `--kind bug|feature`, `--device android|ios`, `--patch <customer>/<app>`). With the service running they go through it

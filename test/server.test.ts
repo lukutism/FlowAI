@@ -22,6 +22,7 @@ function fakeService() {
       onNotice: (f: (n: { run: string; text: string }) => void) => { notice.add(f); return () => notice.delete(f) },
       onWindows: (f: (w: Windows) => void) => { wins.add(f); return () => wins.delete(f) },
       resources: (): Snapshot => ({ limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: ['fso-1'], builds: [], devices: [] }, waiting: [] }),
+      projects: () => [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const], patches: ['mobile'], deadlineMinutes: 30 }],
       onResources: (f: (r: Snapshot) => void) => { res.add(f); return () => res.delete(f) },
     },
   }
@@ -83,6 +84,23 @@ describe('the service socket', () => {
     t.f.emitResources({ limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: [], builds: ['fso-1'], devices: [] }, waiting: [{ run: 'fso-2', kind: 'builds' }] })
     await got
     expect(c.resources?.waiting).toEqual([{ run: 'fso-2', kind: 'builds' }])
+  })
+  test('the snapshot brings the latest events of all runs and the projects; pushed events join them', async () => {
+    const t = start(), c = await t.connect()
+    expect(c.recent.map(e => e.type)).toEqual(['run.created'])
+    expect(c.projects.map(p => p.key)).toEqual(['fso'])
+    const seen = new Promise(r => c.listen(m => m.type === 'event' && r(m)))
+    t.store.append('fso-1', 'engine', { type: 'setup.done' })
+    await seen
+    expect(c.recent.map(e => e.type)).toEqual(['run.created', 'setup.done'])
+  })
+  test('a connection the service drops says so', async () => {
+    const t = start(), c = await t.connect()
+    expect(c.connected).toBe(true)
+    const closed = new Promise(r => c.listen(m => m.type === 'closed' && r(m)))
+    t.s.stop()
+    await closed
+    expect(c.connected).toBe(false)
   })
   test('the run detail can read its events and its plan; other files are refused', async () => {
     const t = start(), c = await t.connect()

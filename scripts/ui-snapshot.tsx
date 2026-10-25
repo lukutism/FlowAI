@@ -11,7 +11,7 @@ import { App } from '../src/tui/app.tsx'
 
 const DATA = process.env.FLOW_DATA ?? join(homedir(), '.local', 'share', 'flow')
 const c = (await connect(DATA).catch(() => null)) ?? (await startService(DATA, join(import.meta.dir, '..', 'src', 'cli.tsx')))
-const s = await testRender(<App api={c} onQuit={() => {}} />, { width: Number(process.env.COLUMNS ?? 140), height: 30 })
+const s = await testRender(<App api={c} onQuit={() => {}} />, { width: Number(process.env.COLUMNS ?? 140), height: Number(process.env.LINES ?? 30) })
 const show = async (title: string) => { await act(async () => { await Bun.sleep(300) }); await s.renderOnce(); console.log(`--- ${title}\n${s.captureCharFrame().split('\n').filter(l => l.trim()).join('\n')}`) }
 await show('runs')
 if (process.argv.includes('--open')) { await act(async () => { s.mockInput.pressEnter() }); await show('detail') }

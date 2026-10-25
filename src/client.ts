@@ -1,6 +1,6 @@
 import type { RunEvent, RunState } from './run.ts'
-import type { Message, RequestBody, RunFile } from './server.ts'
-import type { Command, Reply } from './service.ts'
+import { RECENT, type Message, type RequestBody, type RunFile } from './server.ts'
+import type { Command, ProjectSummary, Reply } from './service.ts'
 import type { Windows } from './usage.ts'
 import type { Snapshot } from './resources.ts'
 
@@ -11,6 +11,10 @@ export class FlowClient {
   readonly runs = new Map<string, RunState>()
   windows: Windows = {}
   resources?: Snapshot
+  /** the latest events of all runs, oldest first (the snapshot's, then each pushed one) */
+  recent: RunEvent[] = []
+  projects: ProjectSummary[] = []
+  connected = true
   private listeners = new Set<(m: Message) => void>()
   private pending = new Map<number, Pending>()
   private nextId = 1
@@ -28,7 +32,11 @@ export class FlowClient {
         if (m.type === 'snapshot' && !ready) { ready = true; ok(c) }
       }
       ws.onerror = () => { if (!ready) fail(new Error('the flow service refused the connection (not running, or a wrong token)')) }
-      ws.onclose = () => { if (!ready) fail(new Error('the flow service refused the connection (not running, or a wrong token)')) }
+      ws.onclose = () => {
+        if (!ready) return fail(new Error('the flow service refused the connection (not running, or a wrong token)'))
+        c.connected = false
+        c.take({ type: 'closed' })
+      }
     })
   }
 
@@ -59,9 +67,9 @@ export class FlowClient {
   }
 
   private take(m: Message) {
-    if (m.type === 'snapshot') { this.runs.clear(); for (const r of m.runs) this.runs.set(r.id, r); this.windows = m.windows; this.resources = m.resources }
+    if (m.type === 'snapshot') { this.runs.clear(); for (const r of m.runs) this.runs.set(r.id, r); this.windows = m.windows; this.resources = m.resources; this.recent = m.recent ?? []; this.projects = m.projects ?? [] }
     else if (m.type === 'resources') this.resources = m.resources
-    else if (m.type === 'event') this.runs.set(m.state.id, m.state)
+    else if (m.type === 'event') { this.runs.set(m.state.id, m.state); this.recent = [...this.recent, m.event].slice(-RECENT) }
     else if (m.type === 'windows') this.windows = m.windows
     else if (m.type === 'reply') { this.pending.get(m.id)?.(m.reply); this.pending.delete(m.id) }
     for (const l of this.listeners) l(m)

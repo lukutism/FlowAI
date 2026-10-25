@@ -57,3 +57,12 @@ describe('EventStore: the append-only log every screen and number comes from', (
     expect(s.since(first.seq).map(e => e.type)).toEqual(['setup.done'])
   })
 })
+
+describe('recent', () => {
+  test('the last n events of all runs, oldest first', () => {
+    const s = new EventStore(':memory:')
+    for (const r of ['a', 'b', 'c']) s.append(r, 'human', { type: 'run.created', ticket: r, title: r, project: 'p', base: 'b' })
+    s.append('a', 'engine', { type: 'setup.done' })
+    expect(s.recent(2).map(e => `${e.run}:${e.type}`)).toEqual(['c:run.created', 'a:setup.done'])
+  })
+})

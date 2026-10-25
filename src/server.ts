@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { RunEvent, RunState } from './run.ts'
-import type { Command, Notice, Reply, Service } from './service.ts'
+import type { Command, Notice, ProjectSummary, Reply, Service } from './service.ts'
 import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 import type { Snapshot } from './resources.ts'
@@ -14,14 +14,19 @@ export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'fil
 export type Request = RequestBody & { id: number }
 
 export type Message =
-  | { type: 'snapshot'; runs: RunState[]; windows: Windows; resources?: Snapshot }
+  | { type: 'snapshot'; runs: RunState[]; windows: Windows; resources?: Snapshot; recent?: RunEvent[]; projects?: ProjectSummary[] }
+  /** not sent: the client's own word that the service went away */
+  | { type: 'closed' }
   | { type: 'resources'; resources: Snapshot }
   | { type: 'event'; event: RunEvent; state: RunState }
   | { type: 'windows'; windows: Windows }
   | { type: 'notice'; notice: Notice }
   | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: false; error: string } }
 
-type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources'>
+type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects'>
+
+/** how many of the latest events the screen gets on connect (its Activity) */
+export const RECENT = 300
 
 /**
  * The service's socket: localhost only, and only with the token from a file only the user can read; a web page
@@ -39,7 +44,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
     websocket: {
       open(ws) {
         ws.subscribe('all')
-        ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows(), resources: o.service.resources() } satisfies Message))
+        ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows(), resources: o.service.resources(), recent: o.store.recent(RECENT), projects: o.service.projects() } satisfies Message))
       },
       message(ws, raw) {
         let r: Request

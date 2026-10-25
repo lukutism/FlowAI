@@ -18,6 +18,9 @@ export type Command =
   /** stop the run's device and free its slot (ship does it too) */
   | { cmd: 'release'; run: string }
 
+/** what the screen shows of a project */
+export interface ProjectSummary { key: string; name: string; tracker: 'azure' | 'jira'; forge: 'azure' | 'github'; repos: string[]; devices: ('android' | 'ios')[]; patches: string[]; deadlineMinutes: number }
+
 export type Reply = { ok: true; run: string } | { ok: false; error: string }
 export interface Notice { run: string; text: string }
 
@@ -63,6 +66,10 @@ export class Service {
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }
   windows(): Windows { return this.lastWindows }
   resources(): Snapshot { return this.slots.snapshot() }
+  projects(): ProjectSummary[] {
+    return Object.values(this.d.projects).map(p => ({ key: p.key, name: p.name, tracker: p.tracker.kind, forge: p.forge.kind, repos: p.repos.map(r => r.key),
+      devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes }))
+  }
   onResources(fn: (s: Snapshot) => void) { return this.slots.onChange(fn) }
 
   private pipeline(project: string): Pipeline {
