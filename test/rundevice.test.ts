@@ -40,8 +40,9 @@ function setup(o: { ready?: string; consoleStart?: number; metroStart?: number }
   ])
   const store = new EventStore(':memory:')
   const slots = new Resources({ agents: 2, builds: 2, devices: 1 })
-  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, resources: slots, makeAgent: () => agent, deviceReadyTimeoutMs: 3000 })
-  return { pipe, store, agent, slots, marks, run, data }
+  const made: { env?: Record<string, string> }[] = []
+  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, resources: slots, makeAgent: o => { made.push(o); return agent }, deviceReadyTimeoutMs: 3000 })
+  return { pipe, store, agent, slots, marks, run, data, made }
 }
 
 describe('a run with a device', () => {
@@ -53,6 +54,8 @@ describe('a run with a device', () => {
       expect(ready).toMatchObject({ platform: 'android', id: 'emulator-5720', metroPort: 8720 })
       expect(t.store.events(run).map(e => e.type).indexOf('device.ready')).toBeLessThan(t.store.events(run).map(e => e.type).indexOf('setup.done'))
       expect(t.agent.prompts[0]).toContain('Device: android emulator-5720, Metro on port 8720')
+      // adb in the agent's shell talks to this run's emulator, not whichever one is first
+      expect(t.made[0]!.env).toEqual({ ANDROID_SERIAL: 'emulator-5720', RCT_METRO_PORT: '8720' })
       expect(t.slots.snapshot().holders.devices).toEqual([run])
       expect(t.store.state(run)!.device).toEqual({ platform: 'android', id: 'emulator-5720', metroPort: 8720 })
       await t.pipe.ship(run)

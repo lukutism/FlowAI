@@ -44,7 +44,7 @@ export interface PipelineDeps {
   az: Az
   /** flow's own data: the event log and one folder per run */
   dataDir: string
-  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string }) => RunAgent
+  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string> }) => RunAgent
   /** a fresh, read-only reviewer session per review; without it the review is skipped */
   makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
@@ -515,7 +515,10 @@ export class Pipeline {
     const m = this.meta(run)
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
     const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.planFile(run), this.prFile(run)], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
-    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, ...(m.model ? { model: m.model } : {}) })
+    // the run's own emulator is the one adb (and the tools on it) talk to; Metro's port for React Native's CLI
+    const dev = this.d.store.state(run)?.device
+    const env = dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : undefined
+    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, ...(m.model ? { model: m.model } : {}), ...(env ? { env } : {}) })
     this.agents.set(run, agent)
     return agent
   }

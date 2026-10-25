@@ -54,7 +54,7 @@ export interface ServiceDeps {
   projects: Record<string, Project>
   az: Az
   dataDir: string
-  makeAgent: (o: { cwd: string; settings: string; resume?: string }) => RunAgent
+  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string> }) => RunAgent
   makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
