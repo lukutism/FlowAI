@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 
@@ -32,7 +32,12 @@ export function readTranscript(dataDir: string, run: string, n = 400): Entry[] {
 /** the last n lines of a text file ('' lines at the end dropped) */
 export function tail(path: string, n: number): string[] {
   if (!existsSync(path)) return []
-  const lines = readFileSync(path, 'utf8').split('\n')
+  // only the end of the file (a log grows for days, and a pane asks every second)
+  const size = statSync(path).size, want = Math.min(size, Math.max(64_000, n * 400))
+  const buf = Buffer.alloc(want), fd = openSync(path, 'r')
+  try { readSync(fd, buf, 0, want, size - want) } finally { closeSync(fd) }
+  const lines = buf.toString('utf8').split('\n')
+  if (want < size) lines.shift() // the first line is cut
   while (lines.length && !lines[lines.length - 1]) lines.pop()
   return lines.slice(-n)
 }

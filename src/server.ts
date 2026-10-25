@@ -17,54 +17,66 @@ export type RunFile = (typeof RUN_FILES)[number]
 /** a file a run changed, in one of its repos */
 export interface Change { repo: string; file: string; added: number; removed: number; status: 'M' | 'A' | 'D' }
 
-/** what a run changed in its worktrees so far, committed or not (from where its branch left the base), then new files */
-export function changes(dataDir: string, run: string): Change[] {
+type RunRepo = { key: string; worktree: string; base?: string }
+/** the run's repos from its run.json */
+function runRepos(dataDir: string, run: string): RunRepo[] {
   const f = join(dataDir, 'runs', run, 'run.json')
   if (!existsSync(f)) return []
-  const meta = JSON.parse(readFileSync(f, 'utf8')) as { repos?: { key: string; worktree: string; base?: string }[]; repo?: string; worktree?: string; base?: string }
-  const repos = meta.repos ?? (meta.worktree ? [{ key: meta.repo ?? 'repo', worktree: meta.worktree, base: meta.base }] : [])
-  const git = (cwd: string, ...a: string[]) => new TextDecoder().decode(Bun.spawnSync(['git', ...a], { cwd }).stdout)
-  return repos.flatMap(r => {
-    if (!existsSync(r.worktree)) return []
-    const from = (r.base && git(r.worktree, 'merge-base', r.base, 'HEAD').trim()) || 'HEAD'
-    const status = new Map(git(r.worktree, 'diff', from, '--name-status').split('\n').filter(Boolean).map(l => { const [st, file] = l.split('\t') as [string, string]; return [file, st[0]] }))
-    const tracked = git(r.worktree, 'diff', from, '--numstat').split('\n').filter(Boolean).map(l => {
+  const meta = JSON.parse(readFileSync(f, 'utf8')) as { repos?: RunRepo[]; repo?: string; worktree?: string; base?: string }
+  return (meta.repos ?? (meta.worktree ? [{ key: meta.repo ?? 'repo', worktree: meta.worktree, base: meta.base }] : [])).filter(r => existsSync(r.worktree))
+}
+/** git's output, without holding up the service (every agent's stream goes through it) */
+async function git(cwd: string, ...a: string[]): Promise<string> {
+  const p = Bun.spawn(['git', ...a], { cwd, stdout: 'pipe', stderr: 'ignore' })
+  const out = await new Response(p.stdout).text()
+  await p.exited
+  return out
+}
+/** where a repo's change starts: after the customer patch flow put on it (that is the customer's code), else where the branch left its base */
+async function startOf(r: RunRepo, patchCommit?: string): Promise<string> {
+  if (patchCommit && (await git(r.worktree, 'cat-file', '-t', patchCommit)).trim() === 'commit') return patchCommit
+  return (r.base && (await git(r.worktree, 'merge-base', r.base, 'HEAD')).trim()) || 'HEAD'
+}
+
+/** what a run changed in its worktrees so far, committed or not (from where its branch left the base), then new files */
+export async function changes(dataDir: string, run: string, patchCommit?: string): Promise<Change[]> {
+  const per = await Promise.all(runRepos(dataDir, run).map(async r => {
+    const from = await startOf(r, patchCommit)
+    const [names, nums, others] = await Promise.all([git(r.worktree, 'diff', from, '--name-status'), git(r.worktree, 'diff', from, '--numstat'), git(r.worktree, 'ls-files', '--others', '--exclude-standard')])
+    const status = new Map(names.split('\n').filter(Boolean).map(l => { const [st, file] = l.split('\t') as [string, string]; return [file, st[0]] }))
+    const tracked = nums.split('\n').filter(Boolean).map(l => {
       const [a, d, file] = l.split('\t') as [string, string, string]
       const st = status.get(file)
       return { repo: r.key, file, added: Number(a) || 0, removed: Number(d) || 0, status: (st === 'A' ? 'A' : st === 'D' ? 'D' : 'M') as Change['status'] }
     })
-    const fresh = git(r.worktree, 'ls-files', '--others', '--exclude-standard').split('\n').filter(Boolean).map(file => {
+    const fresh = await Promise.all(others.split('\n').filter(Boolean).map(async file => {
       let n = 0
-      try { n = readFileSync(join(r.worktree, file), 'utf8').split('\n').filter((l, i, all) => i < all.length - 1 || l).length } catch {}
+      try { n = (await Bun.file(join(r.worktree, file)).text()).split('\n').filter((l, i, all) => i < all.length - 1 || l).length } catch {}
       return { repo: r.key, file, added: n, removed: 0, status: 'A' as const }
-    })
+    }))
     return [...tracked, ...fresh]
-  })
+  }))
+  return per.flat()
 }
 
 /** a changed file's patch, for the run detail's Diff pane (a file too large to show has none) */
 export interface FileDiff { repo: string; file: string; status: 'M' | 'A' | 'D'; added: number; removed: number; patch: string }
 
 /** each file the run changed with its patch: from where its branch left the base to the working tree, new files too */
-export function diffs(dataDir: string, run: string, maxLines = 1500): FileDiff[] {
-  const f = join(dataDir, 'runs', run, 'run.json')
-  if (!existsSync(f)) return []
-  const meta = JSON.parse(readFileSync(f, 'utf8')) as { repos?: { key: string; worktree: string; base?: string }[]; repo?: string; worktree?: string; base?: string }
-  const repos = meta.repos ?? (meta.worktree ? [{ key: meta.repo ?? 'repo', worktree: meta.worktree, base: meta.base }] : [])
-  const git = (cwd: string, ...a: string[]) => new TextDecoder().decode(Bun.spawnSync(['git', ...a], { cwd }).stdout)
-  const byFile = new Map(changes(dataDir, run).map(c => [`${c.repo}\0${c.file}`, c]))
-  return repos.flatMap(r => {
-    if (!existsSync(r.worktree)) return []
-    const from = (r.base && git(r.worktree, 'merge-base', r.base, 'HEAD').trim()) || 'HEAD'
-    const fresh = git(r.worktree, 'ls-files', '--others', '--exclude-standard').split('\n').filter(Boolean)
-    const text = git(r.worktree, 'diff', '--no-color', '--no-ext-diff', from, '--') + fresh.map(file => git(r.worktree, 'diff', '--no-color', '--no-index', '--', '/dev/null', file)).join('')
+export async function diffs(dataDir: string, run: string, maxLines = 1500, patchCommit?: string): Promise<FileDiff[]> {
+  const byFile = new Map((await changes(dataDir, run, patchCommit)).map(c => [`${c.repo}\0${c.file}`, c]))
+  const per = await Promise.all(runRepos(dataDir, run).map(async r => {
+    const from = await startOf(r, patchCommit)
+    const fresh = (await git(r.worktree, 'ls-files', '--others', '--exclude-standard')).split('\n').filter(Boolean)
+    const text = (await git(r.worktree, 'diff', '--no-color', '--no-ext-diff', from, '--')) + (await Promise.all(fresh.map(file => git(r.worktree, 'diff', '--no-color', '--no-index', '--', '/dev/null', file)))).join('')
     return text.split(/^(?=diff --git )/m).filter(p => p.startsWith('diff --git ')).map(patch => {
       const file = /^\+\+\+ b\/(.+)$/m.exec(patch)?.[1] ?? /^--- a\/(.+)$/m.exec(patch)?.[1] ?? /^diff --git a\/(\S+)/.exec(patch)?.[1] ?? '?'
       const c = byFile.get(`${r.key}\0${file}`)
       const big = patch.split('\n').length > maxLines
       return { repo: r.key, file, status: c?.status ?? 'M', added: c?.added ?? 0, removed: c?.removed ?? 0, patch: big ? '' : patch }
     })
-  })
+  }))
+  return per.flat()
 }
 
 /** the logs of a run the screen may read: Metro's, the dev server's, the device's */
@@ -139,8 +151,9 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
         }
         if (r.cmd === 'events') { reply({ ok: true, events: o.store.events(r.run) }); return }
         const safe = /^[\w.-]+$/.test(r.cmd === 'transcript' || r.cmd === 'log' || r.cmd === 'file' || r.cmd === 'changes' || r.cmd === 'diff' ? r.run : '')
-        if (r.cmd === 'diff') { reply(safe ? { ok: true, diffs: diffs(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
-        if (r.cmd === 'changes') { reply(safe ? { ok: true, changes: changes(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
+        const patch = safe && 'run' in r ? o.store.state(r.run)?.patch?.commit : undefined
+        if (r.cmd === 'diff') { reply(safe ? { ok: true, diffs: await diffs(o.dataDir, r.run, 1500, patch) } : { ok: false, error: 'not a run' }); return }
+        if (r.cmd === 'changes') { reply(safe ? { ok: true, changes: await changes(o.dataDir, r.run, patch) } : { ok: false, error: 'not a run' }); return }
         if (r.cmd === 'transcript') { reply(safe ? { ok: true, entries: readTranscript(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
         if (r.cmd === 'log') {
           if (!RUN_LOGS.includes(r.name) || !safe) { reply({ ok: false, error: `${r.name} is not a run log` }); return }
