@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createWorktree, shipChange } from '../src/git.ts'
+import { contentHash, createWorktree, pending, shipChange } from '../src/git.ts'
 
 const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }
 const git = (cwd: string, ...a: string[]) => { const r = Bun.spawnSync(['git', ...a], { cwd, env }); return new TextDecoder().decode(r.stdout).trim() }
@@ -75,9 +75,25 @@ describe('shipChange: flow\'s own commit and push of the agent\'s uncommitted ch
     expect(git(p.wt, 'diff', '--cached', '--name-only')).toBe('')
     expect(git(p.wt, 'diff', '--name-only')).toBe('a.ts')
   })
-  test('nothing changed: nothing to ship', async () => {
+  test('nothing uncommitted (an earlier try committed, then its push failed): no new commit, just the push', async () => {
     const p = project()
     await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/5', base: 'origin/develop' })
-    await expect(shipChange({ worktree: p.wt, branch: 'fix/5', message: 'fix: x', env })).rejects.toThrow(/nothing to ship/)
+    const head = () => new TextDecoder().decode(Bun.spawnSync(['git', 'rev-parse', 'HEAD'], { cwd: p.wt }).stdout).trim()
+    const before = head()
+    expect(await shipChange({ worktree: p.wt, branch: 'fix/5', message: 'fix: x', env })).toEqual({ files: [] })
+    expect(head()).toBe(before)
+    expect(await pending(p.wt, 'origin/develop')).toBe(false)
+  })
+  test('the content hash: the same for the same files, different after any change (untracked too); git\'s index untouched', async () => {
+    const p = project()
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/6', base: 'origin/develop' })
+    const a = await contentHash(p.wt)
+    expect(a).toMatch(/^[0-9a-f]{40}$/)
+    expect(await contentHash(p.wt)).toBe(a)
+    writeFileSync(join(p.wt, 'new.txt'), 'x\n')
+    const b = await contentHash(p.wt)
+    expect(b).not.toBe(a)
+    expect(new TextDecoder().decode(Bun.spawnSync(['git', 'status', '--porcelain'], { cwd: p.wt }).stdout)).toBe('?? new.txt\n')
+    expect(await pending(p.wt, 'origin/develop')).toBe(true)
   })
 })

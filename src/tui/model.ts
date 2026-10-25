@@ -187,11 +187,13 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'plan.decided': return { stage: 'plan', text: e.by === 'human' ? 'approved by you' : 'defaults taken at the deadline' }
     case 'agent.asked': return { stage: '', text: `asks: ${e.question}` }
     case 'human.message': return { stage: '', text: `you: ${e.text}` }
-    case 'build.done': return { stage: 'build', text: 'change made' }
+    case 'build.done': return { stage: 'build', text: e.reason ? `verify again: ${e.reason}` : 'change made' }
     case 'verify.result': return { stage: 'verify', text: e.ok ? 'no new findings' : `${e.newFindings.length} new finding${e.newFindings.length === 1 ? '' : 's'}` }
     case 'review.result': return { stage: 'review', text: e.findings ? `${e.findings} finding${e.findings === 1 ? '' : 's'} to fix` : 'nothing found' }
     case 'review.skipped': return { stage: 'review', text: `skipped: ${e.reason}` }
     case 'pr.opened': return { stage: 'ship', text: `draft PR #${e.number} opened${e.repo ? ` (${e.repo})` : ''}` }
+    case 'pr.updated': return { stage: 'ship', text: `draft PR #${e.number} updated${e.repo ? ` (${e.repo})` : ''}` }
+    case 'run.ready': return { stage: 'ship', text: 'unchanged since verify: ready again' }
     case 'patch.checked': return { stage: 'ship', text: 'write-back dry run done' }
     case 'patch.written': return { stage: 'ship', text: 'patch written back' }
     case 'run.blocked': return { stage: '', text: `blocked: ${e.reason}` }

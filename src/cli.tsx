@@ -29,7 +29,7 @@ import type { RunEvent, RunState } from './run.ts'
 import { Runner } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import { EventStore } from './store.ts'
-import { announce, connect, startService, token, withdraw } from './daemon.ts'
+import { announce, connect, lock as lockService, running, startService, token, unlock as unlockService, withdraw } from './daemon.ts'
 import type { FlowClient } from './client.ts'
 import { serve } from './server.ts'
 import { Service, type Command } from './service.ts'
@@ -136,6 +136,7 @@ async function viaService(c: FlowClient, cmd: Command): Promise<void> {
 }
 
 async function serveCmd() {
+  if (!lockService(DATA)) throw new Error(`a flow service is running already for ${DATA} (pid ${running(DATA)?.pid ?? 'in serve.lock'})`)
   const projects = Object.fromEntries((existsSync(PROJECTS) ? readdirSync(PROJECTS) : []).filter(f => f.endsWith('.json')).map(f => { const p = loadProject(join(PROJECTS, f)); return [p.key, p] }))
   const s = store()
   s.subscribe(showEvent)
@@ -144,9 +145,12 @@ async function serveCmd() {
   const srv = serve({ service: svc, store: s, dataDir: DATA, port: 0, token: token(DATA) })
   announce(DATA, srv.port)
   console.log(`flow service on 127.0.0.1:${srv.port} (pid ${process.pid}); projects: ${Object.keys(projects).join(', ') || 'none'}`)
+  svc.recover()
   const tick = setInterval(() => svc.tick(), 30_000)
   svc.tick()
-  const stop = async () => { clearInterval(tick); withdraw(DATA); srv.stop(); await svc.close(); process.exit(0) }
+  // agents are stopped at once (their runs block and carry on after a message); waiting for every busy step
+  // could take hours, and the next service would start beside this one
+  const stop = async () => { clearInterval(tick); srv.stop(); await Promise.race([svc.shutdown(), Bun.sleep(5000)]); withdraw(DATA); unlockService(DATA); process.exit(0) }
   process.on('SIGINT', stop); process.on('SIGTERM', stop)
   await new Promise(() => {})
 }

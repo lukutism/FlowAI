@@ -1,5 +1,6 @@
-import { cpSync, existsSync, mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { changedFiles } from './verify.ts'
 
 type Env = Record<string, string | undefined>
@@ -43,19 +44,51 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
 
 /**
  * flow's ship step: the agent's uncommitted change becomes one commit (commit hooks run as usual) and the branch
- * is pushed. Never forced: a branch that moved on origin makes the push fail instead.
+ * is pushed. Never forced: a branch that moved on origin makes the push fail instead. Safe to do again: a clean
+ * worktree (committed by an earlier try whose push failed) is only pushed.
  */
 export async function shipChange(o: { worktree: string; branch: string; message: string; env?: Env }): Promise<{ files: string[] }> {
   const files = changedFiles(o.worktree)
-  if (!files.length) throw new Error('nothing to ship: the worktree has no changes')
-  const add = await run(['git', 'add', '--all'], o.worktree, o.env)
-  if (add.code !== 0) throw new Error(`git add failed: ${tail(add.err)}`)
-  const commit = await run(['git', 'commit', '--quiet', '-m', o.message], o.worktree, o.env)
-  if (commit.code !== 0) {
-    await run(['git', 'reset', '--quiet'], o.worktree, o.env) // unstage again: the change stays as the agent left it
-    throw new Error(`commit refused:\n${tail(commit.err || commit.out)}`)
+  if (files.length) {
+    const add = await run(['git', 'add', '--all'], o.worktree, o.env)
+    if (add.code !== 0) throw new Error(`git add failed: ${tail(add.err)}`)
+    const commit = await run(['git', 'commit', '--quiet', '-m', o.message], o.worktree, o.env)
+    if (commit.code !== 0) {
+      await run(['git', 'reset', '--quiet'], o.worktree, o.env) // unstage again: the change stays as the agent left it
+      throw new Error(`commit refused:\n${tail(commit.err || commit.out)}`)
+    }
   }
   const push = await run(['git', 'push', '--quiet', '-u', 'origin', `HEAD:refs/heads/${o.branch}`], o.worktree, o.env)
   if (push.code !== 0) throw new Error(`push failed: ${tail(push.err)}`)
   return { files }
+}
+
+/** what a worktree has to ship: uncommitted changes, or commits of its own on top of its base */
+export async function pending(worktree: string, base: string): Promise<boolean> {
+  if (changedFiles(worktree).length) return true
+  const r = await run(['git', 'rev-list', '--count', `${base}..HEAD`], worktree)
+  return r.code === 0 && Number(r.out) > 0
+}
+
+/** whether the branch on origin is at the worktree's HEAD (after flow's own push) */
+export async function pushed(worktree: string, branch: string): Promise<boolean> {
+  const [head, remote] = await Promise.all([run(['git', 'rev-parse', 'HEAD'], worktree), run(['git', 'rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`], worktree)])
+  return remote.code === 0 && head.out === remote.out
+}
+
+/**
+ * The worktree's content as one hash: HEAD plus every change, untracked files too (what verify saw). It works on
+ * a copy of the index, so git's own index is untouched and only changed files are hashed again.
+ */
+export async function contentHash(worktree: string): Promise<string> {
+  const idx = (await run(['git', 'rev-parse', '--git-path', 'index'], worktree)).out
+  const tmp = join(tmpdir(), `flow-index-${process.pid}-${Math.random().toString(36).slice(2)}`)
+  try {
+    const src = resolve(worktree, idx)
+    if (existsSync(src)) copyFileSync(src, tmp)
+    const env = { ...process.env, GIT_INDEX_FILE: tmp }
+    const add = await run(['git', 'add', '--all'], worktree, env)
+    const tree = await run(['git', 'write-tree'], worktree, env)
+    return add.code === 0 && tree.code === 0 ? tree.out : ''
+  } finally { rmSync(tmp, { force: true }) }
 }

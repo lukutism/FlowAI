@@ -66,3 +66,20 @@ describe('recent', () => {
     expect(s.recent(2).map(e => `${e.run}:${e.type}`)).toEqual(['c:run.created', 'a:setup.done'])
   })
 })
+
+describe('EventStore: a log with an impossible history still opens', () => {
+  test('an event the state cannot take (a second writer appended it) is skipped and reported, not fatal', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'flow-')), 'flow.db')
+    const s = store(file)
+    s.append('r', 'human', created); s.append('r', 'engine', { type: 'setup.done' })
+    s.close()
+    const { Database } = require('bun:sqlite') as typeof import('bun:sqlite')
+    const db = new Database(file)
+    db.run("INSERT INTO events (at, run, actor, type, body) VALUES (1, 'r', 'human', 'plan.decided', '{\"type\":\"plan.decided\",\"by\":\"human\",\"answers\":{}}')")
+    db.close()
+    const skipped: string[] = []
+    const again = new EventStore(file, Date.now, m => skipped.push(m))
+    expect(again.state('r')).toMatchObject({ stage: 'plan' })
+    expect(skipped[0]).toMatch(/plan\.decided.*r.*no plan is waiting/)
+  })
+})

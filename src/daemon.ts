@@ -28,6 +28,23 @@ export function running(data: string): { port: number; pid: number } | null {
   return null
 }
 
+/**
+ * One service per data folder: two writing the same event log could record an impossible history. The lock file
+ * names the holder; one left by a dead process is taken over.
+ */
+export function lock(data: string): boolean {
+  const f = join(data, 'serve.lock')
+  mkdirSync(data, { recursive: true })
+  for (let i = 0; i < 2; i++) {
+    try { writeFileSync(f, String(process.pid), { flag: 'wx' }); return true } catch {}
+    const pid = Number(readFileSync(f, 'utf8'))
+    if (pid !== process.pid && alive(pid)) return false
+    rmSync(f, { force: true })
+  }
+  return false
+}
+export const unlock = (data: string) => rmSync(join(data, 'serve.lock'), { force: true })
+
 export const announce = (data: string, port: number) => writeFileSync(serviceFile(data), JSON.stringify({ port, pid: process.pid }) + '\n')
 export const withdraw = (data: string) => rmSync(serviceFile(data), { force: true })
 

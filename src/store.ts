@@ -10,13 +10,17 @@ export class EventStore {
   private states = new Map<string, RunState>()
   private listeners = new Set<(e: RunEvent) => void>()
 
-  constructor(file: string, private now: () => number = Date.now) {
+  /** skipped: told about an event in the log the run's state can't take (two writers once); it is left out */
+  constructor(file: string, private now: () => number = Date.now, skipped: (message: string) => void = m => console.error(`flow: ${m}`)) {
     this.db = new Database(file, { create: true })
     this.db.run('PRAGMA journal_mode = WAL')
     this.db.run(`CREATE TABLE IF NOT EXISTS events (
       seq INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, run TEXT NOT NULL, actor TEXT NOT NULL, type TEXT NOT NULL, body TEXT NOT NULL)`)
     this.db.run('CREATE INDEX IF NOT EXISTS events_run ON events (run, seq)')
-    for (const e of this.all()) this.states.set(e.run, apply(this.states.get(e.run), e))
+    for (const e of this.all()) {
+      try { this.states.set(e.run, apply(this.states.get(e.run), e)) }
+      catch (err) { skipped(`event ${e.seq} (${e.type}) of run ${e.run} left out: ${(err as Error).message}`) }
+    }
   }
 
   append(run: string, actor: Actor, body: EventBody): RunEvent {

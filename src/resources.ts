@@ -23,6 +23,13 @@ export class Resources {
     return { limits: { ...this.limits }, holders: { agents: [...this.holders.agents], builds: [...this.holders.builds], devices: [...this.holders.devices] }, waiting: this.queue.map(q => ({ run: q.run, kind: q.kind })) }
   }
 
+  /** a slot taken at once even past the limit (a device found still up after a restart is there either way) */
+  hold(run: string, kind: Kind): () => void {
+    this.holders[kind].push(run)
+    this.changed()
+    return this.releaser(run, kind)
+  }
+
   /** a slot of this kind for the run; resolves to its release (safe to call twice) */
   async acquire(run: string, kind: Kind): Promise<() => void> {
     if (this.holders[kind].length >= this.limits[kind] || this.queue.some(q => q.kind === kind)) {
@@ -38,6 +45,10 @@ export class Resources {
       this.holders[kind].push(run)
       this.changed()
     }
+    return this.releaser(run, kind)
+  }
+
+  private releaser(run: string, kind: Kind): () => void {
     let released = false
     return () => {
       if (released) return

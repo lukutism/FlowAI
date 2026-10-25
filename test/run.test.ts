@@ -110,3 +110,69 @@ describe('session health and usage per run', () => {
     expect(s).toMatchObject({ session: 's-1', tokens: 200_000, compactions: 1 })
   })
 })
+
+describe('a message sends the run on from any gate; flow puts the gate back afterwards', () => {
+  const verified = () => [...toBuild(), ev({ type: 'build.done' }), ev({ type: 'verify.result', ok: true, newFindings: [], tree: 't1' }), ev({ type: 'review.result', findings: 0 })]
+  test('the verify cap: a message runs again with a fresh count (it used to stay stuck at "needs you")', () => {
+    const red = () => ev({ type: 'verify.result', ok: false, newFindings: ['x'] })
+    let s = fold([...toBuild(), ev({ type: 'build.done' }), red(), ev({ type: 'build.done' }), red(), ev({ type: 'build.done' }), red()])
+    expect(s).toMatchObject({ stage: 'verify', needs: { kind: 'verify' } })
+    s = apply(s, ev({ type: 'human.message', actor: 'human', text: 'try the other way' }))
+    expect(s).toMatchObject({ stage: 'verify', status: 'running', loops: { verify: 0 } })
+    expect(s.needs).toBeUndefined()
+    expect(apply(s, ev({ type: 'build.done' }))).toMatchObject({ stage: 'verify', status: 'running' })
+  })
+  test('the review cap: the same', () => {
+    let s = fold([...toBuild(), ev({ type: 'build.done' }), ev({ type: 'verify.result', ok: true, newFindings: [] }), ev({ type: 'review.result', findings: 2 }),
+      ev({ type: 'build.done' }), ev({ type: 'verify.result', ok: true, newFindings: [] }), ev({ type: 'review.result', findings: 1 }),
+      ev({ type: 'build.done' }), ev({ type: 'verify.result', ok: true, newFindings: [] }), ev({ type: 'review.result', findings: 1 })])
+    expect(s).toMatchObject({ stage: 'review', needs: { kind: 'review' } })
+    s = apply(s, ev({ type: 'human.message', actor: 'human', text: 'ignore the naming finding' }))
+    expect(s).toMatchObject({ stage: 'review', status: 'running', loops: { review: 0 } })
+  })
+  test('at the ship gate: running while the agent works; unchanged, the gate comes back (run.ready)', () => {
+    let s = apply(fold(verified()), ev({ type: 'human.message', actor: 'human', text: 'what did you change?' }))
+    expect(s).toMatchObject({ stage: 'ship', status: 'running' })
+    expect(s.needs).toBeUndefined()
+    s = apply(s, ev({ type: 'run.ready' }))
+    expect(s).toMatchObject({ stage: 'ship', status: 'needs-you', needs: { kind: 'ship' } })
+  })
+  test('…changed: verified again from the ship stage; the tree that was verified is kept', () => {
+    let s = apply(fold(verified()), ev({ type: 'human.message', actor: 'human', text: 'rename it' }))
+    expect(s.verifiedTree).toBe('t1')
+    s = apply(s, ev({ type: 'build.done', reason: 'changed since verify' }))
+    expect(s).toMatchObject({ stage: 'verify', status: 'running' })
+  })
+  test('a turn that fails at a gate blocks; the next message carries on from the same stage', () => {
+    let s = apply(fold(verified()), ev({ type: 'human.message', actor: 'human', text: 'x' }))
+    s = apply(s, ev({ type: 'run.blocked', reason: 'claude exited with 1' }))
+    s = apply(s, ev({ type: 'human.message', actor: 'human', text: 'again' }))
+    expect(s).toMatchObject({ stage: 'ship', status: 'running' })
+    expect(apply(s, ev({ type: 'run.ready' }))).toMatchObject({ needs: { kind: 'ship' } })
+  })
+  test('with a draft PR open: changes are verified again and pushed to it (pr.updated); unchanged, the PR gate comes back', () => {
+    let s = apply(fold(verified()), ev({ type: 'pr.opened', actor: 'human', url: 'u', number: 7 }))
+    s = apply(s, ev({ type: 'human.message', actor: 'human', text: 'address the review comments' }))
+    expect(apply(s, ev({ type: 'run.ready' }))).toMatchObject({ status: 'needs-you', needs: { kind: 'pr', ask: 'review draft PR #7' } })
+    s = fold([...verified(), ev({ type: 'pr.opened', actor: 'human', url: 'u', number: 7 }), ev({ type: 'human.message', actor: 'human', text: 'x' }), ev({ type: 'build.done' }),
+      ev({ type: 'verify.result', ok: true, newFindings: [] }), ev({ type: 'review.result', findings: 0 })])
+    expect(s).toMatchObject({ stage: 'ship', needs: { kind: 'ship' }, prs: [{ number: 7 }] })
+    expect(apply(s, ev({ type: 'pr.updated', actor: 'human', number: 7 }))).toMatchObject({ status: 'needs-you', needs: { kind: 'pr', ask: 'review draft PR #7' } })
+  })
+  test('at the plan gate: running while the agent rewrites the plan, which is submitted again', () => {
+    let s = fold([created(), ev({ type: 'setup.done' }), ev({ type: 'plan.submitted', summary: 'p', questions: [{ id: 'Q1', text: '?', default: 'no', held: false }], deadline: T0 + 1 })])
+    s = apply(s, ev({ type: 'human.message', actor: 'human', text: 'Q1 is yes, plan for it' }))
+    expect(s).toMatchObject({ stage: 'plan', status: 'running' })
+    expect(s.needs).toBeUndefined()
+    expect(apply(s, ev({ type: 'plan.submitted', summary: 'p2', questions: [] }))).toMatchObject({ stage: 'build', plan: { summary: 'p2' } })
+  })
+  test('resumed after waiting for a slot: a run that needs you still does', () => {
+    let s = fold(verified())
+    s = apply(apply(s, ev({ type: 'run.waiting', resource: 'agent slot' })), ev({ type: 'run.resumed' }))
+    expect(s).toMatchObject({ status: 'needs-you', needs: { kind: 'ship' } })
+  })
+  test('a failed setup or a done run stays as it is', () => {
+    const f = fold([created(), ev({ type: 'setup.failed', reason: 'base not found' }), ev({ type: 'human.message', actor: 'human', text: 'x' })])
+    expect(f).toMatchObject({ status: 'failed' })
+  })
+})

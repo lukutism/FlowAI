@@ -8,7 +8,7 @@ import { trackerFor, type Tracker } from './tracker.ts'
 import type { Project, Repo } from './config.ts'
 import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { startDevServer, stopDevServer, type DevServerState } from './devserver.ts'
-import { createWorktree, shipChange } from './git.ts'
+import { contentHash, createWorktree, pending, pushed, shipChange } from './git.ts'
 import { fillSh, sh, tail } from './sh.ts'
 import { slug } from './slug.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
@@ -300,6 +300,14 @@ export class Pipeline {
     }
   }
 
+  /** after a restart: this project's runs whose device is still up hold their device slot again */
+  adoptDevices() {
+    for (const s of this.d.store.runs()) {
+      if (s.project !== this.d.project.key || this.deviceSlots.has(s.id) || !existsSync(join(this.runDir(s.id), 'device.json'))) continue
+      this.deviceSlots.set(s.id, this.d.resources?.hold(s.id, 'devices') ?? (() => {}))
+    }
+  }
+
   /** the run's own device: a device slot, free ports (not another run's), boot, Metro, install; the slot is freed on failure */
   private async bootDevice(run: string, platform: 'android' | 'ios', worktree: string) {
     const free = this.d.resources ? await this.d.resources.acquire(run, 'devices') : () => {}
@@ -369,43 +377,81 @@ export class Pipeline {
     const r = await this.say(run, text, 'you')
     if (!r.ok) return
     const s = this.must(run)
-    if (s.stage === 'plan' && !s.plan) { const p = this.readPlan(run); if ('plan' in p) await this.submitPlan(run, p.plan) }
-    else if (s.stage === 'build' && s.status === 'running') { this.d.store.append(run, 'agent', { type: 'build.done' }); await this.verifyLoop(run) }
+    if (s.status !== 'running') return // the agent asked something back, or the run was done or failed already
+    if (s.stage === 'plan') {
+      // the agent may have rewritten the plan: it is submitted again (with a new deadline)
+      const p = this.readPlan(run)
+      if ('plan' in p) await this.submitPlan(run, p.plan)
+      else this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the plan ${this.planFile(run)} ${p.problem}; message the agent, or write the plan yourself` })
+    } else if (s.stage === 'build' || s.stage === 'verify' || s.stage === 'review') {
+      this.d.store.append(run, 'agent', { type: 'build.done' })
+      await this.verifyLoop(run)
+    } else if (s.stage === 'ship') {
+      // at the ship gate (or with a draft PR open): a change is verified again; otherwise the gate is back as it was
+      if (await this.changedSinceVerify(run)) { this.d.store.append(run, 'agent', { type: 'build.done', reason: 'changed after it was verified' }); await this.verifyLoop(run) }
+      else this.d.store.append(run, 'engine', { type: 'run.ready' })
+    }
+  }
+
+  /** the worktrees' content, all repos */
+  private async content(m: Meta) { return (await Promise.all(m.repos.map(r => contentHash(r.worktree)))).join(',') }
+  private async changedSinceVerify(run: string) {
+    const v = this.must(run).verifiedTree
+    return v === undefined || (await this.content(this.meta(run))) !== v
   }
 
   /** a commit, a push and a draft PR for each repo the run changed */
   async ship(run: string): Promise<{ number: number; url: string }[]> {
     const s = this.must(run)
-    if (s.needs?.kind !== 'ship' && !(s.needs?.kind === 'patch' && s.patch)) throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
     const m = this.meta(run), n = this.d.project.naming
+    const gate = s.needs?.kind === 'ship' || (s.needs?.kind === 'patch' && s.patch) || (s.needs?.kind === 'pr' && !m.patch)
+    if (!gate) throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
+    // never ship what was not verified: a change since (an edit by hand) is verified again first
+    if (s.verifiedTree !== undefined && (await this.changedSinceVerify(run))) {
+      this.d.store.append(run, 'engine', { type: 'build.done', reason: 'changed after it was verified; ship once it is ready again' })
+      await this.verifyLoop(run)
+      return []
+    }
     if (m.patch) {
       // a customer patch run ends in the patch written back, not a PR: a dry run first, then (ship again) for real
       const others = m.repos.filter(r => r.key !== m.patch!.repo && changedFiles(r.worktree).length).map(r => r.key)
       if (others.length) throw new Error(`${run}: a patch run ships only its patch, but ${others.join(', ')} changed too`)
-      const first = s.needs.kind === 'ship'
+      const first = s.needs!.kind === 'ship'
       const report = await this.writeBack(run, m, first)
       writeFileSync(join(this.runDir(run), 'patch-report.txt'), report)
       this.d.store.append(run, 'human', first ? { type: 'patch.checked', report } : { type: 'patch.written', report })
       if (!first) await this.releaseDevice(run)
       return []
     }
-    const changed = m.repos.map(r => ({ r, files: changedFiles(r.worktree) })).filter(x => x.files.length)
-    if (!changed.length) throw new Error(`${run}: nothing to ship, no repo has changes`)
+    // each repo with something of its own: uncommitted changes, or commits not on origin yet (a push that failed),
+    // or no PR yet; a repo whose PR is open and current is left alone
+    const prFor = (key: string) => (s.prs ?? []).find(p => (m.repos.length > 1 ? p.repo === key : true))
+    const changed: { r: RunRepo; files: string[] }[] = []
+    for (const r of m.repos) {
+      if (!(await pending(r.worktree, r.base))) continue
+      const files = changedFiles(r.worktree)
+      if (!files.length && prFor(r.key) && (await pushed(r.worktree, m.branch))) continue
+      changed.push({ r, files })
+    }
+    if (!changed.length) throw new Error(s.prs?.length ? `${run}: nothing new to ship; the draft PR is current` : `${run}: nothing to ship, no repo has changes`)
     const pr = existsSync(this.prFile(run)) ? readFileSync(this.prFile(run), 'utf8') : ''
     const summary = prSummary(pr, m.title)
     // a task has no ticket to link to or name: its PR is the description, its title and commits the summary alone
     const body = n.prBody === 'ticket-link' && m.url ? m.url : pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`.trim()
     const title = n.prTitle === 'key' && m.key ? m.key : `${m.key} ${summary}`.trim()
     const message = (files: string[], repo: string) => (n.commit === 'key-summary' ? `${m.key} ${summary}`.trim().slice(0, 100) : commitMessage({ id: m.task ? '' : m.id, title: m.title, kind: m.kind }, files, repo))
-    const created: { number: number; url: string }[] = []
+    const created: { number: number; url: string }[] = [], updated: { number: number; repo?: string }[] = []
     for (const { r, files } of changed) {
       await shipChange({ worktree: r.worktree, branch: m.branch, message: message(files, r.key), env: this.d.gitEnv })
+      const open = prFor(r.key)
+      if (open) { updated.push({ number: open.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) }); continue }
       const origin = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], { cwd: r.worktree })
       const repository = new TextDecoder().decode(origin.stdout).trim().replace(/\.git$/, '').split(/[/:]/).pop()!
       const c = this.forge.draftPr({ repository, head: m.branch, base: r.base.replace(/^origin\//, ''), title, body, ...(typeof m.id === 'number' ? { workItem: m.id } : {}) })
       this.d.store.append(run, 'human', { type: 'pr.opened', url: c.url, number: c.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) })
       created.push(c)
     }
+    if (!created.length && updated[0]) this.d.store.append(run, 'human', { type: 'pr.updated', ...updated[0] })
     await this.releaseDevice(run)
     return created
   }
@@ -474,7 +520,7 @@ export class Pipeline {
     return agent
   }
 
-  async close() { for (const a of this.agents.values()) await a.close?.() }
+  async close() { await Promise.all([...this.agents.values()].map(a => a.close?.())) }
 
   private readPlan(run: string): { plan: ReturnType<typeof parsePlan> } | { problem: string } {
     if (!existsSync(this.planFile(run))) return { problem: 'is missing' }
@@ -525,10 +571,10 @@ export class Pipeline {
   private async verifyLoop(run: string) {
     const m = this.meta(run)
     for (;;) {
-      let res
-      try { res = await this.verifyAll(run, m) }
+      let res, tree
+      try { tree = await this.content(m); res = await this.verifyAll(run, m) }
       catch (e) { this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `verify could not run: ${(e as Error).message}` }); return }
-      this.d.store.append(run, 'engine', { type: 'verify.result', ok: res.ok, newFindings: res.findings })
+      this.d.store.append(run, 'engine', { type: 'verify.result', ok: res.ok, newFindings: res.findings, tree })
       let s = this.must(run)
       let prompt = fixPrompt(res.findings)
       if (s.stage === 'review') {

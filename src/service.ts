@@ -87,6 +87,28 @@ export class Service {
     if (existsSync(saved)) try { this.lastWindows = JSON.parse(readFileSync(saved, 'utf8')) } catch {}
   }
 
+  /**
+   * After a restart the steps that were in flight are gone: their runs stop for the human, saying so (a message
+   * carries them on), and devices still up count against the device slots again.
+   */
+  recover() {
+    for (const s of this.d.store.runs()) {
+      if (!['running', 'waiting', 'paused'].includes(s.status)) continue
+      this.stopped(s.id, `flow's service restarted during ${s.stage}`)
+    }
+    for (const key of Object.keys(this.d.projects)) this.pipeline(key).adoptDevices()
+  }
+
+  /** a run whose step ended without a decision: blocked with the reason (a failed setup can't be carried on) */
+  private stopped(run: string, why: string) {
+    const s = this.d.store.state(run)
+    if (!s || !['running', 'waiting', 'paused'].includes(s.status)) return
+    try {
+      if (s.stage === 'setup') this.d.store.append(run, 'engine', { type: 'setup.failed', reason: why })
+      else this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `${why}; message the agent to carry on` })
+    } catch {}
+  }
+
   onNotice(fn: (n: Notice) => void) { this.notices.add(fn); return () => { this.notices.delete(fn) } }
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }
   windows(): Windows { return this.lastWindows }
@@ -193,11 +215,20 @@ export class Service {
 
   async idle() { while (this.busy.size) await Promise.all(this.busy.values()) }
 
-  async close() { await this.idle(); for (const p of this.pipes.values()) await p.close() }
+  async close() { await this.idle(); await this.shutdown() }
+
+  /** the agents stopped now, busy or not */
+  async shutdown() { await Promise.all([...this.pipes.values()].map(p => p.close())) }
 
   private act(run: string, fn: () => Promise<void>) {
     if (this.busy.has(run)) throw new Error(`${run} is busy: wait for its current step to end`)
-    const p = (async () => { try { await fn() } catch (e) { for (const l of this.notices) l({ run, text: (e as Error).message }) } })()
+    const p = (async () => {
+      try { await fn() } catch (e) {
+        // a refusal (not ready to ship) leaves the run as it was; a step that broke off mid-way blocks it
+        this.stopped(run, (e as Error).message)
+        for (const l of this.notices) l({ run, text: (e as Error).message })
+      }
+    })()
       .finally(() => { this.busy.delete(run) })
     this.busy.set(run, p)
   }

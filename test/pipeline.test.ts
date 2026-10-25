@@ -329,3 +329,78 @@ describe('pipeline: values from forms and tickets are checked before they reach 
     await expect(t.pipe.start(186278, { patch: 'acme/$(id)' })).rejects.toThrow(/--patch/)
   })
 })
+
+describe('pipeline: a message at any gate carries the run on, and flow puts the gate back', () => {
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  test('a question at the ship gate, nothing changed: ready to ship again, without verifying again', async () => {
+    const t = setup(d => [...ready(d), turn(undefined, 'I added b.')])
+    const run = await t.pipe.start(186278)
+    const runs = t.store.state(run)!.loops.verifyRuns
+    await t.pipe.message(run, 'what did you change?')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', status: 'needs-you', needs: { kind: 'ship' }, loops: { verifyRuns: runs } })
+  })
+  test('a change asked for at the ship gate: verified again, then ready to ship', async () => {
+    const t = setup(d => [...ready(d), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 3 // ERR mine\n')), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 3\n'))])
+    const run = await t.pipe.start(186278)
+    await t.pipe.message(run, 'make it 3')
+    expect(t.agent.prompts[3]).toContain('ERR mine')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
+  })
+  test('a failed turn at the ship gate blocks; the next message brings the gate back (ship works again)', async () => {
+    const t = setup(d => [...ready(d), turn(() => { throw new Error('claude exited with 3') }), turn()])
+    const run = await t.pipe.start(186278)
+    await t.pipe.message(run, 'x')
+    expect(t.store.state(run)).toMatchObject({ status: 'blocked' })
+    await t.pipe.message(run, 'again')
+    expect(t.store.state(run)).toMatchObject({ needs: { kind: 'ship' } })
+    expect(await t.pipe.ship(run)).toHaveLength(1)
+  })
+  test('the verify cap: a message runs the agent and verify again (it used to stay stuck)', async () => {
+    const red = (d: { wt: string }, n: number) => turn(() => writeFileSync(join(d.wt, 'src/b.ts'), `export const b = ${n} // ERR mine\n`))
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), red(d, 1), red(d, 2), red(d, 3), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 4\n'))])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ needs: { kind: 'verify' } })
+    await t.pipe.message(run, 'drop the comment')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
+  })
+  test('the plan gate: the agent rewrites the plan after a message, and it is submitted again', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also the order list? — default: no'))),
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also the order list? — default: yes\n- Q2: And the map? — default: no')))])
+    const run = await t.pipe.start(186278)
+    await t.pipe.message(run, 'the order list too; any more questions?')
+    expect(t.store.state(run)).toMatchObject({ stage: 'plan', needs: { kind: 'plan' }, plan: { questions: [{ id: 'Q1', default: 'yes' }, { id: 'Q2' }] } })
+  })
+  test('changed after verify without the agent (an edit by hand): ship verifies again instead of shipping unverified code', async () => {
+    const t = setup(d => [...ready(d), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const run = await t.pipe.start(186278)
+    writeFileSync(join(t.wt, 'src/b.ts'), 'export const b = 2 // ERR by hand\n')
+    expect(await t.pipe.ship(run)).toEqual([])
+    expect(t.azCalls.some(a => a.includes('create'))).toBe(false)
+    expect(t.agent.prompts[2]).toContain('ERR by hand')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
+  })
+})
+
+describe('pipeline: ship can be done again', () => {
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  test('the push failed after the commit: shipping again pushes and opens the PR (it said "nothing to ship")', async () => {
+    const t = setup(ready)
+    const run = await t.pipe.start(186278)
+    git(t.wt, 'remote', 'set-url', 'origin', join(t.root, 'gone.git'))
+    await expect(t.pipe.ship(run)).rejects.toThrow(/push failed/)
+    git(t.wt, 'remote', 'set-url', 'origin', t.origin)
+    expect(await t.pipe.ship(run)).toHaveLength(1)
+    expect(git(t.origin, 'log', '-1', '--format=%s', 'fix/186278')).toMatch(/#186278/)
+  })
+  test('a change after the PR opened: verified again, then ship pushes it to the same PR', async () => {
+    const t = setup(d => [...ready(d), turn(() => writeFileSync(join(d.wt, 'src/c.ts'), 'export const c = 1\n'))])
+    const run = await t.pipe.start(186278)
+    await t.pipe.ship(run)
+    await t.pipe.message(run, 'also add c')
+    expect(t.store.state(run)).toMatchObject({ needs: { kind: 'ship' } })
+    expect(await t.pipe.ship(run)).toEqual([])
+    expect(t.azCalls.filter(a => a.includes('create'))).toHaveLength(1)
+    expect(git(t.origin, 'show', '--stat', '--format=', 'fix/186278')).toContain('src/c.ts')
+    expect(t.store.state(run)).toMatchObject({ needs: { kind: 'pr', ask: 'review draft PR #4711' } })
+  })
+})

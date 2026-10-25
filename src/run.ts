@@ -17,12 +17,18 @@ export type EventBody =
   | { type: 'plan.decided'; by: 'human' | 'deadline'; answers: Record<string, string> }
   | { type: 'agent.asked'; question: string }
   | { type: 'human.message'; text: string }
-  | { type: 'build.done' }
-  | { type: 'verify.result'; ok: boolean; newFindings: string[] }
+  /** reason: why the engine sent a change back to verify (it moved after it was verified) */
+  | { type: 'build.done'; reason?: string }
+  /** tree: what was verified (the worktrees' content), so a later change is noticed */
+  | { type: 'verify.result'; ok: boolean; newFindings: string[]; tree?: string }
   | { type: 'review.result'; findings: number }
   /** the project runs no reviewer yet: the run goes from verify to ship */
   | { type: 'review.skipped'; reason: string }
   | { type: 'pr.opened'; url: string; number: number; repo?: string }
+  /** a further change pushed to a draft PR that was open already */
+  | { type: 'pr.updated'; number: number; repo?: string }
+  /** after a message at a gate the change is as it was verified: the gate is back */
+  | { type: 'run.ready' }
   | { type: 'run.blocked'; reason: string }
   | { type: 'run.waiting'; resource: string }
   | { type: 'run.paused'; window: string; until: number }
@@ -66,6 +72,8 @@ export interface RunState {
   device?: { platform: 'android' | 'ios'; id: string; metroPort: number }
   patch?: { customer: string; app: string; commit: string }
   devServer?: { repo: string; port: number; url: string }
+  /** the content the last verify saw */
+  verifiedTree?: string
   createdAt: number; updatedAt: number
 }
 
@@ -76,6 +84,8 @@ export class TransitionError extends Error {}
 
 /** verified (and reviewed): publishing is the human's step (flow ship), like merging */
 const READY = { status: 'needs-you' as const, needs: { kind: 'ship' as const, ask: 'verified: publish the draft PR with flow ship' } }
+
+const prAsk = (prs: { number: number }[]) => (prs.length > 1 ? `review draft PRs ${prs.map(p => `#${p.number}`).join(', ')}` : `review draft PR #${prs[0]?.number}`)
 
 const need = (s: RunState, stage: Stage, e: RunEvent) => {
   if (s.stage !== stage) throw new TransitionError(`${e.type} needs the run in ${stage}, it is in ${s.stage}`)
@@ -110,10 +120,14 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
       if (e.by === 'deadline' && s.needs.held) throw new TransitionError('a held question is decided by the human only')
       return go(s, e, { stage: 'build', plan: { ...s.plan, answers: e.answers, decidedBy: e.by }, ...running })
     }
-    case 'build.done': need(s, 'build', e); return go(s, e, { stage: 'verify', ...running })
+    case 'build.done':
+      // from build; or from a later stage when a message changed the code after it was verified
+      if (!['build', 'verify', 'review', 'ship'].includes(s.stage)) need(s, 'build', e)
+      return go(s, e, { stage: 'verify', ...running })
     case 'verify.result': {
       need(s, 'verify', e)
       const verifyRuns = s.loops.verifyRuns + 1
+      if (e.tree) s = { ...s, verifiedTree: e.tree }
       if (e.ok) return go(s, e, { stage: 'review', loops: { ...s.loops, verify: 0, verifyRuns }, ...running })
       const verify = s.loops.verify + 1
       const loops = { ...s.loops, verify, verifyRuns }
@@ -131,18 +145,22 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'pr.opened': {
       need(s, 'ship', e)
       const prs = [...(s.prs ?? []), { url: e.url, number: e.number, ...(e.repo ? { repo: e.repo } : {}) }]
-      const ask = prs.length > 1 ? `review draft PRs ${prs.map(p => `#${p.number}`).join(', ')}` : `review draft PR #${e.number}`
-      return go(s, e, { pr: s.pr ?? { url: e.url, number: e.number }, prs, status: 'needs-you', needs: { kind: 'pr', ask } })
+      return go(s, e, { pr: s.pr ?? { url: e.url, number: e.number }, prs, status: 'needs-you', needs: { kind: 'pr', ask: prAsk(prs) } })
     }
     case 'run.done': return go(s, e, { stage: 'done', status: 'done', needs: undefined, waitingFor: undefined, pausedUntil: undefined })
     case 'agent.asked': return go(s, e, { status: 'needs-you', needs: { kind: 'question', ask: e.question } })
     case 'human.message':
-      // a message answers a question or sends a blocked agent on; other states are unchanged
-      return s.needs?.kind === 'question' || s.status === 'blocked' ? go(s, e, running) : go(s, e, {})
+      // a message sends the run on from wherever it stopped (a question, a block, a gate, a cap); flow puts the gate
+      // back once the agent's turn is done. A failed setup and a finished run stay as they are.
+      if (s.status === 'failed' || s.status === 'done') return go(s, e, {})
+      if (s.status !== 'needs-you' && s.status !== 'blocked') return go(s, e, {})
+      return go(s, e, { ...running, loops: { ...s.loops, ...(s.needs?.kind === 'verify' ? { verify: 0 } : {}), ...(s.needs?.kind === 'review' ? { review: 0 } : {}) } })
+    case 'run.ready': need(s, 'ship', e); return go(s, e, s.prs?.length ? { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs) } } : READY)
+    case 'pr.updated': need(s, 'ship', e); return go(s, e, { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs ?? [{ url: '', number: e.number }]) } })
     case 'run.blocked': return go(s, e, { status: 'blocked', needs: { kind: 'blocked', ask: e.reason } })
     case 'run.waiting': return go(s, e, { status: 'waiting', waitingFor: e.resource })
     case 'run.paused': return go(s, e, { status: 'paused', pausedUntil: e.until })
-    case 'run.resumed': return go(s, e, { status: 'running', waitingFor: undefined, pausedUntil: undefined })
+    case 'run.resumed': return go(s, e, { status: s.needs ? (s.needs.kind === 'blocked' ? 'blocked' : 'needs-you') : 'running', waitingFor: undefined, pausedUntil: undefined })
     case 'session.started': return go(s, e, { session: e.session })
     case 'session.compacted': return go(s, e, { compactions: s.compactions + 1 })
     case 'tokens.used': return go(s, e, { tokens: s.tokens + e.tokens, ...(e.cached ? { cached: (s.cached ?? 0) + e.cached } : {}) })

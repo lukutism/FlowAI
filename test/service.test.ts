@@ -134,3 +134,26 @@ describe('Service: the background process that drives runs', () => {
     expect(t.svc.dispatch({ cmd: 'start', project: 'nope', ticket: 1 })).toMatchObject({ ok: false, error: expect.stringMatching(/no project nope/) })
   })
 })
+
+describe('Service: after a restart, and when a step throws', () => {
+  test('runs that were mid-step stop for you saying why (they used to show "running" for good)', async () => {
+    const t = setup(d => [turn(planWith(d.data, 'none')), turn()])
+    t.store.append('ex-9', 'human', { type: 'run.created', ticket: '#9', title: 'x', project: 'ex', base: 'origin/develop' })
+    t.store.append('ex-8', 'human', { type: 'run.created', ticket: '#8', title: 'y', project: 'ex', base: 'origin/develop' })
+    t.store.append('ex-8', 'engine', { type: 'setup.done' })
+    t.store.append('ex-8', 'engine', { type: 'run.paused', window: '5h', until: 1 })
+    t.svc.recover()
+    expect(t.store.state('ex-9')).toMatchObject({ status: 'failed', needs: { ask: expect.stringMatching(/restarted during setup/) } })
+    expect(t.store.state('ex-8')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/restarted during plan.*message/) } })
+  })
+  test('a step that throws blocks its run with the reason instead of leaving it running', async () => {
+    const t = setup(() => [turn()])
+    t.store.append('ex-7', 'human', { type: 'run.created', ticket: '#7', title: 'x', project: 'ex', base: 'origin/develop' })
+    t.store.append('ex-7', 'engine', { type: 'setup.done' })
+    t.store.append('ex-7', 'engine', { type: 'plan.submitted', summary: 'p', questions: [] })
+    // no run.json: the message's step throws reading it
+    t.svc.dispatch({ cmd: 'message', run: 'ex-7', text: 'go on' })
+    await t.svc.idle()
+    expect(t.store.state('ex-7')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/run\.json|ENOENT/) } })
+  })
+})
