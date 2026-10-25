@@ -30,7 +30,7 @@ weekly windows, which flow reads from the CLI after every turn.
 | `flow` | The screen: what needs you, every run, the slots (who holds each, for how long; who waits), the selected run's activity, your plan windows. Starts the background service if needed. |
 | `1`–`4` | Tabs: Runs, Queue (who waits for which slot, paused runs, plan deadlines), Metrics (per project), Projects |
 | `p` | The project picker: all projects, or one (`fso`, `spk`, …) with its runs; the header shows which |
-| `⇥` | Move the focus between the runs table and Needs attention; `j`/`k`, `↵` and the action keys work on the focused item |
+| `↑` `↓` / `j` `k` | One cursor through Needs attention and the runs: up from the first run goes into Needs attention, down past its last item back to the runs; `⇥` jumps between them; the action keys work on what the cursor is on |
 | `n` | The new-run form: project, ticket (looked up as you type: title, type, board, customer, tags), base (the default and the release lines, the ticket's release tag preselected), kind, repos, device, dev server, customer patch (the one the ticket points at, checked against the base), model; what will happen and the free slots. It refuses what would fail and says why |
 | `a` | Approve a plan: the confirm opens under its item with the defaults (and says if the build will wait for a slot); `y`, or `e` to type other answers |
 | `m` | Message a run's agent |
@@ -38,7 +38,7 @@ weekly windows, which flow reads from the CLI after every turn.
 | `p` in a run's detail | Port a shipped run to develop (also in the commands) |
 | `s` / `g` / `/` | Sort (newest, oldest, latest activity, tokens) / group by stage (`↵` on a group folds it) / filter: `project:fso status:needs-you stage:build` or any text; `esc` clears it |
 | `ctrl+k` or `:` | Commands: every action for the selected run, filters, sorts, tabs, typed to narrow |
-| `↵` / `esc` | A run's detail / back. The run on the left (what it needs, plan and answers, verify and review, the files it changed, the timeline, its files); panes on the right: Agent (the session live, with a box to message it), Metro and Dev server (their logs), Shell (a real shell in the worktree: `i` types into it, `ctrl+]` leaves); `[` `]` switch panes, `v` splits a pane with the shell |
+| `↵` / `esc` | A run's detail / back. The run on the left (what it needs, plan and answers, verify and review, the files it changed, the timeline, its files); panes on the right: Agent (the session live; its message box right under it, a click on Agent types there), Diff (each changed file, from where the branch left its base), Plan (and the ticket, PR, review: drawn as Markdown), Metro (runs with a device), Dev server (runs with one), Shell (a real shell in the worktree: `i` types into it, `ctrl+]` leaves); `[` `]` switch panes, `v` splits a pane with the shell |
 
 The mouse works too: click a tab, a run (a second click opens it), an item's key hint, a confirm's answer, a command,
 or any key in the bottom line; the wheel over the table moves the selection. To select text for copying while the

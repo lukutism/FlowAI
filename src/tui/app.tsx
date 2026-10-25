@@ -204,12 +204,14 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'n') return setMode({ kind: 'new' })
     if (tab !== 'Runs' && mode.kind !== 'detail') return
     if (name === 'tab' && mode.kind !== 'detail') return setFocus(f => (f === 'runs' && att.length ? 'attention' : 'runs'))
+    // one cursor through both lists: down past the last item needing you goes into the runs, up from the first run back
     if (focus === 'attention' && mode.kind !== 'detail') {
-      if (name === 'down' || typed === 'j') return setAttSel(Math.min(Math.min(attSel, att.length - 1) + 1, att.length - 1))
-      if (name === 'up' || typed === 'k') return setAttSel(Math.max(Math.min(attSel, att.length - 1) - 1, 0))
+      const at = Math.min(attSel, att.length - 1)
+      if (name === 'down' || typed === 'j') { if (at >= att.length - 1 && items.length) { setFocus('runs'); setSelected(0) } else setAttSel(at + 1); return }
+      if (name === 'up' || typed === 'k') return setAttSel(Math.max(at - 1, 0))
     } else {
       if (name === 'down' || typed === 'j') return setSelected(Math.min(sel + 1, items.length - 1))
-      if (name === 'up' || typed === 'k') return setSelected(Math.max(sel - 1, 0))
+      if (name === 'up' || typed === 'k') { if (sel === 0 && att.length && tab === 'Runs') { setFocus('attention'); setAttSel(att.length - 1) } else setSelected(Math.max(sel - 1, 0)); return }
     }
     if (typed === 's') return setSort(SORTS[(SORTS.indexOf(sort) + 1) % SORTS.length]!)
     if (typed === 'g') { setGrouped(g => !g); setSelected(0); return }
@@ -371,7 +373,8 @@ function Confirm({ mode, run, resources, onKey }: { mode: Mode; run?: RunState; 
 }
 
 function Table({ items, selected, rowsShown, width, cols, onClick, onScroll, active, hover, onHover }: { items: Grouped[]; selected: number; rowsShown: number; width: number; cols: { project: boolean; tokens: boolean; track: boolean }; onClick: (i: number) => void; onScroll: (down: boolean) => void; active: boolean; hover: string | null; onHover: (key: string | null) => void }) {
-  const bg = (on: boolean, key: string) => (on ? (active ? C.selected : C.inactive) : hover === key ? C.panel : undefined)
+  // the selected row shows only while the table has the cursor (one cursor on the screen)
+  const bg = (on: boolean, key: string) => (on && active ? C.selected : hover === key ? C.panel : undefined)
   const stageW = cols.track ? 12 : 8, statusW = 20, nextW = width >= 120 ? 24 : 18
   const fixed = 10 + (cols.project ? 7 : 0) + 10 + stageW + statusW + 8 + (cols.tokens ? 7 : 0) + 1 + nextW
   const titleW = Math.max(12, width - fixed)

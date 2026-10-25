@@ -173,7 +173,8 @@ describe('Run detail', () => {
       expect(f).toContain('R1 [P1] src/b.ts:4 the order list')
       expect(f).toMatch(/\d\d:\d\d setup +started from b/)
       expect(f).toMatch(/\d\d:\d\d plan +plan ready, no questions/)
-      expect(f).toMatch(/Agent +Metro +Dev server +Shell/)
+      expect(f).toMatch(/Agent +Diff +Plan +Shell/) // no Metro without a device, no dev server without one
+      expect(f).not.toMatch(/Metro|Dev server/)
       expect(await t.press('esc')).toContain('Needs attention')
     } finally { t.s.renderer.destroy() }
   })
@@ -206,19 +207,60 @@ describe('Run detail', () => {
       expect(t.f.sent).toEqual([{ cmd: 'message', run: 'fso-105', text: 'check q1' }])
     } finally { t.s.renderer.destroy() }
   })
-  test('] moves to Metro: the run\'s log; a run without a device says why there is none', async () => {
-    const withDevice = [base('fso-105', { device: { platform: 'android', id: 'emulator-5700', metroPort: 8300 } })]
-    const t = await screen(withDevice, undefined, { log: async (_r, name) => (name === 'metro' ? [' BUNDLE  ./index.js 78%', ' WARN  Require cycle'] : []) })
+  test('a run with a device has Metro: its log; a run with a dev server has that pane too', async () => {
+    const withDevice = [base('fso-105', { device: { platform: 'android', id: 'emulator-5700', metroPort: 8300 }, devServer: { repo: 'portal', port: 5300, url: 'https://localhost:5300' } })]
+    const t = await screen(withDevice, undefined, { log: async (_r, name) => (name === 'metro' ? [' BUNDLE  ./index.js 78%', ' WARN  Require cycle'] : [' VITE ready in 812 ms']) })
     try {
-      await t.press('enter', ']')
+      expect(await t.press('enter')).toMatch(/Agent +Diff +Plan +Metro ● +Dev server ● +Shell/)
+      await t.press(']', ']', ']')
       await act(async () => { await Bun.sleep(20) })
       const f = await t.frame()
       expect(f).toMatch(/Metro :8300 ● running +metro\.log/)
       expect(f).toContain('BUNDLE  ./index.js 78%')
-      expect(await t.press(']')).toContain('This run has no dev server: start a run with one')
+      await t.press(']'); await act(async () => { await Bun.sleep(20) })
+      expect(await t.frame()).toMatch(/dev server portal https:\/\/localhost:5300 ● running[\s\S]*VITE ready in 812 ms/)
     } finally { t.s.renderer.destroy() }
-    const u = await screen()
-    try { expect(await u.press('enter', ']')).toContain('This run has no device, so no Metro') } finally { u.s.renderer.destroy() }
+  })
+  test('Diff: each changed file with its lines added and removed', async () => {
+    const patch = 'diff --git a/src/walk.ts b/src/walk.ts\n--- a/src/walk.ts\n+++ b/src/walk.ts\n@@ -1,2 +1,2 @@\n const a = 1\n-const left = need - got\n+const left = Math.max(0, need - got)\n'
+    const t = await screen(runs, undefined, { diff: async () => [{ repo: 'mobile', file: 'src/walk.ts', status: 'M', added: 1, removed: 1, patch }, { repo: 'mobile', file: 'yarn.lock', status: 'M', added: 4000, removed: 10, patch: '' }] })
+    try {
+      await t.press('enter', ']'); await act(async () => { await Bun.sleep(50) })
+      const f = await t.frame()
+      expect(f).toMatch(/2 files +\+4001 −11/)
+      expect(f).toMatch(/M src\/walk\.ts +\+1 −1/)
+      expect(f).toContain('- const left = need - got')
+      expect(f).toContain('+ const left = Math.max(0, need - got)')
+      expect(f).toContain('too large to show here')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('Plan, the ticket, the PR, the review are drawn as Markdown', async () => {
+    const t = await screen(runs, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nClamp the **remaining** quantity.\n\n## Approach\n- one\n- two\n' : '') })
+    try {
+      await t.press('enter', ']', ']'); await act(async () => { await Bun.sleep(80) })
+      const f = await t.frame()
+      expect(f).toContain('Clamp the remaining quantity.')
+      expect(f).not.toContain('**remaining**')
+      expect(f).not.toContain('## Approach')
+      expect(f).toContain('Approach')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a click on Agent puts you in its message box, which stays above the shell when split', async () => {
+    const t = await screen()
+    try {
+      const f = await t.press('enter', ']')
+      const p = at(f, 'Agent')
+      await act(async () => { await t.s.mockMouse.click(p.x + 1, p.y) })
+      await t.press(...'hello'.split(''))
+      const g = await t.frame()
+      expect(g).toContain('› hello▏')
+      await t.press('esc', 'v')
+      const h = (await t.frame()).split('\n')
+      const box = h.findIndex(l => l.includes('Message the agent'))
+      const shell = h.findIndex(l => l.includes(' Shell ·'))
+      expect(box).toBeGreaterThan(0)
+      expect(box).toBeLessThan(shell)
+    } finally { t.s.renderer.destroy(); stopShells() }
   })
   test('the files: a click opens one in the right pane', async () => {
     const t = await screen()
@@ -505,6 +547,18 @@ describe('projects and the attention list from the keyboard', () => {
       expect(await t.press('enter')).toMatch(/Needs you: verified/)
       await t.press('esc')
       expect(await t.press('tab')).not.toMatch(/▌Needs attention/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('the arrows run through both lists: up from the first run into Needs attention, down past its last item back to the runs', async () => {
+    const t = await screen()
+    try {
+      const f = await t.press('k')
+      expect(f).toMatch(/▌Needs attention/)
+      expect(f).toMatch(/▌#104 /) // the last item needing you
+      expect(await t.press('k')).toMatch(/▌#105 /)
+      const g = await t.press('j', 'j')
+      expect(g).not.toMatch(/▌Needs attention/) // back in the runs, on the first
+      expect(await t.press('enter')).toContain('Needs you: 1 open question') // #105, the first run
     } finally { t.s.renderer.destroy() }
   })
   test('a click on an attention item focuses it', async () => {

@@ -39,10 +39,35 @@ export function changes(dataDir: string, run: string): Change[] {
   })
 }
 
+/** a changed file's patch, for the run detail's Diff pane (a file too large to show has none) */
+export interface FileDiff { repo: string; file: string; status: 'M' | 'A' | 'D'; added: number; removed: number; patch: string }
+
+/** each file the run changed with its patch: from where its branch left the base to the working tree, new files too */
+export function diffs(dataDir: string, run: string, maxLines = 1500): FileDiff[] {
+  const f = join(dataDir, 'runs', run, 'run.json')
+  if (!existsSync(f)) return []
+  const meta = JSON.parse(readFileSync(f, 'utf8')) as { repos?: { key: string; worktree: string; base?: string }[]; repo?: string; worktree?: string; base?: string }
+  const repos = meta.repos ?? (meta.worktree ? [{ key: meta.repo ?? 'repo', worktree: meta.worktree, base: meta.base }] : [])
+  const git = (cwd: string, ...a: string[]) => new TextDecoder().decode(Bun.spawnSync(['git', ...a], { cwd }).stdout)
+  const byFile = new Map(changes(dataDir, run).map(c => [`${c.repo}\0${c.file}`, c]))
+  return repos.flatMap(r => {
+    if (!existsSync(r.worktree)) return []
+    const from = (r.base && git(r.worktree, 'merge-base', r.base, 'HEAD').trim()) || 'HEAD'
+    const fresh = git(r.worktree, 'ls-files', '--others', '--exclude-standard').split('\n').filter(Boolean)
+    const text = git(r.worktree, 'diff', '--no-color', '--no-ext-diff', from, '--') + fresh.map(file => git(r.worktree, 'diff', '--no-color', '--no-index', '--', '/dev/null', file)).join('')
+    return text.split(/^(?=diff --git )/m).filter(p => p.startsWith('diff --git ')).map(patch => {
+      const file = /^\+\+\+ b\/(.+)$/m.exec(patch)?.[1] ?? /^--- a\/(.+)$/m.exec(patch)?.[1] ?? /^diff --git a\/(\S+)/.exec(patch)?.[1] ?? '?'
+      const c = byFile.get(`${r.key}\0${file}`)
+      const big = patch.split('\n').length > maxLines
+      return { repo: r.key, file, status: c?.status ?? 'M', added: c?.added ?? 0, removed: c?.removed ?? 0, patch: big ? '' : patch }
+    })
+  })
+}
+
 /** the logs of a run the screen may read: Metro's, the dev server's, the device's */
 export const RUN_LOGS = ['metro', 'devserver', 'device'] as const
 export type RunLog = (typeof RUN_LOGS)[number]
-export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'changes'; run: string } | { cmd: 'query'; query: Query } | { cmd: 'log'; run: string; name: RunLog; lines: number }
+export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'changes'; run: string } | { cmd: 'diff'; run: string } | { cmd: 'query'; query: Query } | { cmd: 'log'; run: string; name: RunLog; lines: number }
 export type Request = RequestBody & { id: number }
 
 export type Message =
@@ -54,7 +79,7 @@ export type Message =
   | { type: 'windows'; windows: Windows }
   | { type: 'notice'; notice: Notice }
   | { type: 'agent'; run: string; entry: Entry }
-  | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: true; changes: Change[] } | { ok: true; data: unknown } | { ok: false; error: string } }
+  | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: true; changes: Change[] } | { ok: true; diffs: FileDiff[] } | { ok: true; data: unknown } | { ok: false; error: string } }
 
 type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent' | 'query'>
 
@@ -88,7 +113,8 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
           return
         }
         if (r.cmd === 'events') { reply({ ok: true, events: o.store.events(r.run) }); return }
-        const safe = /^[\w.-]+$/.test(r.cmd === 'transcript' || r.cmd === 'log' || r.cmd === 'file' || r.cmd === 'changes' ? r.run : '')
+        const safe = /^[\w.-]+$/.test(r.cmd === 'transcript' || r.cmd === 'log' || r.cmd === 'file' || r.cmd === 'changes' || r.cmd === 'diff' ? r.run : '')
+        if (r.cmd === 'diff') { reply(safe ? { ok: true, diffs: diffs(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
         if (r.cmd === 'changes') { reply(safe ? { ok: true, changes: changes(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
         if (r.cmd === 'transcript') { reply(safe ? { ok: true, entries: readTranscript(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
         if (r.cmd === 'log') {

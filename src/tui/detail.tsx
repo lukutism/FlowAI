@@ -1,8 +1,8 @@
-import { EmbeddedTerminalRenderable, type KeyEvent } from '@opentui/core'
+import { EmbeddedTerminalRenderable, RGBA, SyntaxStyle, type KeyEvent } from '@opentui/core'
 import { extend } from '@opentui/react'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { RunEvent, RunState } from '../run.ts'
-import type { Change, RunFile, RunLog } from '../server.ts'
+import type { Change, FileDiff, RunFile, RunLog } from '../server.ts'
 import type { Entry } from '../transcript.ts'
 import { describeEvent, duration, hhmm, line as lineOf, tokens, track } from './model.ts'
 
@@ -16,9 +16,16 @@ export interface DetailApi {
   transcript?(run: string): Promise<Entry[]>
   log?(run: string, name: RunLog, lines: number): Promise<string[]>
   changes?(run: string): Promise<Change[]>
+  diff?(run: string): Promise<FileDiff[]>
 }
 
 export const C = { text: '#DDE2E8', secondary: '#A3ABB5', muted: '#6D7681', faint: '#434A54', accent: '#78A6EC', success: '#72C08A', warning: '#E2B35F', danger: '#EC7A70', selected: '#1B2533', panel: '#161A20' }
+/** how Markdown (plan, ticket, PR, review) is drawn: the screen's colours */
+const md = SyntaxStyle.fromStyles({
+  default: { fg: RGBA.fromHex('#A3ABB5') }, 'markup.heading': { fg: RGBA.fromHex('#DDE2E8'), bold: true }, 'markup.strong': { fg: RGBA.fromHex('#DDE2E8'), bold: true },
+  'markup.italic': { italic: true }, 'markup.raw': { fg: RGBA.fromHex('#E2B35F') }, 'markup.link': { fg: RGBA.fromHex('#78A6EC'), underline: true }, 'markup.list': { fg: RGBA.fromHex('#78A6EC') },
+})
+
 const fit = (s: string, n: number) => (n <= 0 ? '' : s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s.padEnd(n))
 
 /** a line as coloured pieces */
@@ -86,7 +93,8 @@ export function runLines(r: RunState, o: { plan: string; review: string; changes
   out.push(r.needs ? [[' Needs you: ', C.warning], [fit(r.needs.ask, w - 12), C.warning]] : [[` ${r.status === 'done' ? 'Done' : 'Nothing needs you right now'}`, C.muted]])
   blank()
   head('Plan')
-  const summary = o.plan.replace(/^#.*\n/, '').trim().split(/\n\s*\n/)[0]?.replace(/\s+/g, ' ') ?? ''
+  // the plan's first paragraph, its Markdown marks dropped (the Plan pane draws the whole of it)
+  const summary = o.plan.replace(/^#.*\n/, '').trim().split(/\n\s*\n/)[0]?.replace(/\*\*|__|`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ') ?? ''
   const plan = wrap(summary || (r.plan?.summary ?? '') || 'no plan yet', w - 1)
   for (const l of plan.slice(0, 4)) out.push([[` ${l}`, C.secondary]])
   if (plan.length > 4) out.push([[' … plan.md has the rest', C.faint]])
@@ -147,8 +155,7 @@ function shellFor(run: string, cwd: string, cols: number, rows: number, redraw: 
   return sh
 }
 
-export type Pane = 'agent' | 'metro' | 'devserver' | 'shell' | 'file'
-const PANES: { key: Exclude<Pane, 'file'>; label: string }[] = [{ key: 'agent', label: 'Agent' }, { key: 'metro', label: 'Metro' }, { key: 'devserver', label: 'Dev server' }, { key: 'shell', label: 'Shell' }]
+export type Pane = 'agent' | 'diff' | 'metro' | 'devserver' | 'shell' | 'file'
 
 /** the keys the detail handles itself; the rest (esc, a, S, p, ^K, q) go back to the screen */
 export type DetailKeys = (key: KeyEvent, typed: string) => boolean
@@ -173,6 +180,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const [entries, setEntries] = useState<Entry[]>([])
   const [logs, setLogs] = useState<string[]>([])
   const [text, setText] = useState('')
+  const [diffs, setDiffs] = useState<FileDiff[] | null>(null)
   const [data, setData] = useState<{ plan: string; review: string; changes: Change[]; events: RunEvent[]; worktree: string }>({ plan: '', review: '', changes: [], events: [], worktree: '' })
   const [scroll, setScroll] = useState(0)
   const [, redraw] = useState(0)
@@ -218,6 +226,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   }, [api, run.id, top])
 
   useEffect(() => { if (top === 'file') void api.file(run.id, file).then(setText) }, [api, run.id, top, file])
+  useEffect(() => { if (top === 'diff') void (api.diff?.(run.id) ?? Promise.resolve([])).then(setDiffs).catch(() => setDiffs([])) }, [api, run.id, top, run.updatedAt])
   useEffect(() => { setScroll(0) }, [top, file])
 
   // the shell: started when its pane is first shown, its output replayed into each new terminal
@@ -231,7 +240,11 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   }, [showsShell, shell, term])
   useEffect(() => { if (shell && !shell.ended) shell.proc.terminal?.resize(right - 2, shellRows) }, [shell, right, shellRows])
 
-  const order = PANES.map(p => p.key)
+  // the panes this run has: Metro only with a device, the dev server only when it has one (a web or backend run)
+  const panes: { key: Pane; label: string; file?: RunFile }[] = [{ key: 'agent', label: 'Agent' }, { key: 'diff', label: 'Diff' }, { key: 'file', label: 'Plan', file: 'plan.md' },
+    ...(run.device ? [{ key: 'metro' as const, label: 'Metro' }] : []), ...(run.devServer ? [{ key: 'devserver' as const, label: 'Dev server' }] : []), { key: 'shell', label: 'Shell' }]
+  const order = panes.map(p => p.key)
+  const openPane = (k: Pane, f?: RunFile) => { if (f) setFile(f); setPane(k); setFocus(k === 'agent' ? 'message' : 'none') }
   const keys: DetailKeys = (key, typed) => {
     if (focus === 'shell') {
       if (key.ctrl && key.name === ']') { setFocus('none'); return true }
@@ -246,8 +259,9 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       return true
     }
     if (typed === ']' || typed === '[') {
-      const i = order.indexOf(top === 'file' ? 'agent' : (top as Exclude<Pane, 'file'>))
-      setPane(order[(i + (typed === ']' ? 1 : order.length - 1)) % order.length]!)
+      const next = panes[(Math.max(0, order.indexOf(top)) + (typed === ']' ? 1 : order.length - 1)) % order.length]!
+      if (next.file) setFile(next.file)
+      setPane(next.key)
       return true
     }
     if (typed === 'v') { setSplit(x => !x); return true }
@@ -290,11 +304,29 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       )
     }
     if (p === 'file') {
-      const lines: Line[] = (file === 'review.json' ? reviewText(text) : text).split('\n').flatMap(l => wrap(l, right - 3).map(x => [[` ${x}`, C.secondary]] as Line))
+      const content = file === 'review.json' ? reviewText(text) : text
       return (
-        <box flexDirection="column" height={rows} onMouseScroll={e => { const d = e.scroll?.direction; setScroll(s => (d === 'down' ? Math.min(s + 3, Math.max(0, lines.length - rows)) : d === 'up' ? Math.max(0, s - 3) : s)) }}>
-          {lines.length ? lines.slice(Math.min(scroll, Math.max(0, lines.length - rows)), Math.min(scroll, Math.max(0, lines.length - rows)) + rows).map((l, i) => <Row key={i} l={l} w={right} />) : <text fg={C.muted}>{` ${file} is empty`}</text>}
-        </box>
+        <scrollbox height={rows} width={right} paddingLeft={1} paddingRight={1}>
+          {content.trim() ? <markdown content={content} syntaxStyle={md} /> : <text fg={C.muted}>{`${file} is empty`}</text>}
+        </scrollbox>
+      )
+    }
+    if (p === 'diff') {
+      const all = diffs ?? []
+      const add = all.reduce((n, d) => n + d.added, 0), del = all.reduce((n, d) => n + d.removed, 0)
+      const many = new Set(all.map(d => d.repo)).size > 1
+      return (
+        <scrollbox height={rows} width={right}>
+          <text><span fg={C.secondary}>{diffs === null ? ' reading the change…' : all.length ? ` ${all.length} file${all.length === 1 ? '' : 's'}  ` : ' No change yet.'}</span>{all.length ? <><span fg={C.success}>{`+${add} `}</span><span fg={C.danger}>{`−${del}`}</span><span fg={C.faint}>   from where the branch left its base</span></> : null}</text>
+          {all.map(d => (
+            <box key={`${d.repo}/${d.file}`} flexDirection="column">
+              <text> </text>
+              <text><span fg={d.status === 'A' ? C.success : d.status === 'D' ? C.danger : C.accent}>{` ${d.status} `}</span><strong>{many ? `${d.repo}/${d.file}` : d.file}</strong><span fg={C.muted}>{`  +${d.added} −${d.removed}`}</span></text>
+              {d.patch ? <diff diff={d.patch} view="unified" showLineNumbers height={Math.max(1, d.patch.split('\n').filter(l => /^[ +-]/.test(l) && !/^(\+\+\+|---) /.test(l)).length)} width={right - 1}
+                addedBg="#16261C" removedBg="#2B1A1A" addedSignColor={C.success} removedSignColor={C.danger} lineNumberFg={C.faint} /> : <text fg={C.muted}>   too large to show here: open it in the Shell (git diff)</text>}
+            </box>
+          ))}
+        </scrollbox>
       )
     }
     return null
@@ -308,11 +340,19 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     </box>
   )
 
-  const tab = (k: Exclude<Pane, 'file'>, label: string) => {
-    const on = top === k || (k === 'shell' && showsShell)
-    const dot = k === 'agent' ? (working ? C.success : '') : k === 'metro' ? (run.device ? C.success : '') : k === 'devserver' ? (run.devServer ? C.success : '') : k === 'shell' ? (shell && !shell.ended ? C.success : '') : ''
-    return <Click key={k} on={() => { setPane(k); if (k !== 'shell') setFocus('none') }}><box backgroundColor={on ? undefined : C.panel} paddingLeft={1} paddingRight={1}><text>{on ? <strong>{label}</strong> : <span fg={C.muted}>{label}</span>}{dot ? <span fg={dot}> ●</span> : ''}</text></box></Click>
+  const tab = (t: { key: Pane; label: string; file?: RunFile }) => {
+    const k = t.key
+    const on = (top === k && (!t.file || file === t.file)) || (k === 'shell' && showsShell)
+    const dot = k === 'agent' ? (working ? C.success : '') : k === 'metro' || k === 'devserver' ? C.success : k === 'shell' ? (shell && !shell.ended ? C.success : '') : ''
+    return <Click key={t.label} on={() => openPane(k, t.file)}><box backgroundColor={on ? undefined : C.panel} paddingLeft={1} paddingRight={1}><text>{on ? <strong>{t.label}</strong> : <span fg={C.muted}>{t.label}</span>}{dot ? <span fg={dot}> ●</span> : ''}</text></box></Click>
   }
+  // the message box: always right under the agent's session (above the shell when split)
+  const msgBox = (
+    <box flexDirection="column" onMouseDown={() => setFocus('message')}>
+      <text fg={C.faint}>{'─'.repeat(right)}</text>
+      <text>{focus === 'message' ? <><span fg={C.accent}>{' › '}</span><span fg={C.text}>{draft}▏</span><span fg={C.faint}>   ↵ send · esc leave</span></> : <><span fg={C.accent}>{' › '}</span><span fg={C.faint}>Message the agent… (m, or click)</span></>}</text>
+    </box>
+  )
 
   const runCol = runLines(run, { plan: data.plan, review: data.review, changes: data.changes, events: data.events, width: left })
   const fake = (typed: string, name = typed) => ({ name, ctrl: false, shift: false, meta: false, sequence: typed }) as unknown as KeyEvent
@@ -341,30 +381,26 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
           {runCol.slice(0, body - 1).map((l, i) => <Row key={i} l={l} w={left} />)}
           <box flexDirection="row">
             <text fg={C.muted}>{' Open '}</text>
-            {(['ticket.md', 'plan.md', 'pr.md', 'review.json'] as RunFile[]).map(f => <Click key={f} on={() => { setFile(f); setPane('file') }}><text fg={top === 'file' && file === f ? C.text : C.accent}>{`${f.replace('.json', '')}  `}</text></Click>)}
+            {(['ticket.md', 'plan.md', 'pr.md', 'review.json'] as RunFile[]).map(f => <Click key={f} on={() => openPane('file', f)}><text fg={top === 'file' && file === f ? C.text : C.accent}>{`${f.replace('.json', '')}  `}</text></Click>)}
           </box>
         </box>
         <box flexDirection="column" width={right + 1} border={['left']} borderColor={C.faint}>
           <box flexDirection="row" backgroundColor={C.panel}>
-            {PANES.map(p => tab(p.key, p.label))}
+            {panes.map(tab)}
             <Click on={() => setSplit(x => !x)}><text fg={C.faint}>{split ? '   ⊟ split on (v)' : '   ⊟ split (v)'}</text></Click>
-            {top === 'file' ? <text fg={C.text}>{`   ${file}`}</text> : null}
+            {top === 'file' && file !== 'plan.md' ? <text fg={C.text}>{`   ${file}`}</text> : null}
           </box>
           {split ? (
             <>
-              {paneBody(top, topRows)}
+              {paneBody(top, top === 'agent' ? topRows - 2 : topRows)}
+              {top === 'agent' ? msgBox : null}
               <text fg={C.faint}>{'─'.repeat(right)}</text>
               {shellPane(shellRows)}
             </>
           ) : pane === 'shell' ? shellPane(shellRows) : (
             <>
               {paneBody(top, top === 'agent' ? body - 3 : body - 1)}
-              {top === 'agent' ? (
-                <box flexDirection="column" onMouseDown={() => setFocus('message')}>
-                  <text fg={C.faint}>{'─'.repeat(right)}</text>
-                  <text>{focus === 'message' ? <><span fg={C.accent}>{' › '}</span><span fg={C.text}>{draft}▏</span><span fg={C.faint}>   ↵ send · esc leave</span></> : <><span fg={C.accent}>{' › '}</span><span fg={C.faint}>Message the agent… (m)</span></>}</text>
-                </box>
-              ) : null}
+              {top === 'agent' ? msgBox : null}
             </>
           )}
         </box>
@@ -381,8 +417,8 @@ function reviewText(json: string): string {
   let r: Review
   try { r = JSON.parse(json) } catch { return json }
   return [
-    `Review ${r.review}: ${r.findings.length ? `${r.findings.length} finding(s)` : 'nothing found'}${r.dropped ? ` · ${r.dropped} below 80% confidence left out` : ''}`, '',
-    ...r.findings.map((f, i) => `R${i + 1} [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''}  ${f.problem}`),
-    ...(r.below?.length ? ['', 'Below the line:', ...r.below.map(f => `${f.confidence}%  [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''}  ${f.problem}`)] : []),
+    `# Review ${r.review}`, '', r.findings.length ? `**${r.findings.length} finding(s)**${r.dropped ? ` · ${r.dropped} below 80% confidence left out` : ''}` : `**Nothing found**${r.dropped ? ` · ${r.dropped} below 80% confidence left out` : ''}`, '',
+    ...r.findings.map((f, i) => `- **R${i + 1} [${f.severity}]** \`${f.file}${f.line ? `:${f.line}` : ''}\` ${f.problem}`),
+    ...(r.below?.length ? ['', '## Below the line', '', ...r.below.map(f => `- ${f.confidence}% [${f.severity}] \`${f.file}${f.line ? `:${f.line}` : ''}\` ${f.problem}`)] : []),
   ].join('\n')
 }

@@ -134,6 +134,10 @@ describe('the service socket', () => {
     const c = await t.connect()
     expect(await c.changes('fso-1')).toEqual([{ repo: 'mobile', file: 'a.ts', added: 2, removed: 1, status: 'M' }, { repo: 'mobile', file: 'new.ts', added: 2, removed: 0, status: 'A' }])
     expect(await c.changes('fso-9')).toEqual([])
+    const d = await c.diff('fso-1')
+    expect(d.map(x => [x.file, x.status, x.added, x.removed])).toEqual([['a.ts', 'M', 2, 1], ['new.ts', 'A', 2, 0]])
+    expect(d[0]!.patch).toContain('-two\n+TWO\n+three')
+    expect(d[1]!.patch).toMatch(/new file mode[\s\S]*\+x\n\+y/)
     // once committed (as ship does), the change still counts: from where the branch left its base
     g('branch', 'base-line', 'HEAD'); g('add', '.'); g('commit', '-qm', 'the change')
     writeFileSync(join(t.data, 'runs', 'fso-1', 'run.json'), JSON.stringify({ repos: [{ key: 'mobile', worktree: wt, base: 'base-line' }] }))
