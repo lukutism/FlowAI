@@ -193,7 +193,7 @@ describe('Run detail', () => {
       expect(f).toMatch(/11:56 claude +I will start in the walk\./)
       expect(f).toMatch(/⋯ Bash +yarn tsc -p apps\/product/)
       expect(f).toMatch(/✕ Bash +git commit -m x +refused by flow/)
-      expect(f).toContain('── turn ended · 626k tokens · 4 turns ──')
+      expect(f).toContain('── turn ended · 26k new · 600k from cache · 4 calls ──')
       await act(async () => { t.f.push({ type: 'agent', run: 'fso-105', entry: { at: NOW, own: true, kind: 'text', text: 'And now the order list.' } } as never) })
       expect(await t.frame()).toMatch(/12:00 claude +And now the order list\./)
     } finally { t.s.renderer.destroy() }

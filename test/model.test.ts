@@ -217,3 +217,14 @@ describe('the palette\'s order', () => {
     expect(rank('zz', 'Port')).toBe(-1)
   })
 })
+
+describe('the customer patch from how tickets name the customer', () => {
+  test('thuega-qa, Thüga in the tags: the thuega patch; the work-order title: its cmms app', () => {
+    const pairs = ['iwb/cmms', 'iwb/product', 'thuega/cmms', 'nordex/cmms']
+    const apps = { cmms: 'cmms|maintenance|work ?order', product: 'product|picking|material' }
+    const t = { customer: 'thuega-qa', board: 'field-service-os', title: 'Mobile: Order history of a work order does not show recently completed orders', tags: ['3.18', 'Mobile', 'Thüga'] }
+    expect(suggestPatch(t, pairs, apps)).toBe('thuega/cmms')
+    expect(suggestPatch({ ...t, customer: '' }, pairs, apps)).toBe('thuega/cmms') // the tag alone
+    expect(suggestPatch({ ...t, customer: '', tags: [] }, pairs, apps)).toBeUndefined()
+  })
+})

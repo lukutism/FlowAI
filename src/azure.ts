@@ -33,7 +33,8 @@ export function azureTicket(az: Az, t: AzureRef, id: number): Ticket {
     '--org', t.org, '--api-version', '7.1-preview', '-o', 'json'])
   const comments = c.code === 0 ? ((JSON.parse(c.out).comments ?? []) as { createdDate: string; createdBy?: { displayName?: string }; text?: string }[]) : []
   const sections: string[] = []
-  const add = (label: string, html?: string) => { const s = htmlToText(html ?? ''); if (s) sections.push(`${label}:\n${s}`) }
+  // the field may start with its own heading already (Description:), so it isn't said twice
+  const add = (label: string, html?: string) => { const s = htmlToText(html ?? '').replace(new RegExp(`^${label}:\\s*`, 'i'), ''); if (s) sections.push(`${label}:\n${s}`) }
   add('Description', f['System.Description'])
   add('Repro steps', f['Microsoft.VSTS.TCM.ReproSteps'])
   add('Acceptance criteria', f['Microsoft.VSTS.Common.AcceptanceCriteria'])

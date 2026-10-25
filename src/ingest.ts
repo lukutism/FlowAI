@@ -30,8 +30,9 @@ export class Ingest {
         this.onWindows?.(this.windows)
         return
       case 'result': {
-        const t = e.tokens.input + e.tokens.output + e.tokens.cacheRead + e.tokens.cacheWrite
-        if (t > 0) this.store.append(run, 'agent', { type: 'tokens.used', tokens: t })
+        // the new work apart from cache reads: a long turn re-reads its whole context once per model call
+        const t = e.tokens.input + e.tokens.output + e.tokens.cacheWrite, cached = e.tokens.cacheRead
+        if (t > 0 || cached > 0) this.store.append(run, 'agent', { type: 'tokens.used', tokens: t, ...(cached ? { cached } : {}) })
         return
       }
     }

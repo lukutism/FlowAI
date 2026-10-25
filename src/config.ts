@@ -93,6 +93,8 @@ const project = z.object({
   sandbox: z.record(z.unknown()).optional(),
   /** an independent reviewer (a fresh, read-only claude session) before ship */
   review: z.object({ enabled: z.boolean().default(true) }).default({}),
+  /** what the agent should know about this project, from you (tools to check data with, where things are): a line each */
+  brief: z.array(z.string()).default([]),
   /** customer patch apps by pattern on a ticket's area and title (picking → product): the form picks the patch's app */
   patchApps: z.record(z.string()).default({}),
   /** a run started with a device gets its own, booted in the first repo's worktree */

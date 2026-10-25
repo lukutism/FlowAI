@@ -30,7 +30,8 @@ export type EventBody =
   | { type: 'run.done' }
   | { type: 'session.started'; session: string }
   | { type: 'session.compacted'; before: number; after: number }
-  | { type: 'tokens.used'; tokens: number }
+  /** tokens: the new work (input, output, cache writes); cached: what was read back from the prompt cache */
+  | { type: 'tokens.used'; tokens: number; cached?: number }
   /** the guard (PreToolUse hook) refused a tool call; kept for the ledger, the run goes on */
   | { type: 'tool.denied'; tool: string; detail: string }
   /** the run's own device is booted, its app installed, its Metro answering */
@@ -56,7 +57,8 @@ export interface RunState {
   plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' }
   /** verify: red runs in a row; verifyRuns: all runs; review: review runs that found something */
   loops: { verify: number; verifyRuns: number; review: number }
-  tokens: number; compactions: number; session?: string
+  /** the new work in tokens, and (apart) what was read back from the cache: far cheaper, but counted once per call */
+  tokens: number; cached?: number; compactions: number; session?: string
   pr?: { url: string; number: number }
   /** one draft PR per repo the run changed */
   prs?: { url: string; number: number; repo?: string }[]
@@ -143,7 +145,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'run.resumed': return go(s, e, { status: 'running', waitingFor: undefined, pausedUntil: undefined })
     case 'session.started': return go(s, e, { session: e.session })
     case 'session.compacted': return go(s, e, { compactions: s.compactions + 1 })
-    case 'tokens.used': return go(s, e, { tokens: s.tokens + e.tokens })
+    case 'tokens.used': return go(s, e, { tokens: s.tokens + e.tokens, ...(e.cached ? { cached: (s.cached ?? 0) + e.cached } : {}) })
     case 'tool.denied': return go(s, e, {})
     case 'device.ready': need(s, 'setup', e); return go(s, e, { device: { platform: e.platform, id: e.id, metroPort: e.metroPort } })
     case 'device.released': return go(s, e, { device: undefined })

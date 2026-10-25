@@ -201,7 +201,7 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'run.done': return { stage: '', text: 'done' }
     case 'session.started': return { stage: '', text: 'agent session started' }
     case 'session.compacted': return { stage: '', text: `context compacted (${tokens(e.before)} → ${tokens(e.after)})` }
-    case 'tokens.used': return { stage: '', text: `${tokens(e.tokens)} tokens` }
+    case 'tokens.used': return { stage: '', text: `${tokens(e.tokens)} new${e.cached ? ` · ${tokens(e.cached)} from cache` : ''}` }
     case 'tool.denied': return { stage: '', text: `refused ${e.tool}: ${e.detail}` }
   }
 }

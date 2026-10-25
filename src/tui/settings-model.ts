@@ -50,6 +50,7 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
       { kind: 'locked', label: 'Key', path: ['key'], hint: "it names the runs; it can't change" },
       { kind: 'text', label: 'Name', path: ['name'] },
       { kind: 'text', label: 'Worktrees', path: ['worktrees'], hint: "where runs' worktrees go" },
+      { kind: 'list', label: 'Brief', path: ['brief'], hint: 'what agents should know: tools to check data with, where things are (a line each)' },
     ]
     case 'Tickets & PRs': return [
       { kind: 'heading', label: 'Tickets', hint: tracker === 'jira' ? 'Jira' : 'Azure DevOps' },

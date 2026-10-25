@@ -38,9 +38,12 @@ export function suggestRepos(t: { platform?: string; tags: string[] }, patterns:
  * apps the one its area names, else the one whose pattern matches its area or title (picking → product), else the
  * only one; none when it can't tell.
  */
-export function suggestPatch(t: { customer: string; board: string; area?: string; title?: string }, choices: string[], apps: Record<string, string> = {}): string | undefined {
-  const who = t.customer.toLowerCase()
-  const mine = choices.filter(c => (who ? c.split('/')[0] === who : t.board.toLowerCase().includes(c.split('/')[0]!)))
+export function suggestPatch(t: { customer: string; board: string; area?: string; title?: string; tags?: string[] }, choices: string[], apps: Record<string, string> = {}): string | undefined {
+  // names as written in tickets: Thüga, thuega-qa, THUEGA — umlauts as their two letters, no case, no punctuation
+  const plain = (s: string) => s.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').normalize('NFKD').replace(/[^a-z0-9]/g, '')
+  const who = plain(t.customer), tags = (t.tags ?? []).map(plain), board = plain(t.board)
+  const named = (c: string) => { const n = plain(c.split('/')[0]!); return !!n && ((who && who.includes(n)) || tags.includes(n) || board.includes(n)) }
+  const mine = choices.filter(named)
   const area = (t.area ?? '').toLowerCase()
   const text = `${t.area ?? ''} ${t.title ?? ''}`
   return mine.find(c => area && area.includes(c.split('/')[1]!))

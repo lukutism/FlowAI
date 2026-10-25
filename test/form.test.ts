@@ -82,3 +82,14 @@ describe('a run without a ticket', () => {
     expect(commitMessage({ id: '', title: 'Show the order number', kind: 'feature' }, ['apps/product/a.ts'], 'mobile')).toBe('feat(product): Show the order number')
   })
 })
+
+describe('the project\'s brief', () => {
+  test('its lines reach the agent in the plan prompt', async () => {
+    const t = setup()
+    ;(t.pipe as unknown as { d: { project: { brief: string[] } } }).d.project.brief = ['the osapiens-qa MCP reads QA data: call customer_list first', 'mock data: the mobile-probe skill']
+    const prompts: string[] = []
+    ;(t.pipe as unknown as { d: { makeAgent: unknown } }).d.makeAgent = () => ({ async *turn(p: string) { prompts.push(p); throw new Error('stop') } })
+    await t.pipe.start(204598)
+    expect(prompts[0]).toContain('About this project (from the human who runs flow):\n- the osapiens-qa MCP reads QA data: call customer_list first\n- mock data: the mobile-probe skill')
+  })
+})

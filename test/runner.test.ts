@@ -29,6 +29,14 @@ describe('Runner.turn: one agent turn for a run, recorded', () => {
     expect(await runner.turn('r', 'plan the fix')).toEqual({ ok: true, text: '1' })
     expect(store.events('r').map(e => e.type)).toEqual(['run.created', 'setup.done', 'session.started', 'tokens.used'])
   })
+  test('tokens: the new work (input, output, cache writes) apart from what was read back from the cache', async () => {
+    const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', apiKeySource: 'none' })
+    const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 42, session_id: 's', usage: { input_tokens: 82, output_tokens: 12543, cache_read_input_tokens: 4514171, cache_creation_input_tokens: 134557 } })
+    const { runner, store } = setup([`${init}\n${result}`])
+    await runner.turn('r', 'plan')
+    expect(store.events('r').find(e => e.type === 'tokens.used')).toMatchObject({ tokens: 147182, cached: 4514171 })
+    expect(store.state('r')).toMatchObject({ tokens: 147182, cached: 4514171 })
+  })
   test('the plan windows are full: the run is paused until the reset, resumes, then the turn runs', async () => {
     const full = { fiveHour: { utilization: 0.97, resetsAt: Date.parse('2026-10-24T17:00:00Z') / 1000, status: 'allowed' } }
     const { runner, store } = setup([fixture('01-turn-tool')], full)

@@ -71,8 +71,8 @@ export function sessionLines(entries: Entry[], width: number): Line[] {
     else if (e.kind === 'denied') out.push([['        ✕ ', C.danger], [e.tool.padEnd(6), C.danger], [fit(toolSummary(e.input), body - 26), C.secondary], ['   refused by flow', C.danger]])
     else if (e.kind === 'compaction') out.push([[`        ── context compacted ${tokens(e.before)} → ${tokens(e.after)} ──`, C.faint]])
     else if (e.kind === 'result') {
-      const n = e.tokens.input + e.tokens.output + e.tokens.cacheRead + e.tokens.cacheWrite
-      out.push([[e.ok ? `        ── turn ended · ${tokens(n)} tokens · ${e.turns} turn${e.turns === 1 ? '' : 's'} ──` : `        ── turn failed: ${fit(e.text || e.reason, body - 20)} ──`, e.ok ? C.faint : C.danger]])
+      const n = e.tokens.input + e.tokens.output + e.tokens.cacheWrite
+      out.push([[e.ok ? `        ── turn ended · ${tokens(n)} new · ${tokens(e.tokens.cacheRead)} from cache · ${e.turns} call${e.turns === 1 ? '' : 's'} ──` : `        ── turn failed: ${fit(e.text || e.reason, body - 20)} ──`, e.ok ? C.faint : C.danger]])
     }
   }
   return out
@@ -368,7 +368,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       </text>
       <text>
         <span fg={C.accent}>{` ${track(run)}  `}</span><span fg={C.accent}>{`${run.stage} · ${run.status} ${duration(now - run.updatedAt)}`}</span>
-        <span fg={C.muted}>{`   ${tokens(run.tokens)} tokens · ${run.compactions} compaction${run.compactions === 1 ? '' : 's'}`}</span>
+        <span fg={C.muted}>{`   ${tokens(run.tokens)} tokens${run.cached ? ` (+${tokens(run.cached)} from cache)` : ''} · ${run.compactions} compaction${run.compactions === 1 ? '' : 's'}`}</span>
         {run.device ? <span fg={C.secondary}>{`   ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</span> : null}
         {run.patch ? <span fg={C.secondary}>{`   patch ${run.patch.customer}/${run.patch.app}`}</span> : null}
         {run.pr ? <span fg={C.success}>{`   draft PR #${run.pr.number}`}</span> : null}

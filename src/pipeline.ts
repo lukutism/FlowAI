@@ -119,7 +119,7 @@ export class Pipeline {
     const m = JSON.parse(readFileSync(join(this.runDir(run), 'run.json'), 'utf8')) as Meta & { repo?: string }
     if (!m.repos) m.repos = [{ key: m.repo!, worktree: m.worktree, base: m.base }]
     const s = this.d.store.state(run)
-    return { ...m, ...(s?.device ? { device: s.device } : {}), ...(s?.devServer ? { devServer: s.devServer } : {}) }
+    return { ...m, ...(this.d.project.brief.length ? { brief: this.d.project.brief } : {}), ...(s?.device ? { device: s.device } : {}), ...(s?.devServer ? { devServer: s.devServer } : {}) }
   }
 
   /** the agent's folder: the worktree with one repo, the run's root with several */

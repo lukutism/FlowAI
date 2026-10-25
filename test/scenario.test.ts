@@ -28,7 +28,8 @@ describe('a run from ticket to draft PR, with a fake agent replaying real sessio
     store.append(run, 'human', { type: 'pr.opened', url: 'https://example/pr/7', number: 7 })
 
     expect(store.state(run)).toMatchObject({ stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review draft PR #7' }, compactions: 1, session: expect.any(String) })
-    expect(store.state(run)!.tokens).toBeGreaterThan(100_000)
+    expect(store.state(run)!.tokens).toBeGreaterThan(50_000) // new work only; cache reads are counted apart
+    expect(store.state(run)!.cached).toBeGreaterThan(0)
     expect(store.events(run).map(e => `${e.actor}:${e.type}`)).toEqual([
       'human:run.created', 'engine:setup.done',
       'agent:session.started', 'agent:tokens.used',
