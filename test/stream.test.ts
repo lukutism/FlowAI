@@ -42,6 +42,18 @@ describe('parseStream: the CLI event stream as the engine needs it', () => {
     const line = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', apiKeySource: 'ANTHROPIC_API_KEY' })
     expect(parseStream(line)).toEqual([{ kind: 'session', session: 's', model: 'm', subscription: false }])
   })
+  test('what a tool returned, for the Agent pane: its output, and whether it failed', () => {
+    const es = parseStream(fixture('01-turn-tool'))
+    const tool = of(es, 'tool')[0]!
+    expect(of(es, 'toolResult')).toEqual([{ kind: 'toolResult', id: tool.id, text: '       1', error: false }])
+    expect(of(parseStream(fixture('04-stream')), 'toolResult').some(r => r.error && /hook error/.test(r.text))).toBe(true)
+  })
+  test('tool output given as blocks is joined; long output is cut; a subagent\'s own results are left out', () => {
+    const line = (o: object) => JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', ...o }] }, parent_tool_use_id: null })
+    expect(parseStream(line({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }))).toEqual([{ kind: 'toolResult', id: 't1', text: 'a\nb', error: false }])
+    expect((parseStream(line({ content: 'x'.repeat(20_000) }))[0] as { text: string }).text.length).toBeLessThan(5000)
+    expect(parseStream(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'x' }] }, parent_tool_use_id: 'task-1' }))).toEqual([])
+  })
   test('lines that are not JSON (CLI warnings) and unknown events are skipped, not fatal', () => {
     expect(parseStream('Warning: no stdin data received\n{"type":"something_new"}\n')).toEqual([])
   })

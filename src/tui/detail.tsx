@@ -21,63 +21,9 @@ export interface DetailApi {
   diff?(run: string): Promise<FileDiff[]>
 }
 
-export const C = { text: '#DDE2E8', secondary: '#A3ABB5', muted: '#6D7681', faint: '#434A54', accent: '#78A6EC', success: '#72C08A', warning: '#E2B35F', danger: '#EC7A70', selected: '#1B2533', panel: '#161A20' }
+import { C, sessionLines, workingLine, wrap, type Line, type Seg } from './session.ts'
+export { C, wrap, type Line, type Seg } from './session.ts'
 const fit = (s: string, n: number) => (n <= 0 ? '' : s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s.padEnd(n))
-
-/** a line as coloured pieces */
-export type Seg = [text: string, color: string]
-export type Line = Seg[]
-
-/** words wrapped to a width (long words are cut) */
-export function wrap(text: string, width: number): string[] {
-  const out: string[] = []
-  for (const para of text.split('\n')) {
-    let cur = ''
-    for (const w of para.split(/\s+/).filter(Boolean)) {
-      if (!cur) cur = w
-      else if (cur.length + 1 + w.length <= width) cur += ` ${w}`
-      else { out.push(cur); cur = w }
-      while (cur.length > width) { out.push(cur.slice(0, width)); cur = cur.slice(width) }
-    }
-    out.push(cur)
-  }
-  while (out.length && !out[out.length - 1]) out.pop()
-  return out
-}
-
-/** what a tool call was about, in one line */
-export function toolSummary(input: Record<string, unknown>): string {
-  const v = input.command ?? input.file_path ?? input.pattern ?? input.path ?? input.url ?? input.description ?? input.query
-  return typeof v === 'string' ? v.replace(/\s+/g, ' ') : JSON.stringify(input).slice(0, 80)
-}
-
-/** the agent session as lines for a pane of the given width: who spoke when, the tools it ran, turn ends */
-export function sessionLines(entries: Entry[], width: number): Line[] {
-  const out: Line[] = []
-  const body = Math.max(10, width - 14)
-  const said = (at: number, who: string, color: string, text: string, textColor: string) => {
-    wrap(text, body).forEach((l, i) => out.push(i ? [[' '.repeat(14), ''], [l, textColor]] : [[`${hhmm(at)} `, C.muted], [who.padEnd(8), color], [l, textColor]]))
-  }
-  for (const e of entries) {
-    const agent = e.own ? 'claude' : 'review'
-    if (e.kind === 'prompt') {
-      if (e.from === 'you') said(e.at, 'you', C.text, e.text, C.text)
-      else {
-        const lines = e.text.split('\n').filter(l => l.trim())
-        out.push([[`${hhmm(e.at)} `, C.muted], ['flow    ', C.warning], [fit(lines[0] ?? '', body - 12), C.secondary], [lines.length > 1 ? ` (+${lines.length - 1} lines)` : '', C.faint]])
-      }
-    } else if (e.kind === 'session') out.push([[`${agent} · session ${e.session.slice(0, 6)} · ${e.model}`, C.faint]])
-    else if (e.kind === 'text') said(e.at, agent, e.own ? C.accent : C.secondary, e.text, C.secondary)
-    else if (e.kind === 'tool') out.push([['        ⋯ ', C.muted], [e.name.padEnd(6), C.muted], [fit(toolSummary(e.input), body - 6), C.secondary]])
-    else if (e.kind === 'denied') out.push([['        ✕ ', C.danger], [e.tool.padEnd(6), C.danger], [fit(toolSummary(e.input), body - 26), C.secondary], ['   refused by flow', C.danger]])
-    else if (e.kind === 'compaction') out.push([[`        ── context compacted ${tokens(e.before)} → ${tokens(e.after)} ──`, C.faint]])
-    else if (e.kind === 'result') {
-      const n = e.tokens.input + e.tokens.output + e.tokens.cacheWrite
-      out.push([[e.ok ? `        ── turn ended · ${tokens(n)} new · ${tokens(e.tokens.cacheRead)} from cache · ${e.turns} call${e.turns === 1 ? '' : 's'} ──` : `        ── turn failed: ${fit(e.text || e.reason, body - 20)} ──`, e.ok ? C.faint : C.danger]])
-    }
-  }
-  return out
-}
 
 interface Review { review: number; findings: { severity: string; file: string; line?: number; problem: string }[]; dropped: number; below?: { severity: string; file: string; line?: number; problem: string; confidence: number }[] }
 
@@ -190,6 +136,8 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   // the pop-up's keys: a ref (it hands them over on each draw; a state would draw again, without end)
   const popupKeys = useRef<PopupKeys | null>(null)
   const [split, setSplit] = useState(false)
+  // o: every prompt and tool output shown whole (Claude Code's ctrl+o)
+  const [full, setFull] = useState(false)
   const [focus, setFocus] = useState<'none' | 'message' | 'shell'>('none')
   // the draft in a ref too: enter right after a burst of keys must send all of them
   const [draft, setDraftState] = useState('')
@@ -289,6 +237,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       return true
     }
     if (typed === 'v') { setSplit(x => !x); return true }
+    if (typed === 'o') { setFull(x => !x); return true }
     if (typed === 'd') { setPopup({ kind: 'diff' }); return true }
     if (typed === 'P') { setPopup({ kind: 'md', file: 'plan.md' }); return true }
     if (typed === 'i') { if (shells.get(run.id)?.ended) { shells.delete(run.id); redraw(x => x + 1) } if (!showsShell) setPane('shell'); setFocus('shell'); return true }
@@ -315,7 +264,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   }
   useEffect(() => { bindPaste?.(paste); return () => bindPaste?.(null) })
 
-  const session = sessionLines(entries, right - 2)
+  const session = sessionLines(entries, right - 2, full)
   const working = run.status === 'running' && entries.length > 0 && entries[entries.length - 1]!.kind !== 'result'
   const view = (lines: Line[], rows: number) => {
     const start = Math.max(0, lines.length - rows - scroll)
@@ -329,10 +278,11 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
 
   const paneBody = (p: Pane, rows: number) => {
     if (p === 'agent') {
-      const lines = working ? [...session, [[`${hhmm(now)} `, C.muted], ['claude  ', C.accent], ['▍ working…', C.accent]] as Line] : session
+      const since = [...entries].reverse().find(e => e.kind === 'prompt')?.at ?? now
+      const lines = working ? [...session, [], workingLine(entries, since, now)] : session
       return (
         <box flexDirection="column" height={rows} onMouseScroll={e => wheel(e, lines.length - rows)}>
-          {lines.length ? view(lines, rows).map((l, i) => <Row key={i} l={l} w={right} />) : <text fg={C.muted}> No agent session recorded for this run yet.</text>}
+          {lines.length ? view(lines, rows).map((l, i) => <Row key={i} l={[[' ', C.text], ...l]} w={right} />) : <text fg={C.muted}> No agent session recorded for this run yet.</text>}
         </box>
       )
     }
@@ -376,7 +326,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const fake = (typed: string, name = typed) => ({ name, ctrl: false, shift: false, meta: false, sequence: typed }) as unknown as KeyEvent
   const keyLine: [string, () => void][] = focus === 'shell' ? [['typing in Shell: keys go to the shell', () => {}], ['ctrl+] leave', () => setFocus('none')], ['^K commands', () => onKey('palette')]]
     : focus === 'message' ? [['typing a message to the agent', () => {}], ['↵ send', () => keys(fake('', 'return'), '')], ['esc leave', () => setFocus('none')]]
-    : [['esc back', onBack], ['d diff', () => setPopup({ kind: 'diff' })], ['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
+    : [['esc back', onBack], ['d diff', () => setPopup({ kind: 'diff' })], ['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ...(pane === 'agent' ? [[full ? 'o fold' : 'o show all', () => setFull(x => !x)] as [string, () => void]] : []), ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
       ['a approve', () => onKey('a')], ['S ship', () => onKey('S')], ['p port', () => onKey('p')], ['^K commands', () => onKey('palette')]]
   const rule = <text fg={C.faint}>{'─'.repeat(W)}</text>
   return (

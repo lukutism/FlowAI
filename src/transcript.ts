@@ -11,9 +11,15 @@ export type Entry = (Exclude<AgentEvent, { kind: 'usage' }> | Said) & { at: numb
 
 const file = (dataDir: string, run: string) => join(dataDir, 'runs', run, 'transcript.jsonl')
 
-export function appendTranscript(dataDir: string, run: string, e: Entry) {
+/** a tool's long inputs cut (a whole file for Write): the pane shows a line of them, and every screen gets them */
+const cut = (v: unknown): unknown => (typeof v === 'string' && v.length > 1000 ? `${v.slice(0, 1000)}… (${v.length} characters)` : v)
+
+/** returns the entry as kept */
+export function appendTranscript(dataDir: string, run: string, e: Entry): Entry {
   mkdirSync(join(dataDir, 'runs', run), { recursive: true })
-  appendFileSync(file(dataDir, run), JSON.stringify(e) + '\n')
+  const kept = e.kind === 'tool' ? { ...e, input: Object.fromEntries(Object.entries(e.input).map(([k, v]) => [k, cut(v)])) } : e
+  appendFileSync(file(dataDir, run), JSON.stringify(kept) + '\n')
+  return kept
 }
 
 /** the last n entries, oldest first */

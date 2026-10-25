@@ -10,6 +10,8 @@ export type AgentEvent =
   | { kind: 'session'; session: string; model: string; subscription: boolean }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; id: string; name: string; input: Record<string, unknown> }
+  /** what a tool call returned (cut to its first few thousand characters) */
+  | { kind: 'toolResult'; id: string; text: string; error: boolean }
   | { kind: 'denied'; tool: string; input: Record<string, unknown> }
   | { kind: 'compaction'; trigger: string; before: number; after: number }
   | { kind: 'usage'; windows: { fiveHour?: Window; week?: Window } }
@@ -34,6 +36,12 @@ export function parseLine(line: string): AgentEvent[] {
   if (e.type === 'rate_limit_event') {
     const w: Json = e.rate_limit_info?.unifiedWindows ?? {}
     return [{ kind: 'usage', windows: { fiveHour: window(w.five_hour), week: window(w.seven_day) } }]
+  }
+  if (e.type === 'user' && !e.parent_tool_use_id && Array.isArray(e.message?.content)) {
+    return (e.message.content as Json[]).filter(b => b.type === 'tool_result').map(b => {
+      const text = typeof b.content === 'string' ? b.content : Array.isArray(b.content) ? (b.content as Json[]).filter(c => c.type === 'text').map(c => String(c.text)).join('\n') : ''
+      return { kind: 'toolResult' as const, id: String(b.tool_use_id), text: text.length > 4000 ? `${text.slice(0, 4000)}\n…` : text, error: !!b.is_error }
+    })
   }
   if (e.type === 'assistant') {
     const out: AgentEvent[] = []

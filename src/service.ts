@@ -141,8 +141,9 @@ export class Service {
   /** each entry of an agent session as it happens (also kept in the run's transcript) */
   onAgent(fn: (run: string, e: Entry) => void) { this.agentListeners.add(fn); return () => { this.agentListeners.delete(fn) } }
   private record(run: string, e: Entry) {
-    try { appendTranscript(this.d.dataDir, run, e) } catch {}
-    for (const l of this.agentListeners) l(run, e)
+    let kept = e
+    try { kept = appendTranscript(this.d.dataDir, run, e) } catch {}
+    for (const l of this.agentListeners) l(run, kept)
   }
   resources(): Snapshot { return this.slots.snapshot() }
   projects(): ProjectSummary[] {

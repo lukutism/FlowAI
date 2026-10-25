@@ -186,24 +186,47 @@ describe('Run detail', () => {
       expect(await t.press('esc')).toContain('Needs attention')
     } finally { t.s.renderer.destroy() }
   })
-  test('the Agent pane: the session so far, then live; who said what, the tools run, refusals, turn ends', async () => {
+  test('the Agent pane reads like Claude Code: who said what, each tool as Name(args) with what it returned, refusals, turn ends', async () => {
     const tr: Entry[] = [
       { at: NOW - 5 * 60_000, own: true, kind: 'prompt', from: 'flow', text: 'You are working on ticket #105\nline 2\nline 3' },
-      { at: NOW - 4 * 60_000, own: true, kind: 'text', text: 'I will start in the walk.' },
-      { at: NOW - 4 * 60_000, own: true, kind: 'tool', id: 't', name: 'Bash', input: { command: 'yarn tsc -p apps/product' } },
+      { at: NOW - 4 * 60_000, own: true, kind: 'text', text: 'I will start in `walk.ts`:\n- guard the **walk**\n- then the list' },
+      { at: NOW - 4 * 60_000, own: true, kind: 'tool', id: 't1', name: 'Read', input: { file_path: '/w/.flow/worktrees/105/mobile/src/walk.ts' } },
+      { at: NOW - 4 * 60_000, own: true, kind: 'toolResult', id: 't1', text: '1\ta\n2\tb\n3\tc', error: false },
+      { at: NOW - 4 * 60_000, own: true, kind: 'tool', id: 't2', name: 'Bash', input: { command: 'yarn tsc -p apps/product' } },
+      { at: NOW - 4 * 60_000, own: true, kind: 'toolResult', id: 't2', text: 'one\ntwo\nthree\nfour\nfive', error: false },
       { at: NOW - 3 * 60_000, own: true, kind: 'denied', tool: 'Bash', input: { command: 'git commit -m x' } },
       { at: NOW - 2 * 60_000, own: true, kind: 'result', ok: true, text: '', turns: 4, reason: '', session: 's', tokens: { input: 1000, output: 2000, cacheRead: 600_000, cacheWrite: 23_000 } },
     ]
     const t = await screen(runs, undefined, { transcript: async () => tr })
     try {
       const f = await t.press('enter')
-      expect(f).toMatch(/11:55 flow +You are working on ticket #105 +\(\+2 lines\)/)
-      expect(f).toMatch(/11:56 claude +I will start in the walk\./)
-      expect(f).toMatch(/⋯ Bash +yarn tsc -p apps\/product/)
-      expect(f).toMatch(/✕ Bash +git commit -m x +refused by flow/)
+      expect(f).toMatch(/⏺ flow +11:55/)
+      for (const l of ['⎿ You are working on ticket #105', 'line 2', 'line 3']) expect(f).toContain(l)
+      expect(f).toContain('⏺ I will start in walk.ts:')
+      expect(f).toContain('• guard the walk')
+      expect(f).toContain('⏺ Read(src/walk.ts)')
+      expect(f).toContain('⎿ Read 3 lines')
+      expect(f).toContain('⏺ Bash(yarn tsc -p apps/product)')
+      for (const l of ['⎿ one', 'two', 'three', '… +2 lines · o shows all']) expect(f).toContain(l)
+      expect(f).not.toContain('four')
+      expect(f).toContain('✕ Bash(git commit -m x)')
+      expect(f).toContain('⎿ refused by flow')
       expect(f).toContain('── turn ended · 26k new · 600k from cache · 4 calls ──')
       await act(async () => { t.f.push({ type: 'agent', run: 'fso-105', entry: { at: NOW, own: true, kind: 'text', text: 'And now the order list.' } } as never) })
-      expect(await t.frame()).toMatch(/12:00 claude +And now the order list\./)
+      expect(await t.frame()).toContain('⏺ And now the order list.')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('the whole of what flow sent: a long prompt shows its first lines, o shows all of it (and o again folds it)', async () => {
+    const text = Array.from({ length: 9 }, (_, i) => `prompt line ${i + 1}`).join('\n')
+    const t = await screen(runs, undefined, { transcript: async () => [{ at: NOW, own: true, kind: 'prompt', from: 'flow', text }] })
+    try {
+      const f = await t.press('enter')
+      expect(f).toContain('prompt line 3')
+      expect(f).not.toContain('prompt line 4')
+      expect(f).toContain('… 6 more lines · o shows all')
+      const g = await t.press('o')
+      expect(g).toContain('prompt line 9')
+      expect(await t.press('o')).not.toContain('prompt line 9')
     } finally { t.s.renderer.destroy() }
   })
   test('m types a message to the agent below its session; enter sends it', async () => {
