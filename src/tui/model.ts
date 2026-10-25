@@ -201,6 +201,7 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'run.paused': return { stage: '', text: `paused (${e.window}) until ${hhmm(e.until)}` }
     case 'run.resumed': return { stage: '', text: 'resumed' }
     case 'run.done': return { stage: '', text: 'done' }
+    case 'run.removed': return { stage: '', text: 'removed: worktrees and branch gone, folder archived' }
     case 'session.started': return { stage: '', text: 'agent session started' }
     case 'session.compacted': return { stage: '', text: `context compacted (${tokens(e.before)} → ${tokens(e.after)})` }
     case 'tokens.used': return { stage: '', text: `${tokens(e.tokens)} new${e.cached ? ` · ${tokens(e.cached)} from cache` : ''}` }

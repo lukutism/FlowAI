@@ -34,12 +34,15 @@ export class EventStore {
     return e
   }
 
-  state(run: string): RunState | undefined { return this.states.get(run) }
+  state(run: string): RunState | undefined { const s = this.states.get(run); return s?.removed ? undefined : s }
 
   /** every run's current state, the most recently changed first */
-  runs(): RunState[] { return [...this.states.values()].sort((a, b) => b.updatedAt - a.updatedAt) }
+  runs(): RunState[] { return [...this.states.values()].filter(s => !s.removed).sort((a, b) => b.updatedAt - a.updatedAt) }
 
-  events(run: string): RunEvent[] { return this.rows('SELECT * FROM events WHERE run = ? ORDER BY seq', run) }
+  /** the run's events since it was created (a run removed and started again: the new one's only) */
+  events(run: string): RunEvent[] {
+    return this.rows("SELECT * FROM events WHERE run = ? AND seq >= (SELECT COALESCE(MAX(seq), 0) FROM events WHERE run = ? AND type = 'run.created') ORDER BY seq", run, run)
+  }
 
   since(seq: number): RunEvent[] { return this.rows('SELECT * FROM events WHERE seq > ? ORDER BY seq', seq) }
 

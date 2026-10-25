@@ -169,3 +169,11 @@ describe('Service: idle agents are closed', () => {
     expect(closed).toBe(1)
   })
 })
+
+describe('Service: commands it does not know', () => {
+  test('are refused (one used to fall through to ship)', () => {
+    const t = setup(() => [])
+    t.store.append('ex-5', 'human', { type: 'run.created', ticket: '#5', title: 'x', project: 'ex', base: 'origin/develop' })
+    expect(t.svc.dispatch({ cmd: 'nope', run: 'ex-5' } as never)).toMatchObject({ ok: false, error: expect.stringMatching(/unknown command nope/) })
+  })
+})

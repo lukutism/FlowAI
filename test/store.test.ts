@@ -83,3 +83,23 @@ describe('EventStore: a log with an impossible history still opens', () => {
     expect(skipped[0]).toMatch(/plan\.decided.*r.*no plan is waiting/)
   })
 })
+
+describe('EventStore: a removed run', () => {
+  test('is gone from the runs; its id can start again, with only the new run\'s events', () => {
+    const s = store()
+    s.append('r', 'human', created); s.append('r', 'engine', { type: 'setup.failed', reason: 'install failed' })
+    s.append('r', 'human', { type: 'run.removed' })
+    expect(s.state('r')).toBeUndefined()
+    expect(s.runs()).toEqual([])
+    s.append('r', 'human', created)
+    expect(s.state('r')).toMatchObject({ stage: 'setup', status: 'running' })
+    expect(s.events('r').map(e => e.type)).toEqual(['run.created'])
+  })
+  test('the same after a restart', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'flow-')), 'flow.db')
+    const s = store(file)
+    s.append('r', 'human', created); s.append('r', 'human', { type: 'run.removed' })
+    s.close()
+    expect(store(file).state('r')).toBeUndefined()
+  })
+})

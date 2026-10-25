@@ -103,7 +103,7 @@ export class FlowClient {
   private take(m: Message) {
     if (m.type === 'snapshot') { this.runs.clear(); for (const r of m.runs) this.runs.set(r.id, r); this.windows = m.windows; this.resources = m.resources; this.recent = m.recent ?? []; this.projects = m.projects ?? [] }
     else if (m.type === 'resources') this.resources = m.resources
-    else if (m.type === 'event') { this.runs.set(m.state.id, m.state); this.recent = [...this.recent, m.event].slice(-RECENT) }
+    else if (m.type === 'event') { if (m.state) this.runs.set(m.state.id, m.state); else this.runs.delete(m.event.run); this.recent = [...this.recent, m.event].slice(-RECENT) }
     else if (m.type === 'windows') this.windows = m.windows
     else if (m.type === 'projects') this.projects = m.projects
     else if (m.type === 'reply') { this.pending.get(m.id)?.(m.reply); this.pending.delete(m.id) }

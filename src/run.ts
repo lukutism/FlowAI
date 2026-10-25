@@ -34,6 +34,8 @@ export type EventBody =
   | { type: 'run.paused'; window: string; until: number }
   | { type: 'run.resumed' }
   | { type: 'run.done' }
+  /** the run's worktrees and branch removed, its folder archived: gone from the lists; its id can start again */
+  | { type: 'run.removed' }
   | { type: 'session.started'; session: string }
   | { type: 'session.compacted'; before: number; after: number }
   /** tokens: the new work (input, output, cache writes); cached: what was read back from the prompt cache */
@@ -74,6 +76,7 @@ export interface RunState {
   devServer?: { repo: string; port: number; url: string }
   /** the content the last verify saw */
   verifiedTree?: string
+  removed?: boolean
   createdAt: number; updatedAt: number
 }
 
@@ -98,11 +101,12 @@ const go = (s: RunState, e: RunEvent, patch: Partial<RunState>): RunState => {
 
 export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAULT_RULES): RunState {
   if (e.type === 'run.created') {
-    if (s) throw new TransitionError(`run ${e.run} exists already`)
+    if (s && !s.removed) throw new TransitionError(`run ${e.run} exists already`)
     return { id: e.run, ticket: e.ticket, title: e.title, project: e.project, base: e.base, stage: 'setup', status: 'running',
       loops: { verify: 0, verifyRuns: 0, review: 0 }, tokens: 0, compactions: 0, createdAt: e.at, updatedAt: e.at }
   }
   if (!s) throw new TransitionError(`${e.type} for run ${e.run}, which was never created`)
+  if (s.removed) throw new TransitionError(`${e.type} for run ${e.run}, which was removed`)
   const running = { status: 'running' as const, needs: undefined, waitingFor: undefined, pausedUntil: undefined }
   switch (e.type) {
     case 'setup.done': need(s, 'setup', e); return go(s, e, { stage: 'plan', ...running })
@@ -148,6 +152,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
       return go(s, e, { pr: s.pr ?? { url: e.url, number: e.number }, prs, status: 'needs-you', needs: { kind: 'pr', ask: prAsk(prs) } })
     }
     case 'run.done': return go(s, e, { stage: 'done', status: 'done', needs: undefined, waitingFor: undefined, pausedUntil: undefined })
+    case 'run.removed': return go(s, e, { removed: true, needs: undefined, waitingFor: undefined, pausedUntil: undefined })
     case 'agent.asked': return go(s, e, { status: 'needs-you', needs: { kind: 'question', ask: e.question } })
     case 'human.message':
       // a message sends the run on from wherever it stopped (a question, a block, a gate, a cap); flow puts the gate

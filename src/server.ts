@@ -75,7 +75,8 @@ export type Message =
   /** not sent: the client's own word that the service went away */
   | { type: 'closed' }
   | { type: 'resources'; resources: Snapshot }
-  | { type: 'event'; event: RunEvent; state: RunState }
+  /** state: null once the run is removed */
+  | { type: 'event'; event: RunEvent; state: RunState | null }
   | { type: 'windows'; windows: Windows }
   | { type: 'notice'; notice: Notice }
   | { type: 'agent'; run: string; entry: Entry }
@@ -136,7 +137,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
   })
   const publish = (m: Message) => server.publish('all', JSON.stringify(m))
   const offs = [
-    o.store.subscribe(e => publish({ type: 'event', event: e, state: o.store.state(e.run)! })),
+    o.store.subscribe(e => publish({ type: 'event', event: e, state: o.store.state(e.run) ?? null })),
     o.service.onNotice(n => publish({ type: 'notice', notice: n })),
     o.service.onWindows(w => publish({ type: 'windows', windows: w })),
     o.service.onResources(r => publish({ type: 'resources', resources: r })),

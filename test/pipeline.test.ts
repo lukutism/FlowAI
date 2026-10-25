@@ -404,3 +404,44 @@ describe('pipeline: ship can be done again', () => {
     expect(t.store.state(run)).toMatchObject({ needs: { kind: 'pr', ask: 'review draft PR #4711' } })
   })
 })
+
+describe('pipeline: removing a run', () => {
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  test('shipped: its worktree and local branch go, the run folder is archived, the run is gone', async () => {
+    const t = setup(ready)
+    const run = await t.pipe.start(186278)
+    await t.pipe.ship(run)
+    const r = await t.pipe.remove(run)
+    expect(r.removed).toEqual([t.wt])
+    expect(existsSync(t.wt)).toBe(false)
+    expect(git(t.main, 'branch', '--list', 'fix/186278')).toBe('')
+    expect(git(t.origin, 'branch', '--list', 'fix/186278')).toContain('fix/186278') // the PR's branch stays on origin
+    expect(existsSync(t.runDir)).toBe(false)
+    expect(existsSync(join(t.root, 'data', 'runs', '.removed'))).toBe(true)
+    expect(t.store.state(run)).toBeUndefined()
+  })
+  test('work not shipped (uncommitted changes) is refused, naming the files; force removes it anyway', async () => {
+    const t = setup(ready)
+    const run = await t.pipe.start(186278)
+    await expect(t.pipe.remove(run)).rejects.toThrow(/not shipped.*src\/b\.ts.*force/s)
+    expect(existsSync(t.wt)).toBe(true)
+    await t.pipe.remove(run, { force: true })
+    expect(existsSync(t.wt)).toBe(false)
+    expect(git(t.main, 'branch', '--list', 'fix/186278')).toBe('')
+  })
+  test('a failed setup is removed and the ticket can start again (it used to be used up for good)', async () => {
+    const t = setup(d => ready(d))
+    await expect(t.pipe.start(186278, { base: 'origin/nope' })).resolves.toBe('example-186278')
+    expect(t.store.state('example-186278')).toMatchObject({ status: 'failed' })
+    await t.pipe.remove('example-186278')
+    expect(await t.pipe.start(186278)).toBe('example-186278')
+    expect(t.store.state('example-186278')).toMatchObject({ stage: 'ship' })
+  })
+  test('done: a shipped run is marked done and leaves the attention list; removing can follow', async () => {
+    const t = setup(ready)
+    const run = await t.pipe.start(186278)
+    await t.pipe.ship(run)
+    t.pipe.done(run)
+    expect(t.store.state(run)).toMatchObject({ stage: 'done', status: 'done' })
+  })
+})

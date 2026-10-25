@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
 import { forgeFor, type Forge, type Gh } from './forge.ts'
@@ -518,6 +518,51 @@ export class Pipeline {
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent
+  }
+
+  /** shipped and merged, or given up: the run is done (it leaves the attention list) */
+  done(run: string) { this.must(run); this.d.store.append(run, 'human', { type: 'run.done' }) }
+
+  /**
+   * The run gone: its device and dev server stopped, its worktrees and local branch removed (a PR's branch stays
+   * on origin), its folder archived under runs/.removed. Work that was never shipped is refused unless forced.
+   */
+  async remove(run: string, o: { force?: boolean } = {}): Promise<{ removed: string[] }> {
+    this.must(run)
+    const dir = this.runDir(run)
+    const m = existsSync(join(dir, 'run.json')) ? this.meta(run) : undefined
+    if (m && !o.force) {
+      const lost: string[] = []
+      for (const r of m.repos) {
+        if (!existsSync(r.worktree)) continue
+        const files = changedFiles(r.worktree)
+        if (files.length) lost.push(`${r.key}: ${files.join(', ')}`)
+        else if ((await pending(r.worktree, r.base)) && !(await pushed(r.worktree, m.branch))) lost.push(`${r.key}: commits not on origin`)
+      }
+      if (lost.length) throw new Error(`${run} has work not shipped (${lost.join('; ')}); remove it with force to drop it`)
+    }
+    await this.releaseDevice(run)
+    await this.closeAgent(run)
+    this.agents.delete(run)
+    const removed: string[] = []
+    for (const r of m?.repos ?? []) {
+      const repo = this.repoConfig(r.key).path
+      if (existsSync(r.worktree)) {
+        const res = Bun.spawnSync(['git', 'worktree', 'remove', '--force', '--force', r.worktree], { cwd: repo, env: this.d.gitEnv })
+        if (res.exitCode !== 0) rmSync(r.worktree, { recursive: true, force: true })
+        removed.push(r.worktree)
+      }
+      Bun.spawnSync(['git', 'worktree', 'prune'], { cwd: repo, env: this.d.gitEnv })
+      Bun.spawnSync(['git', 'branch', '-D', m!.branch], { cwd: repo, env: this.d.gitEnv })
+      try { rmdirSync(dirname(r.worktree)) } catch {} // the run's own folder, once empty
+    }
+    if (existsSync(dir)) {
+      const archive = join(this.d.dataDir, 'runs', '.removed')
+      mkdirSync(archive, { recursive: true })
+      renameSync(dir, join(archive, `${run}-${this.now()}`))
+    }
+    this.d.store.append(run, 'human', { type: 'run.removed' })
+    return { removed }
   }
 
   /** the run's agent process closed (it holds about 2 GB); its next turn starts one again on the same session */

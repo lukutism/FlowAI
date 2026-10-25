@@ -18,6 +18,10 @@ export type Command =
   | { cmd: 'port'; run: string; to?: string }
   /** stop the run's device and free its slot (ship does it too) */
   | { cmd: 'release'; run: string }
+  /** finished (merged, or given up): off the attention list */
+  | { cmd: 'done'; run: string }
+  /** device, worktrees and local branch removed, the folder archived; work never shipped needs force */
+  | { cmd: 'remove'; run: string; force?: boolean }
   /** a project's settings as edited: checked, then written to its file (the old one kept as .bak) and used at once */
   | { cmd: 'saveProject'; project: string; json: Record<string, unknown> }
 
@@ -198,7 +202,12 @@ export class Service {
         this.act(run, async () => { await p.port(c.run, to) })
         return { ok: true, run }
       }
-      this.act(c.run, () => (c.cmd === 'approve' ? p.approve(c.run, c.answers ?? {}) : c.cmd === 'message' ? p.message(c.run, c.text) : c.cmd === 'release' ? p.releaseDevice(c.run) : p.ship(c.run).then(() => {})))
+      if (c.cmd === 'done') { p.done(c.run); return { ok: true, run: c.run } }
+      const run = c.run
+      const step = c.cmd === 'approve' ? () => p.approve(run, c.answers ?? {}) : c.cmd === 'message' ? () => p.message(run, c.text) : c.cmd === 'release' ? () => p.releaseDevice(run)
+        : c.cmd === 'remove' ? () => p.remove(run, { force: c.force }).then(() => {}) : c.cmd === 'ship' ? () => p.ship(run).then(() => {}) : null
+      if (!step) throw new Error(`unknown command ${(c as { cmd: string }).cmd}`)
+      this.act(run, step)
       return { ok: true, run: c.run }
     } catch (e) { return { ok: false, error: (e as Error).message } }
   }

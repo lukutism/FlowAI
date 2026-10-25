@@ -42,6 +42,7 @@ type Mode =
   // back: asked from the run's detail, which stays on screen and comes back afterwards
   | { kind: 'approve'; run: string; editing: boolean; text: string; back?: boolean }
   | { kind: 'ship'; run: string; back?: boolean }
+  | { kind: 'remove'; run: string; force: boolean; back?: boolean }
   | { kind: 'message'; run: string; text: string; back?: boolean }
   | { kind: 'new' }
   | { kind: 'settings'; project: string }
@@ -131,6 +132,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     port: (r: RunState) => (r.pr ? void send({ cmd: 'port', run: r.id }, `porting ${r.ticket} to develop`) : setNotice(`${r.ticket} has no draft PR to port yet`)),
     release: (r: RunState) => (r.device ? void send({ cmd: 'release', run: r.id }, `stopping ${r.ticket}'s device`) : setNotice(`${r.ticket} has no device`)),
     open: (r: RunState) => setMode({ kind: 'detail', run: r.id }),
+    remove: (r: RunState, force = false) => setMode({ kind: 'remove', run: r.id, force, back: !!detailId }),
+    done: (r: RunState) => void send({ cmd: 'done', run: r.id }, `${r.ticket} marked done`),
   }
   const goTab = (x: Tab) => { setTab(x); setMode({ kind: 'list' }) }
 
@@ -145,6 +148,9 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       a.push(...(detailCmds.current?.() ?? []))
       if (r.pr) a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
       if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })
+      if (r.status !== 'done') a.push({ label: 'Mark done', hint: r.pr ? 'merged, or given up: off the attention list' : 'given up: off the attention list', run: () => ask.done(r) })
+      a.push({ label: 'Remove the run', hint: 'device, worktrees, local branch; folder archived', run: () => ask.remove(r) })
+      a.push({ label: 'Remove the run, dropping work not shipped', hint: 'uncommitted changes and unpushed commits are lost', run: () => ask.remove(r, true) })
       a.push({ label: 'Back to the runs', hint: 'esc', run: () => setMode({ kind: 'list' }) })
       a.push({ label: 'Quit', hint: 'q', run: () => { stopShells(); onQuit() } })
       return a
@@ -153,6 +159,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     a.push({ label: 'Choose a project', hint: 'p', run: () => setMode({ kind: 'projects', index: 0 }) })
     // runs of one ticket (a release fix and its port) are told apart by their line
     for (const r of all.filter(x => x.status !== 'done' || x.updatedAt > t - 86_400_000)) a.push({ label: `Open ${r.ticket} ${line(r.base)} ${r.title}`, hint: `${r.project} · ${r.stage} · ${r.status}`, run: () => ask.open(r) })
+    if (state && state.status !== 'done') a.push({ label: `Mark ${state.ticket} done`, hint: 'merged, or given up: off the attention list', run: () => ask.done(state) })
+    if (state) a.push({ label: `Remove ${state.ticket} ${line(state.base)}`, hint: 'device, worktrees, local branch; folder archived', run: () => ask.remove(state) })
     a.push({ label: 'Show runs that need you', hint: 'status:needs-you', run: () => { setFilter('status:needs-you'); goTab('Runs') } })
     a.push({ label: 'Show failed and blocked runs', hint: 'status:failed', run: () => { setFilter('status:failed'); goTab('Runs') } })
     for (const p of api.projects ?? []) a.push({ label: `Show ${p.name} runs`, hint: `project:${p.key}`, run: () => { setFilter(`project:${p.key}`); goTab('Runs') } })
@@ -211,6 +219,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (mode.kind === 'approve') {
       if (typed === 'y') return void send({ cmd: 'approve', run: mode.run }, `plan approved with the defaults: ${mode.run}`)
       if (typed === 'e') return setMode({ ...mode, editing: true, text: '' })
+      if (typed === 'n' || name === 'escape') return setMode(after(mode))
+      return
+    }
+    if (mode.kind === 'remove') {
+      if (typed === 'y') { void send({ cmd: 'remove', run: mode.run, force: mode.force }, `removing ${mode.run}`); return setMode({ kind: 'list' }) }
       if (typed === 'n' || name === 'escape') return setMode(after(mode))
       return
     }
@@ -297,7 +310,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   if (L.tooSmall) return <box paddingLeft={1}><text fg={C.warning}>{L.text}</text></box>
 
   const bars = api.resources ? resourceBars(api.resources) : []
-  const inline = mode.kind === 'approve' || mode.kind === 'ship' ? mode.run : undefined
+  const inline = mode.kind === 'approve' || mode.kind === 'ship' || mode.kind === 'remove' ? mode.run : undefined
   const message = notice ?? (L.message ? lastMessage(recent, t) : '')
   if (mode.kind === 'settings') return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
@@ -430,6 +443,7 @@ function Confirm({ mode, run, resources, onKey }: { mode: Mode; run?: RunState; 
     const real = run.needs?.kind === 'patch'
     return <box flexDirection="row"><text>{'          '}<strong>{real ? `Write the patch back for ${run.ticket}?` : `Check the write-back for ${run.ticket}?`}</strong><span fg={C.secondary}>{real ? ' the patch and the fix, as the dry run showed   ' : ' a dry run, nothing written   '}</span></text><Hint k="y" label={real ? 'write back' : 'check'} tone={C.success} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   }
+  if (mode.kind === 'remove') return <box flexDirection="row"><text>{'          '}<strong>{`Remove ${run.ticket}?`}</strong><span fg={mode.force ? C.danger : C.secondary}>{mode.force ? ' its worktrees go with any work not shipped; device, local branch; folder archived   ' : ' device, worktrees, local branch; the folder archived (refused if work is not shipped)   '}</span></text><Hint k="y" label="remove" tone={C.danger} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   if (mode.kind === 'ship') return <box flexDirection="row"><text>{'          '}<strong>{`Ship ${run.ticket}?`}</strong><span fg={C.secondary}> commit, push, open a draft PR   </span></text><Hint k="y" label="ship" tone={C.success} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   return null
 }

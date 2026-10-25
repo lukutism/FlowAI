@@ -424,7 +424,7 @@ describe('the command palette', () => {
     try {
       const f = await t.press('enter', 'ctrl+k')
       expect(f).toContain('#104 commands')
-      for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Type in the shell', 'Port to develop', 'Back to the runs']) expect(f).toContain(c)
+      for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Type in the shell', 'Port to develop', 'Mark done', 'Remove the run']) expect(f).toContain(c)
       expect(f).not.toContain('Group by stage')
       expect(await t.press('esc')).toContain('← esc  #104') // still the detail
       await t.press('ctrl+k', ...'plan'.split(''), 'enter'); await act(async () => { await Bun.sleep(80) })
@@ -974,6 +974,27 @@ describe('what you typed is kept when the service refuses it', () => {
       await t.press('enter', 'm', ...'try again'.split(''), 'enter'); await act(async () => { await Bun.sleep(20) })
       expect(t.f.sent).toHaveLength(1)
       expect(await t.press('m')).toContain('try again▏')
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe('removing a run and marking it done', () => {
+  test('from the detail\'s commands: remove asks first, then sends it; the screen goes back to the runs', async () => {
+    const t = await screen()
+    try {
+      await t.press('ctrl+k', '1', '0', '4', 'enter')
+      await t.press('ctrl+k', ...'remove the run'.split(''), 'enter')
+      expect(await t.frame()).toContain('Remove #104?')
+      await t.press('y')
+      expect(t.f.sent).toEqual([{ cmd: 'remove', run: 'fso-104', force: false }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('mark done from the detail\'s commands', async () => {
+    const t = await screen()
+    try {
+      await t.press('ctrl+k', '1', '0', '4', 'enter')
+      await t.press('ctrl+k', ...'mark done'.split(''), 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'done', run: 'fso-104' }])
     } finally { t.s.renderer.destroy() }
   })
 })

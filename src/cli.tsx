@@ -11,6 +11,8 @@
  *   flow ship <run>                                                 commit, push, draft PR (after verify); stops the run's device;
  *                                                                   a patch run: the write-back's dry run, then (again) the write-back
  *   flow release <run>                                              stop the run's device now and free its slot
+ *   flow done <run>                                                 the run is finished (merged, or given up): off the attention list
+ *   flow rm <run> [--force]                                         remove it: device, worktrees, local branch; its folder archived
  *   flow status [<run>]                                             runs and what they need; your plan windows
  *   flow log <run>                                                  the run's events
  *   flow try [--cwd <dir>] [--model <name>] "<message>" …          real turns in a folder, to check the connection
@@ -122,7 +124,7 @@ async function viaService(c: FlowClient, cmd: Command): Promise<void> {
       if (m.type === 'event' && (m.event.run === run || (!run && m.event.type === 'run.created'))) {
         run ||= m.event.run
         showEvent(m.event)
-        if (['needs-you', 'blocked', 'failed', 'done', 'paused'].includes(m.state.status) && m.event.type !== 'human.message') done()
+        if ((!m.state || ['needs-you', 'blocked', 'failed', 'done', 'paused'].includes(m.state.status)) && m.event.type !== 'human.message') done()
       }
       if (m.type === 'notice' && m.notice.run === run) { console.log(`flow: ${m.notice.text}`); done() }
     })
@@ -168,7 +170,7 @@ async function main(argv: string[]) {
   const [cmd, ...args] = argv
   const f = flags(args, ['base', 'model', 'cwd', 'kind', 'to', 'repos', 'device', 'patch'])
   const repos = f.repos ? f.repos.split(',').map(x => x.trim()).filter(Boolean) : undefined
-  const service = ['start', 'approve', 'message', 'ship', 'port', 'release'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
+  const service = ['start', 'approve', 'message', 'ship', 'port', 'release', 'done', 'rm'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
   switch (cmd) {
     case undefined: case 'ui': return uiCmd()
     case 'serve': return serveCmd()
@@ -179,7 +181,7 @@ async function main(argv: string[]) {
       if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
       if (f.device && f.device !== 'android' && f.device !== 'ios') throw new Error('--device is android or ios')
       const device = f.device as 'android' | 'ios' | undefined
-      if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch, devServer: args.includes('--dev-server') }).finally(() => service.close())
+      if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch, devServer: args.includes('--dev-server'), ...(f.model ? { model: f.model } : {}) }).finally(() => service.close())
       const s = store()
       const p = pipeline(s, project, f.model)
       const run = p.runId(tk)
@@ -216,6 +218,19 @@ async function main(argv: string[]) {
       if (!run) throw new Error('flow release <run>')
       if (service) return viaService(service, { cmd: 'release', run }).finally(() => service.close())
       return withRun(run, f.model, p => p.releaseDevice(run))
+    }
+    case 'done': {
+      const [run] = args
+      if (!run) throw new Error('flow done <run>')
+      if (service) return viaService(service, { cmd: 'done', run }).finally(() => service.close())
+      return withRun(run, f.model, async p => p.done(run))
+    }
+    case 'rm': {
+      const [run] = args
+      if (!run) throw new Error('flow rm <run> [--force]')
+      const force = args.includes('--force')
+      if (service) return viaService(service, { cmd: 'remove', run, force }).finally(() => service.close())
+      return withRun(run, f.model, async p => { for (const w of (await p.remove(run, { force })).removed) console.log(`removed ${w}`) })
     }
     case 'port': {
       const [run] = args
