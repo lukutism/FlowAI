@@ -243,7 +243,9 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     if (!showsShell || !shell || !term) return
     shell.term = term
     for (const chunk of shell.out) term.write(chunk)
-    term.onData = d => { if (!shell.ended) shell.proc.terminal?.write(d) }
+    // one way in for keys: flow writes each key itself; from the terminal only its own replies (a focused terminal
+    // also turns keys into input, and passing that on as well typed every key twice)
+    term.onData = (d, source) => { if (!shell.ended && source !== 'input') shell.proc.terminal?.write(d) }
     return () => { if (shell.term === term) shell.term = undefined }
   }, [showsShell, shell, term])
   useEffect(() => { if (shell && !shell.ended) shell.proc.terminal?.resize(right - 2, shellRows) }, [shell, right, shellRows])

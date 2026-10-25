@@ -57,3 +57,28 @@ describe('what the new-run form asks', () => {
     expect(t.made[0]).toMatchObject({ model: 'opus' })
   })
 })
+
+import { commitMessage } from '../src/plan.ts'
+import { slug } from '../src/pipeline.ts'
+describe('a run without a ticket', () => {
+  test('a task described instead: its run and branch named from its first line, the agent told it is not a ticket', async () => {
+    const t = setup()
+    const run = await t.pipe.start('', { task: 'Show the order number on the picking list\nThe technician needs it to call the office.', kind: 'feature' })
+    expect(run).toBe('ex-show-the-order-number-on-the-picking')
+    const s = t.store.state(run)!
+    expect(s).toMatchObject({ ticket: 'task', title: 'Show the order number on the picking list' })
+    const meta = JSON.parse(require('node:fs').readFileSync(join(t.pipe.runDir(run), 'run.json'), 'utf8'))
+    expect(meta).toMatchObject({ branch: 'feat/show-the-order-number-on-the-picking', key: '', url: '', task: true })
+    expect(require('node:fs').readFileSync(join(t.pipe.runDir(run), 'ticket.md'), 'utf8')).toContain('The technician needs it to call the office.')
+  })
+  test('a fix gets fix/; the name is cut at a word and kept short; the same task twice is refused', async () => {
+    const t = setup()
+    const run = await t.pipe.start('', { task: 'Picking: remaining quantity ignores what was already withdrawn from the reservation', kind: 'bug' })
+    expect(run).toBe('ex-picking-remaining-quantity-ignores-what')
+    await expect(t.pipe.start('', { task: 'Picking: remaining quantity ignores what was already withdrawn from the reservation' })).rejects.toThrow(/exists already/)
+    expect(slug('  Ärger mit   "Quotes" & co!! ')).toBe('arger-mit-quotes-co')
+  })
+  test('its commits name no ticket', () => {
+    expect(commitMessage({ id: '', title: 'Show the order number', kind: 'feature' }, ['apps/product/a.ts'], 'mobile')).toBe('feat(product): Show the order number')
+  })
+})

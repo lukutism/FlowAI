@@ -28,7 +28,7 @@ export function commitMessage(ticket: { id: number | string; title: string; kind
   const areas = new Set(files.map(f => /^(?:apps|packages)\/([^/]+)\//.exec(f)?.[1]).filter(Boolean))
   const head = `${ticket.kind === 'bug' ? 'fix' : 'feat'}(${areas.size === 1 ? [...areas][0] : repoKey}): `
   // a colon would end commitlint's header parse early; a trailing full stop is refused
-  let subject = `#${ticket.id} ${ticket.title}`.trim().replace(/\s*:\s+/g, ' - ').replace(/[.\s]+$/, '')
+  let subject = `${ticket.id === '' ? '' : `#${ticket.id} `}${ticket.title}`.trim().replace(/\s*:\s+/g, ' - ').replace(/[.\s]+$/, '')
   if (head.length + subject.length > HEADER_MAX) subject = subject.slice(0, HEADER_MAX - head.length - 1).replace(/\s+\S*$/, '').replace(/[.,;:\s]+$/, '') + '…'
   return head + subject
 }

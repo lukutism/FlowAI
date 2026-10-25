@@ -4,6 +4,7 @@ import type { Snapshot } from '../resources.ts'
 import type { Command, ProjectSummary, Query } from '../service.ts'
 import { C, wrap } from './detail.tsx'
 import { match } from './model.ts'
+import { slug } from '../slug.ts'
 
 /** what the form needs from the service connection */
 export interface FormApi {
@@ -17,7 +18,7 @@ export interface Lookup {
   area?: string; platform?: string
 }
 
-type Field = 'project' | 'ticket' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model'
+type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model'
 const MODELS = ['default', 'opus', 'sonnet']
 
 /** the base a ticket's release tag points at (3.18 → the newest patch/3.18.x), else none */
@@ -72,11 +73,13 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, onStart,
   const [project, setProject] = useState(initial && projects.some(p => p.key === initial) ? initial : projects[0]?.key ?? '')
   const p = projects.find(x => x.key === project)
   const [ticket, setTicket] = useState('')
+  /** no ticket: what to do, in your words (its first line names the run and the branch) */
+  const [task, setTask] = useState('')
   const [look, setLook] = useState<{ state: 'idle' | 'loading' | 'ok' | 'error'; data?: Lookup; error?: string }>({ state: 'idle' })
   const [bases, setBases] = useState<Record<string, string[]>>({})
   const [refs, setRefs] = useState<string[]>([])
   const [base, setBase] = useState('')
-  const [kind, setKind] = useState<'bug' | 'feature'>('bug')
+  const [kind, setKind] = useState<'bug' | 'feature'>('feature')
   const [repos, setRepos] = useState<string[]>(p?.defaults ?? p?.repos.slice(0, 1) ?? [])
   const [repoAt, setRepoAt] = useState(0)
   const [device, setDevice] = useState<'none' | 'android' | 'ios'>('none')
@@ -148,14 +151,21 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, onStart,
   const shown = picking ? pickItems(picking.field === 'base' ? baseItems : patchItems, picking.query) : []
 
   const devRepos = (p?.devServers ?? []).filter(r => repos.includes(r))
-  const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
+  const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', ...(ticket.trim() ? [] : ['task' as const]), 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
     ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
   const move = (d: number) => setField(f => fields[(fields.indexOf(f) + d + fields.length) % fields.length]!)
   const cycle = <T,>(list: T[], cur: T, d: number): T => list[(list.indexOf(cur) + d + list.length) % list.length] ?? cur
 
   const start = () => {
     if (!p) return setProblem('no project: add one in ~/.config/flow/projects')
-    if (!ticket.trim()) { setField('ticket'); return setProblem('type the ticket first') }
+    if (!ticket.trim()) {
+      // no ticket: a task described instead
+      if (!task.trim()) { setField('task'); return setProblem('type the ticket, or leave it empty and describe the task') }
+      if (!slug(task.split('\n')[0]!)) { setField('task'); return setProblem('describe the task in a few words: they name the run and the branch') }
+      if (!repos.length) { setField('repos'); return setProblem('choose at least one repo') }
+      return onStart({ cmd: 'start', project, ticket: '', task: task.trim(), ...(base ? { base } : {}), kind, repos,
+        ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}) })
+    }
     if (look.state === 'loading') return setProblem('still looking the ticket up')
     if (look.state === 'error') return setProblem(look.error ?? 'the ticket could not be read')
     if (look.data?.exists) return setProblem(`${look.data.run} exists already: open it from the runs`)
@@ -196,6 +206,11 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, onStart,
     if (field === 'ticket') {
       if (n === 'backspace') setTicket(x => x.slice(0, -1))
       else if (typed && typed !== ' ') setTicket(x => x + typed)
+      return true
+    }
+    if (field === 'task') {
+      if (n === 'backspace') setTask(x => x.slice(0, -1))
+      else if (typed) setTask(x => x + typed)
       return true
     }
     // base and patch: any key opens the list (a letter starts the search)
@@ -247,8 +262,9 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, onStart,
   const used = api.resources ? { agents: api.resources.holders.agents.length, builds: api.resources.holders.builds.length, devices: api.resources.holders.devices.length } : undefined
   const limits = api.resources?.limits
   const buildsFull = used && limits ? used.builds >= limits.builds : false
+  const branch = !ticket.trim() && task.trim() ? `${kind === 'bug' ? 'fix' : 'feat'}/${slug(task.split('\n')[0]!) || '…'}` : ''
   const will = [
-    `create a worktree${repos.length > 1 ? ' each' : ''} from ${base || 'the default base'} in ${repos.join(', ') || '…'}`,
+    `create ${branch || `a worktree${repos.length > 1 ? ' each' : ''}`} from ${base || 'the default base'} in ${repos.join(', ') || '…'}`,
     device !== 'none' ? `boot ${device === 'android' ? 'an android emulator' : 'an iOS simulator'} with its Metro` : '',
     dev ? `start the ${devRepos[0]} dev server` : '',
     patch ? `apply the ${patch} patch` : '',
@@ -261,8 +277,9 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, onStart,
       <text><strong>{'  New run'}</strong>{fixed && p ? <span fg={C.accent}>{` · ${p.name}`}</span> : null}<span fg={C.faint}>{'   a ticket to a draft PR'}</span></text>
       {blank}
       {fixed ? null : row('project', 'Project', <>{radio(projects.map(x => ({ v: x.key, label: x.key })), project, setProject)}</>, p ? `${p.name} · ${p.tracker === 'jira' ? 'Jira' : 'Azure DevOps'} · ${p.repos.length} repos` : 'no projects configured')}
-      {row('ticket', 'Ticket', <text fg={C.text}><strong>{ticket}</strong>{field === 'ticket' ? <span fg={C.accent}>▏</span> : ''}{ticket ? '' : <span fg={C.faint}>{p?.tracker === 'jira' ? 'a key, e.g. SGL-692' : 'a work item number'}</span>}</text>,
+      {row('ticket', 'Ticket', <text fg={C.text}><strong>{ticket}</strong>{field === 'ticket' ? <span fg={C.accent}>▏</span> : ''}{ticket ? '' : <span fg={C.faint}>{p?.tracker === 'jira' ? 'a key or its link · empty: describe a task' : 'a number or its link · empty: describe a task'}</span>}</text>,
         look.state === 'loading' ? 'looking it up…' : look.state === 'ok' && t ? `✓ ${t.type || t.kind}${t.board ? ` · ${t.board}` : ''}` : '')}
+      {!ticket.trim() ? row('task', 'Task', <text fg={C.text}>{task.length > W - 18 ? `…${task.slice(-(W - 19))}` : task}{field === 'task' ? <span fg={C.accent}>▏</span> : ''}{task ? '' : <span fg={C.faint}>what to do: the plan works from it, its first words name the branch</span>}</text>) : null}
       {look.state === 'ok' && t ? <text>{'             '}<span fg={C.text}>{fit(t.title, W - 16)}</span></text> : null}
       {look.state === 'ok' && t ? <text fg={t.exists ? C.warning : C.muted}>{`             ${t.exists ? `${t.run} exists already` : [t.customer ? `customer ${t.customer}` : '', t.area ? `area ${t.area}` : '', t.platform ? t.platform : '', `${t.comments} comment${t.comments === 1 ? '' : 's'}`, t.tags.length ? `tags ${t.tags.join(', ')}` : ''].filter(Boolean).join(' · ')}`}</text> : null}
       {look.state === 'error' ? <text fg={C.danger}>{`             ✕ ${fit(look.error ?? '', W - 18)}`}</text> : null}

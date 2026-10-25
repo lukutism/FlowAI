@@ -10,6 +10,7 @@ import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { startDevServer, stopDevServer, type DevServerState } from './devserver.ts'
 import { createWorktree, shipChange } from './git.ts'
 import { fill, sh, tail } from './sh.ts'
+import { slug } from './slug.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
 import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
@@ -25,7 +26,11 @@ import { changedFiles, verify } from './verify.ts'
 interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
-interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string; model?: string }
+interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string; model?: string
+  /** a run without a ticket: a task described instead */
+  task?: boolean }
+
+export { slug } from './slug.ts'
 
 /** a project's git in a worktree (its env), for flow's own local steps */
 const gitIn = (cwd: string, env?: Record<string, string | undefined>) => (...a: string[]) => {
@@ -123,6 +128,13 @@ export class Pipeline {
   }
 
   /** patch: "<customer>/<app>", the customer patch the change goes on (in the run's repo that has patch commands) */
+  /** the run a task without a ticket gets: named from its first line */
+  taskRunId(task: string): string {
+    const s = slug(task.trim().split('\n')[0] ?? '')
+    if (!s) throw new Error('describe the task in a few words: its first line names the run and the branch')
+    return `${this.d.project.key}-${s}`
+  }
+
   /** the new-run form's look at a ticket before a run exists */
   async lookup(ticket: number | string) {
     const run = this.runId(ticket)
@@ -165,11 +177,13 @@ export class Pipeline {
     return { ok: res.code === 0, text: tail(res.out || res.err, 1) }
   }
 
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string } = {}): Promise<string> {
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string } = {}): Promise<string> {
     const p = this.d.project
-    const run = this.runId(ticket)
+    const run = o.task?.trim() && !String(ticket).trim() ? this.taskRunId(o.task) : this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
-    const id = this.tracker.parseKey(String(ticket))!.id
+    // a task described instead of a ticket: no tracker, its first line the title, its words the ticket's text
+    const task = o.task?.trim() && !String(ticket).trim() ? o.task.trim() : undefined
+    const id = task ? slug(task.split('\n')[0]!) : this.tracker.parseKey(String(ticket))!.id
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already: flow status ${run}`)
     const keys = o.repos?.length ? o.repos : p.repos.some(r => r.default) ? p.repos.filter(r => r.default).map(r => r.key) : [p.repos[0]!.key]
     const unknown = keys.filter(k => !p.repos.some(r => r.key === k))
@@ -184,16 +198,16 @@ export class Pipeline {
       if (!repo) throw new Error(`no repo of this run has patch commands (patches in the repo's config): ${keys.join(', ')}`)
       patch = { customer, app, repo }
     }
-    const t = await this.tracker.read(id)
+    const t = task ? { id, key: '', title: task.split('\n')[0]!.trim().slice(0, 120), kind: 'feature' as const, url: '', text: task } : await this.tracker.read(id)
     const kind = o.kind ?? t.kind
     const root = join(p.worktrees, String(id))
     const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
-    const branch = p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}) }
+    const branch = task ? `${kind === 'bug' ? 'fix' : 'feat'}/${id}` : p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(task ? { task: true } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
-    writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
-    this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key, title: t.title, project: p.key, base: m.base })
+    writeFileSync(join(this.runDir(run), 'ticket.md'), task ? `# ${t.title}\n\n${t.text}\n` : `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
+    this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key || 'task', title: t.title, project: p.key, base: m.base })
     if (!(await this.setup(run, m))) return run
     await this.planStep(run, t.text)
     return run
@@ -370,9 +384,10 @@ export class Pipeline {
     if (!changed.length) throw new Error(`${run}: nothing to ship, no repo has changes`)
     const pr = existsSync(this.prFile(run)) ? readFileSync(this.prFile(run), 'utf8') : ''
     const summary = prSummary(pr, m.title)
-    const body = n.prBody === 'ticket-link' ? m.url : pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`
-    const title = n.prTitle === 'key' ? m.key : `${m.key} ${summary}`
-    const message = (files: string[], repo: string) => (n.commit === 'key-summary' ? `${m.key} ${summary}`.slice(0, 100) : commitMessage({ id: m.id, title: m.title, kind: m.kind }, files, repo))
+    // a task has no ticket to link to or name: its PR is the description, its title and commits the summary alone
+    const body = n.prBody === 'ticket-link' && m.url ? m.url : pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`.trim()
+    const title = n.prTitle === 'key' && m.key ? m.key : `${m.key} ${summary}`.trim()
+    const message = (files: string[], repo: string) => (n.commit === 'key-summary' ? `${m.key} ${summary}`.trim().slice(0, 100) : commitMessage({ id: m.task ? '' : m.id, title: m.title, kind: m.kind }, files, repo))
     const created: { number: number; url: string }[] = []
     for (const { r, files } of changed) {
       await shipChange({ worktree: r.worktree, branch: m.branch, message: message(files, r.key), env: this.d.gitEnv })

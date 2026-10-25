@@ -308,11 +308,15 @@ describe('Run detail', () => {
     try {
       await t.press('enter', 'i')
       await act(async () => { await Bun.sleep(300) })
+      // a click on the shell first, as a person does (it once made every key arrive twice)
+      const sh = at(await t.frame(), ' Shell ·')
+      await act(async () => { await t.s.mockMouse.click(sh.x + 30, sh.y + 2) })
       for (const k of 'echo hi-from-$((40+2))') await act(async () => { t.s.mockInput.pressKey(k) })
       await act(async () => { t.s.mockInput.pressEnter() })
       await act(async () => { await Bun.sleep(400) })
       let f = await t.frame()
       expect(f).toContain('hi-from-42')
+      expect(f).not.toContain('eecchhoo')
       expect(f).toContain('typing in Shell')
       await act(async () => { t.s.mockInput.pressKey(']', { ctrl: true }) })
       f = await t.frame()
@@ -750,6 +754,19 @@ describe('the new-run form', () => {
       expect(f).not.toMatch(/Project +\(/)
     } finally { t.s.renderer.destroy() }
   })
+  test('no ticket: leave it empty and describe the task; the branch is named from it', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query() as FlowApi['query'] })
+    try {
+      await t.press('n', 'enter')
+      expect(await t.frame()).toContain('type the ticket, or leave it empty and describe the task')
+      await typeIn(t, 'Show the order number on the list') // the refusal put the cursor on Task
+      const f = await t.frame()
+      expect(f).toMatch(/Task +Show the order number on the list▏/)
+      expect(f).toContain('create feat/show-the-order-number-on-the-list from origin/develop in mobile')
+      await keys(t, 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: '', task: 'Show the order number on the list', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
+    } finally { t.s.renderer.destroy() }
+  })
   test('esc closes it; the Start button can be clicked', async () => {
     const t = await screen(runs, undefined, { projects: [spk], query: query({ lookup: { ...found, run: 'spk-SGL-692', key: 'SGL-692', tags: [], customer: '', board: 'SGL' } }) as FlowApi['query'] })
     try {
@@ -760,5 +777,19 @@ describe('the new-run form', () => {
       await act(async () => { await t.s.mockMouse.click(p.x + 2, p.y) })
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'spk', ticket: 'SGL-692', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
     } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe('the overlays sit in the middle of the screen', () => {
+  test('the new-run form is centred, at any width', async () => {
+    for (const width of [130, 200]) {
+      const t = await screen(runs, { width, height: 40 }, { projects: [{ key: 'fso', name: 'FSO', tracker: 'azure', forge: 'azure', repos: ['mobile'], devices: [], patches: [], deadlineMinutes: 30 }] })
+      try {
+        const lines = (await t.press('n')).split('\n')
+        const top = lines.find(l => l.includes('╭'))!
+        const left = top.indexOf('╭'), right = width - 1 - top.lastIndexOf('╮')
+        expect(Math.abs(left - right)).toBeLessThanOrEqual(2)
+      } finally { t.s.renderer.destroy() }
+    }
   })
 })
