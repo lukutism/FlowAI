@@ -1,5 +1,7 @@
 import { useKeyboard, useTerminalDimensions } from '@opentui/react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import type { KeyEvent } from '@opentui/core'
+import { RunDetail, stopShells, type DetailApi, type DetailKeys } from './detail.tsx'
 import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
 import type { Command, ProjectSummary, Reply } from '../service.ts'
@@ -11,7 +13,7 @@ import {
 } from './model.ts'
 
 /** What the screen needs from the service connection (FlowClient implements it). */
-export interface FlowApi {
+export interface FlowApi extends DetailApi {
   runs: Map<string, RunState>
   windows: Windows
   resources?: Snapshot
@@ -19,10 +21,8 @@ export interface FlowApi {
   recent?: RunEvent[]
   projects?: ProjectSummary[]
   connected?: boolean
-  listen(fn: (m: { type: string; notice?: { run: string; text: string } }) => void): () => void
+  listen(fn: (m: { type: string; notice?: { run: string; text: string }; run?: string; entry?: import('../transcript.ts').Entry }) => void): () => void
   send(c: Command): Promise<Reply>
-  events(run: string): Promise<RunEvent[]>
-  file(run: string, name: RunFile): Promise<string>
 }
 
 // colour only for state (the design's tokens); the terminal's own background shows through
@@ -46,7 +46,6 @@ type Mode =
   | { kind: 'palette'; text: string; index: number }
   | { kind: 'projects'; index: number }
 
-interface Detail { events: RunEvent[]; plan: string; pr: string; review: string }
 
 /** an entry of the command palette: what it says, and what choosing it does */
 interface Action { label: string; hint?: string; run: () => void }
@@ -58,7 +57,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const [selected, setSelected] = useState(0)
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
   const [notice, setNotice] = useState<string | null>(null)
-  const [detail, setDetail] = useState<Detail | null>(null)
+  const detailKeys = useRef<DetailKeys | null>(null)
   const [tab, setTab] = useState<Tab>('Runs')
   const [sort, setSort] = useState<Sort>('newest')
   const [grouped, setGrouped] = useState(false)
@@ -101,14 +100,6 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   }
   const recent = api.recent ?? []
 
-  const detailRun = mode.kind === 'detail' ? mode.run : null
-  useEffect(() => {
-    if (!detailRun) { setDetail(null); return }
-    let live = true
-    void Promise.all([api.events(detailRun), api.file(detailRun, 'plan.md'), api.file(detailRun, 'pr.md'), api.file(detailRun, 'review.json')])
-      .then(([events, plan, pr, review]) => { if (live) setDetail({ events, plan, pr, review }) })
-    return () => { live = false }
-  }, [detailRun, api, api.runs.get(detailRun ?? '')?.updatedAt])
 
   const send = async (c: Command, done: string) => {
     const r = await api.send(c)
@@ -152,9 +143,10 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const found = mode.kind === 'palette' ? actions().filter(x => match(mode.text, x.label)) : []
 
   /** a key, from the keyboard or from a click on its hint: name for special keys (return, escape, …), typed for characters */
-  const handle = (name: string, typed: string, ctrl = false) => {
+  const handle = (name: string, typed: string, ctrl = false, raw?: KeyEvent) => {
     const key = { ctrl }
-    // typing goes through the latest state: keys can arrive faster than the screen redraws
+    // in a run's detail its panes take the keys first (a shell or the message box being typed in takes them all)
+    if (mode.kind === 'detail' && raw && detailKeys.current?.(raw, typed)) return    // typing goes through the latest state: keys can arrive faster than the screen redraws
     const edit = (f: (text: string) => string) => setMode(prev => ('text' in prev ? ({ ...prev, text: f(prev.text), ...(prev.kind === 'palette' ? { index: 0 } : {}) } as Mode) : prev))
     const input = (m: Extract<Mode, { text: string }>, enter: (text: string) => void) => {
       if (name === 'escape') return setMode({ kind: 'list' })
@@ -214,7 +206,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (name === 'escape' && mode.kind === 'detail') return setMode({ kind: 'list' })
     if (name === 'escape' && focus === 'attention') return setFocus('runs')
     if (name === 'escape' && filter) { setFilter(''); return }
-    if (typed === 'q') return onQuit()
+    if (typed === 'q') { stopShells(); return onQuit() }
     if (typed >= '1' && typed <= String(TABS.length)) return goTab(TABS[Number(typed) - 1]!)
     if (typed === 'p' && mode.kind !== 'detail') return setMode({ kind: 'projects', index: Math.max(0, choices.findIndex(c => c.key === (/project:(\S+)/.exec(filter)?.[1] ?? ''))) })
     if (typed === 'n') return setMode({ kind: 'new', text: '' })
@@ -238,7 +230,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'm') return ask.message(state)
     if (typed === 'p' && mode.kind === 'detail') return ask.port(state)
   }
-  useKeyboard(key => handle(key.name, key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : '', key.ctrl))
+  useKeyboard(key => handle(key.name, key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : '', key.ctrl, key))
 
   // the mouse: a click selects (a second click on the selected run opens it), the wheel moves the selection
   const clickItem = (i: number) => {
@@ -261,6 +253,15 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const bars = api.resources ? resourceBars(api.resources) : []
   const inline = mode.kind === 'approve' || mode.kind === 'ship' ? mode.run : undefined
   const message = notice ?? (L.message ? lastMessage(recent, t) : '')
+  const detailRun = mode.kind === 'detail' ? api.runs.get(mode.run) : undefined
+  if (detailRun) return (
+    <box flexDirection="column" paddingLeft={1} paddingRight={1}>
+      <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
+      <RunDetail api={api} run={detailRun} now={t} width={width} height={height} message={message} bind={k => { detailKeys.current = k }}
+        onMessage={text => void send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} />
+      {mode.kind === 'palette' ? <Palette text={mode.text} found={found} index={mode.index} onPick={a => { setMode({ kind: 'list' }); a.run() }} /> : null}
+    </box>
+  )
   return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
@@ -272,8 +273,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         <span fg={C.muted}>5h </span><span fg={C.text}>{h.fiveHour}</span><span fg={C.muted}>{h.fiveHourReset && L.tabNames ? ` (resets ${h.fiveHourReset})` : ''}   week </span><span fg={C.text}>{h.week}</span>
       </text>
       <text> </text>
-      {mode.kind === 'detail' && api.runs.get(mode.run) ? <DetailView run={api.runs.get(mode.run)!} detail={detail} now={t} />
-        : tab === 'Runs' ? (
+      {tab === 'Runs' ? (
           <>
             <Attention items={att} shown={L.attentionShown} two={L.twoLineAttention} inline={inline} mode={mode} runs={api.runs} resources={api.resources} onItem={clickAttention} onKey={k => handle('', k)}
               focused={attFocused?.run} hover={hover} onHover={setHover} />
@@ -544,59 +544,6 @@ function ProjectsView({ projects, runs }: { projects: ProjectSummary[]; runs: Ru
         </box>
       )) : <text fg={C.muted}>The service has not reported its projects.</text>}
     </box>
-  )
-}
-
-const eventLine = (e: RunEvent) => {
-  const d = e.type === 'verify.result' ? (e.ok ? 'no new findings' : `${e.newFindings.length} new`) : e.type === 'plan.submitted' ? `${e.questions.length} question(s)`
-    : e.type === 'plan.decided' ? `by ${e.by}` : e.type === 'tokens.used' ? tokens(e.tokens) : e.type === 'run.blocked' || e.type === 'setup.failed' ? e.reason
-    : e.type === 'tool.denied' ? `${e.tool}: ${e.detail}` : e.type === 'pr.opened' ? e.url : e.type === 'human.message' ? e.text : e.type === 'run.paused' ? `until ${hhmm(e.until)}` : e.type === 'device.ready' ? `${e.platform} ${e.id} :${e.metroPort}` : ''
-  return `${hhmm(e.at)}  ${e.actor.padEnd(6)} ${e.type}${d ? `  ${d}` : ''}`
-}
-
-function DetailView({ run, detail, now }: { run: RunState; detail: Detail | null; now: number }) {
-  const summary = detail?.plan.replace(/^#.*\n/, '').trim().split(/\n\s*\n/)[0]?.replace(/\s+/g, ' ') ?? ''
-  const lastVerify = [...(detail?.events ?? [])].reverse().find(e => e.type === 'verify.result')
-  const timeline = (detail?.events ?? []).filter(e => e.type !== 'tokens.used').slice(-14)
-  return (
-    <box flexDirection="column">
-      <text><span fg={C.secondary}>{run.ticket} </span><strong>{run.title}</strong><span fg={C.muted}>   {run.project} · from {run.base} · {duration(now - run.createdAt)} · {tokens(run.tokens)} tokens · {run.compactions} compactions</span></text>
-      <text fg={C.warning}>{run.needs ? `Needs you: ${run.needs.ask}` : `${run.stage} · ${run.status}`}</text>
-      {run.patch ? <text fg={C.secondary}>{`Customer patch ${run.patch.customer}/${run.patch.app} (applied locally, written back at ship)`}</text> : null}
-      {run.device ? <text fg={C.secondary}>{`Device ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</text> : null}
-      <text> </text>
-      <text><strong>Plan</strong></text>
-      <text fg={C.secondary}>{summary ? (summary.length > 300 ? `${summary.slice(0, 300).replace(/\s+\S*$/, '')}…` : summary) : detail ? 'no plan yet' : 'loading…'}</text>
-      {(run.plan?.questions ?? []).map(q => (
-        <text key={q.id}><span fg={C.secondary}>  {q.id}{q.held ? ' (held)' : ''} {q.text} </span><span fg={C.text}>→ {run.plan?.answers?.[q.id] ?? `default: ${q.default}`}</span></text>
-      ))}
-      {lastVerify && lastVerify.type === 'verify.result' && !lastVerify.ok ? (
-        <>
-          <text> </text>
-          <text><strong>New findings</strong><span fg={C.danger}> {lastVerify.newFindings.length}</span></text>
-          {lastVerify.newFindings.slice(0, 6).map(f => <text key={f} fg={C.danger}>{`  ${f.slice(0, 110)}`}</text>)}
-        </>
-      ) : null}
-      <ReviewView json={detail?.review ?? ''} />
-      {run.pr ? <text><span fg={C.success}>Draft PR #{run.pr.number} </span><span fg={C.secondary}>{run.pr.url}</span></text> : null}
-      <text> </text>
-      <text><strong>Timeline</strong></text>
-      {timeline.map(e => <text key={e.seq} fg={e.actor === 'human' ? C.text : C.secondary}>{`  ${eventLine(e).slice(0, 120)}`}</text>)}
-    </box>
-  )
-}
-
-function ReviewView({ json }: { json: string }) {
-  if (!json.trim()) return null
-  let r: { review: number; findings: { severity: string; file: string; line?: number; problem: string }[]; dropped: number; below?: { severity: string; file: string; line?: number; problem: string; confidence: number }[] }
-  try { r = JSON.parse(json) } catch { return null }
-  return (
-    <>
-      <text> </text>
-      <text><strong>Review {r.review}</strong><span fg={r.findings.length ? C.warning : C.success}> {r.findings.length ? `${r.findings.length} finding(s)` : 'nothing found'}</span>{r.dropped ? <span fg={C.muted}> · {r.dropped} below 80% confidence left out</span> : null}</text>
-      {r.findings.slice(0, 6).map((f, i) => <text key={i} fg={C.secondary}>{`  R${i + 1} [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''}  ${f.problem}`.slice(0, 120)}</text>)}
-      {(r.below ?? []).slice(0, 4).map((f, i) => <text key={`b${i}`} fg={C.muted}>{`  ${f.confidence}%  [${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''}  ${f.problem}`.slice(0, 120)}</text>)}
-    </>
   )
 }
 

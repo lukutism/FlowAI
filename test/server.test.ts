@@ -123,6 +123,21 @@ describe('the service socket', () => {
     expect(await c.log('fso-1', 'devserver', 5)).toEqual([])
     await expect(c.log('fso-1', '../token' as 'metro', 5)).rejects.toThrow(/not a run log/)
   })
+  test('a run\'s changes: each changed file with its added and removed lines, new files included', async () => {
+    const t = start()
+    const wt = mkdtempSync(join(tmpdir(), 'flow-srv-wt-'))
+    const g = (...a: string[]) => Bun.spawnSync(['git', ...a], { cwd: wt, env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } })
+    g('init', '-q'); writeFileSync(join(wt, 'a.ts'), 'one\ntwo\n'); g('add', '.'); g('commit', '-qm', 'b')
+    writeFileSync(join(wt, 'a.ts'), 'one\nTWO\nthree\n'); writeFileSync(join(wt, 'new.ts'), 'x\ny\n')
+    writeFileSync(join(t.data, 'runs', 'fso-1', 'run.json'), JSON.stringify({ repos: [{ key: 'mobile', worktree: wt, base: 'origin/develop' }] }))
+    const c = await t.connect()
+    expect(await c.changes('fso-1')).toEqual([{ repo: 'mobile', file: 'a.ts', added: 2, removed: 1, status: 'M' }, { repo: 'mobile', file: 'new.ts', added: 2, removed: 0, status: 'A' }])
+    expect(await c.changes('fso-9')).toEqual([])
+    // once committed (as ship does), the change still counts: from where the branch left its base
+    g('branch', 'base-line', 'HEAD'); g('add', '.'); g('commit', '-qm', 'the change')
+    writeFileSync(join(t.data, 'runs', 'fso-1', 'run.json'), JSON.stringify({ repos: [{ key: 'mobile', worktree: wt, base: 'base-line' }] }))
+    expect(await c.changes('fso-1')).toEqual([{ repo: 'mobile', file: 'a.ts', added: 2, removed: 1, status: 'M' }, { repo: 'mobile', file: 'new.ts', added: 2, removed: 0, status: 'A' }])
+  })
   test('the run detail can read its events and its plan; other files are refused', async () => {
     const t = start(), c = await t.connect()
     expect((await c.events('fso-1')).map(e => e.type)).toEqual(['run.created'])

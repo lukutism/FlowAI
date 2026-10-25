@@ -8,13 +8,41 @@ import type { Snapshot } from './resources.ts'
 import { readTranscript, tail, type Entry } from './transcript.ts'
 
 /** the files of a run the screen may read */
-export const RUN_FILES = ['ticket.md', 'plan.md', 'pr.md', 'review.json'] as const
+export const RUN_FILES = ['ticket.md', 'plan.md', 'pr.md', 'review.json', 'run.json'] as const
 export type RunFile = (typeof RUN_FILES)[number]
+
+/** a file a run changed, in one of its repos */
+export interface Change { repo: string; file: string; added: number; removed: number; status: 'M' | 'A' | 'D' }
+
+/** what a run changed in its worktrees so far, committed or not (from where its branch left the base), then new files */
+export function changes(dataDir: string, run: string): Change[] {
+  const f = join(dataDir, 'runs', run, 'run.json')
+  if (!existsSync(f)) return []
+  const meta = JSON.parse(readFileSync(f, 'utf8')) as { repos?: { key: string; worktree: string; base?: string }[]; repo?: string; worktree?: string; base?: string }
+  const repos = meta.repos ?? (meta.worktree ? [{ key: meta.repo ?? 'repo', worktree: meta.worktree, base: meta.base }] : [])
+  const git = (cwd: string, ...a: string[]) => new TextDecoder().decode(Bun.spawnSync(['git', ...a], { cwd }).stdout)
+  return repos.flatMap(r => {
+    if (!existsSync(r.worktree)) return []
+    const from = (r.base && git(r.worktree, 'merge-base', r.base, 'HEAD').trim()) || 'HEAD'
+    const status = new Map(git(r.worktree, 'diff', from, '--name-status').split('\n').filter(Boolean).map(l => { const [st, file] = l.split('\t') as [string, string]; return [file, st[0]] }))
+    const tracked = git(r.worktree, 'diff', from, '--numstat').split('\n').filter(Boolean).map(l => {
+      const [a, d, file] = l.split('\t') as [string, string, string]
+      const st = status.get(file)
+      return { repo: r.key, file, added: Number(a) || 0, removed: Number(d) || 0, status: (st === 'A' ? 'A' : st === 'D' ? 'D' : 'M') as Change['status'] }
+    })
+    const fresh = git(r.worktree, 'ls-files', '--others', '--exclude-standard').split('\n').filter(Boolean).map(file => {
+      let n = 0
+      try { n = readFileSync(join(r.worktree, file), 'utf8').split('\n').filter((l, i, all) => i < all.length - 1 || l).length } catch {}
+      return { repo: r.key, file, added: n, removed: 0, status: 'A' as const }
+    })
+    return [...tracked, ...fresh]
+  })
+}
 
 /** the logs of a run the screen may read: Metro's, the dev server's, the device's */
 export const RUN_LOGS = ['metro', 'devserver', 'device'] as const
 export type RunLog = (typeof RUN_LOGS)[number]
-export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'log'; run: string; name: RunLog; lines: number }
+export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'changes'; run: string } | { cmd: 'log'; run: string; name: RunLog; lines: number }
 export type Request = RequestBody & { id: number }
 
 export type Message =
@@ -26,7 +54,7 @@ export type Message =
   | { type: 'windows'; windows: Windows }
   | { type: 'notice'; notice: Notice }
   | { type: 'agent'; run: string; entry: Entry }
-  | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: false; error: string } }
+  | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: true; changes: Change[] } | { ok: false; error: string } }
 
 type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent'>
 
@@ -56,7 +84,8 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
         try { r = JSON.parse(String(raw)) } catch { return }
         const reply = (x: Extract<Message, { type: 'reply' }>['reply']) => ws.send(JSON.stringify({ type: 'reply', id: r.id, reply: x } satisfies Message))
         if (r.cmd === 'events') { reply({ ok: true, events: o.store.events(r.run) }); return }
-        const safe = /^[\w.-]+$/.test(r.cmd === 'transcript' || r.cmd === 'log' || r.cmd === 'file' ? r.run : '')
+        const safe = /^[\w.-]+$/.test(r.cmd === 'transcript' || r.cmd === 'log' || r.cmd === 'file' || r.cmd === 'changes' ? r.run : '')
+        if (r.cmd === 'changes') { reply(safe ? { ok: true, changes: changes(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
         if (r.cmd === 'transcript') { reply(safe ? { ok: true, entries: readTranscript(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
         if (r.cmd === 'log') {
           if (!RUN_LOGS.includes(r.name) || !safe) { reply({ ok: false, error: `${r.name} is not a run log` }); return }

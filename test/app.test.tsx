@@ -4,6 +4,11 @@ import { testRender } from '@opentui/react/test-utils'
 import type { RunEvent, RunState } from '../src/run.ts'
 import type { Command } from '../src/service.ts'
 import { App, type FlowApi } from '../src/tui/app.tsx'
+import { stopShells } from '../src/tui/detail.tsx'
+import type { Entry } from '../src/transcript.ts'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 // The Runs screen and run detail, driven by keys, against a stand-in service connection.
 const NOW = Date.parse('2026-10-25T12:00:00Z')
@@ -183,30 +188,104 @@ describe('Runs screen', () => {
 describe('Run detail', () => {
   test('a run with a device names it and its Metro port', async () => {
     const t = await screen([base('fso-105', { device: { platform: 'android', id: 'emulator-5580', metroPort: 8090 } })])
-    try { expect(await t.press('enter')).toContain('Device android emulator-5580 · Metro :8090') } finally { t.s.renderer.destroy() }
+    try { expect(await t.press('enter')).toContain('android emulator-5580 · Metro :8090') } finally { t.s.renderer.destroy() }
   })
-  test('a customer patch run names its patch; s on a checked write-back asks before writing it back', async () => {
+  test('a customer patch run names its patch; S on a checked write-back asks before writing it back', async () => {
     const t = await screen([base('fso-105', { stage: 'ship', status: 'needs-you', needs: { kind: 'patch', ask: 'write-back dry run in patch-report.txt: ship again to write the patch back' }, patch: { customer: 'acme', app: 'product', commit: 'abc' } })])
     try {
-      expect(await t.press('enter')).toContain('Customer patch acme/product (applied locally, written back at ship)')
+      expect(await t.press('enter')).toContain('patch acme/product')
       await t.press('esc')
       expect(await t.press('S')).toContain('Write the patch back for #105?')
     } finally { t.s.renderer.destroy() }
   })
-  test('enter opens it: what it needs, the plan, its questions, the timeline; esc goes back', async () => {
+  test('enter opens it: what it needs, the plan with its questions, the checks, the timeline, the panes; esc goes back', async () => {
     const t = await screen()
     try {
       const f = await t.press('enter')
       expect(f).toContain('Needs you: 1 open question')
       expect(f).toContain('Guard the walk against missing assets.')
-      expect(f).toContain('Q1 Also guard the order list? → default: no')
-      expect(f).toMatch(/human +run\.created/)
-      expect(f).toMatch(/agent +plan\.submitted/)
-      expect(f).toContain('Review 2 1 finding(s) · 1 below 80% confidence left out')
-      expect(f).toContain('R1 [P1] src/b.ts:4  the order list still shows 8')
-      expect(f).toContain('55%  [P2] src/c.ts  maybe a rounding edge')
+      expect(f).toContain('Q1 Also guard the order list?')
+      expect(f).toContain('default: no')
+      expect(f).toMatch(/review +1 finding · 1 below/)
+      expect(f).toContain('R1 [P1] src/b.ts:4 the order list')
+      expect(f).toMatch(/\d\d:\d\d setup +started from b/)
+      expect(f).toMatch(/\d\d:\d\d plan +plan ready, no questions/)
+      expect(f).toMatch(/Agent +Metro +Dev server +Shell/)
       expect(await t.press('esc')).toContain('Needs attention')
     } finally { t.s.renderer.destroy() }
+  })
+  test('the Agent pane: the session so far, then live; who said what, the tools run, refusals, turn ends', async () => {
+    const tr: Entry[] = [
+      { at: NOW - 5 * 60_000, own: true, kind: 'prompt', from: 'flow', text: 'You are working on ticket #105\nline 2\nline 3' },
+      { at: NOW - 4 * 60_000, own: true, kind: 'text', text: 'I will start in the walk.' },
+      { at: NOW - 4 * 60_000, own: true, kind: 'tool', id: 't', name: 'Bash', input: { command: 'yarn tsc -p apps/product' } },
+      { at: NOW - 3 * 60_000, own: true, kind: 'denied', tool: 'Bash', input: { command: 'git commit -m x' } },
+      { at: NOW - 2 * 60_000, own: true, kind: 'result', ok: true, text: '', turns: 4, reason: '', session: 's', tokens: { input: 1000, output: 2000, cacheRead: 600_000, cacheWrite: 23_000 } },
+    ]
+    const t = await screen(runs, undefined, { transcript: async () => tr })
+    try {
+      const f = await t.press('enter')
+      expect(f).toMatch(/11:55 flow +You are working on ticket #105 +\(\+2 lines\)/)
+      expect(f).toMatch(/11:56 claude +I will start in the walk\./)
+      expect(f).toMatch(/⋯ Bash +yarn tsc -p apps\/product/)
+      expect(f).toMatch(/✕ Bash +git commit -m x +refused by flow/)
+      expect(f).toContain('── turn ended · 626k tokens · 4 turns ──')
+      await act(async () => { t.f.push({ type: 'agent', run: 'fso-105', entry: { at: NOW, own: true, kind: 'text', text: 'And now the order list.' } } as never) })
+      expect(await t.frame()).toMatch(/12:00 claude +And now the order list\./)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('m types a message to the agent below its session; enter sends it', async () => {
+    const t = await screen()
+    try {
+      await t.press('enter', 'm', ...'check q1'.split(''))
+      expect(await t.frame()).toContain('› check q1▏')
+      await t.press('enter')
+      expect(t.f.sent).toEqual([{ cmd: 'message', run: 'fso-105', text: 'check q1' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('] moves to Metro: the run\'s log; a run without a device says why there is none', async () => {
+    const withDevice = [base('fso-105', { device: { platform: 'android', id: 'emulator-5700', metroPort: 8300 } })]
+    const t = await screen(withDevice, undefined, { log: async (_r, name) => (name === 'metro' ? [' BUNDLE  ./index.js 78%', ' WARN  Require cycle'] : []) })
+    try {
+      await t.press('enter', ']')
+      await act(async () => { await Bun.sleep(20) })
+      const f = await t.frame()
+      expect(f).toMatch(/Metro :8300 ● running +metro\.log/)
+      expect(f).toContain('BUNDLE  ./index.js 78%')
+      expect(await t.press(']')).toContain('This run has no dev server')
+    } finally { t.s.renderer.destroy() }
+    const u = await screen()
+    try { expect(await u.press('enter', ']')).toContain('This run has no device, so no Metro') } finally { u.s.renderer.destroy() }
+  })
+  test('the files: a click opens one in the right pane', async () => {
+    const t = await screen()
+    try {
+      const p = at(await t.press('enter'), 'plan.md  ')
+      await act(async () => { await t.s.mockMouse.click(p.x, p.y) })
+      expect(await t.frame()).toContain('Guard the walk against missing assets.')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('the Shell pane: a real shell in the run\'s worktree; i types into it, ctrl+] leaves; v splits it with the session', async () => {
+    const wt = mkdtempSync(join(tmpdir(), 'flow-shell-'))
+    process.env.FLOW_SHELL = '/bin/sh'
+    const t = await screen(runs, undefined, { file: async (_r, name) => (name === 'run.json' ? JSON.stringify({ worktree: wt }) : '') })
+    try {
+      await t.press('enter', 'i')
+      await act(async () => { await Bun.sleep(300) })
+      for (const k of 'echo hi-from-$((40+2))') await act(async () => { t.s.mockInput.pressKey(k) })
+      await act(async () => { t.s.mockInput.pressEnter() })
+      await act(async () => { await Bun.sleep(400) })
+      let f = await t.frame()
+      expect(f).toContain('hi-from-42')
+      expect(f).toContain('typing in Shell')
+      await act(async () => { t.s.mockInput.pressKey(']', { ctrl: true }) })
+      f = await t.frame()
+      expect(f).toContain('esc back   [ ] pane')
+      f = await t.press('v')
+      expect(f).toContain('split on')
+      expect(f).toContain('No agent session recorded for this run yet.')
+      expect(f).toContain('hi-from-42')
+    } finally { t.s.renderer.destroy(); stopShells(); delete process.env.FLOW_SHELL }
   })
 })
 

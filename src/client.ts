@@ -1,5 +1,5 @@
 import type { RunEvent, RunState } from './run.ts'
-import { RECENT, type Message, type RequestBody, type RunFile, type RunLog } from './server.ts'
+import { RECENT, type Change, type Message, type RequestBody, type RunFile, type RunLog } from './server.ts'
 import type { Entry } from './transcript.ts'
 import type { Command, ProjectSummary, Reply } from './service.ts'
 import type { Windows } from './usage.ts'
@@ -68,6 +68,12 @@ export class FlowClient {
     const r = await this.request({ cmd: 'log', run, name, lines })
     if (!r.ok || !('lines' in r)) throw new Error('error' in r ? r.error : 'no log')
     return r.lines
+  }
+
+  async changes(run: string): Promise<Change[]> {
+    const r = await this.request({ cmd: 'changes', run })
+    if (!r.ok || !('changes' in r)) throw new Error('error' in r ? r.error : 'no changes')
+    return r.changes
   }
 
   close() { this.ws.close() }
