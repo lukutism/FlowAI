@@ -7,6 +7,7 @@ import { Pipeline } from './pipeline.ts'
 import { DEFAULT_LIMITS, Resources, WAITS_FOR, type Limits, type Snapshot } from './resources.ts'
 import type { RunAgent } from './runner.ts'
 import type { EventStore } from './store.ts'
+import { appendTranscript, type Entry } from './transcript.ts'
 import type { Windows } from './usage.ts'
 
 export type Command =
@@ -48,6 +49,7 @@ export class Service {
   private notices = new Set<(n: Notice) => void>()
   private windowsListeners = new Set<(w: Windows) => void>()
   private lastWindows: Windows = {}
+  private agentListeners = new Set<(run: string, e: Entry) => void>()
 
   /** the machine-wide slots every run shares */
   readonly slots: Resources
@@ -65,6 +67,12 @@ export class Service {
   onNotice(fn: (n: Notice) => void) { this.notices.add(fn); return () => { this.notices.delete(fn) } }
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }
   windows(): Windows { return this.lastWindows }
+  /** each entry of an agent session as it happens (also kept in the run's transcript) */
+  onAgent(fn: (run: string, e: Entry) => void) { this.agentListeners.add(fn); return () => { this.agentListeners.delete(fn) } }
+  private record(run: string, e: Entry) {
+    try { appendTranscript(this.d.dataDir, run, e) } catch {}
+    for (const l of this.agentListeners) l(run, e)
+  }
   resources(): Snapshot { return this.slots.snapshot() }
   projects(): ProjectSummary[] {
     return Object.values(this.d.projects).map(p => ({ key: p.key, name: p.name, tracker: p.tracker.kind, forge: p.forge.kind, repos: p.repos.map(r => r.key),
@@ -77,7 +85,9 @@ export class Service {
     if (!p) {
       const cfg = this.d.projects[project]
       if (!cfg) throw new Error(`no project ${project}`)
-      p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, makeReviewer: this.d.makeReviewer, resources: this.slots, gitEnv: this.d.gitEnv, now: this.d.now, tap: this.d.tap,
+      p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, makeReviewer: this.d.makeReviewer, resources: this.slots, gitEnv: this.d.gitEnv, now: this.d.now,
+        tap: (run, e, own) => { this.d.tap?.(run, e); if (e.kind !== 'usage') this.record(run, { ...e, at: (this.d.now ?? Date.now)(), own }) },
+        onPrompt: (run, text, own, from) => this.record(run, { kind: 'prompt', from, text, at: (this.d.now ?? Date.now)(), own }),
         onWindows: w => { this.lastWindows = w; for (const l of this.windowsListeners) l(w) } })
       if (!Object.keys(this.lastWindows).length) this.lastWindows = p.runner.ingest.windows
       this.pipes.set(project, p)

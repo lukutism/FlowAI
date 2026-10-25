@@ -43,8 +43,10 @@ export interface PipelineDeps {
   makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
-  /** sees each agent event as it arrives (live output) */
-  tap?: (run: string, e: AgentEvent) => void
+  /** sees each agent event as it arrives (live output); own: the run's agent, not the reviewer */
+  tap?: (run: string, e: AgentEvent, own: boolean) => void
+  /** each prompt as it is sent to an agent */
+  onPrompt?: (run: string, text: string, own: boolean, from: 'flow' | 'you') => void
   /** the plan windows changed (after they are saved) */
   onWindows?: (w: Windows) => void
   /** where tickets come from and PRs go; by default from the project (az, gh, the Jira token in the keychain) */
@@ -76,7 +78,7 @@ export class Pipeline {
     this.forge = d.forge ?? forgeFor(d.project, { az: d.az, gh: d.gh })
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
-      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap,
+      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap, onPrompt: d.onPrompt,
       ...(d.resources ? { agentSlot: (run: string) => d.resources!.acquire(run, 'agents') } : {}),
       windows: existsSync(usage) ? JSON.parse(readFileSync(usage, 'utf8')) : undefined,
       onWindows: w => { mkdirSync(d.dataDir, { recursive: true }); writeFileSync(usage, JSON.stringify(w) + '\n'); d.onWindows?.(w) },
@@ -269,7 +271,7 @@ export class Pipeline {
   /** a message from the human: goes to the run's session; afterwards the run carries on from where it is */
   async message(run: string, text: string) {
     this.d.store.append(run, 'human', { type: 'human.message', text })
-    const r = await this.say(run, text)
+    const r = await this.say(run, text, 'you')
     if (!r.ok) return
     const s = this.must(run)
     if (s.stage === 'plan' && !s.plan) { const p = this.readPlan(run); if ('plan' in p) await this.submitPlan(run, p.plan) }
@@ -358,9 +360,9 @@ export class Pipeline {
   }
 
   /** a message to the run's agent; an agent with no session yet (a port's) gets the run's context first */
-  private say(run: string, text: string) {
+  private say(run: string, text: string, from: 'flow' | 'you' = 'flow') {
     const s = this.must(run)
-    return this.runner.turn(run, s.session ? text : contextPrompt(this.meta(run), this.planFile(run), this.prFile(run), text))
+    return this.runner.turn(run, s.session ? text : contextPrompt(this.meta(run), this.planFile(run), this.prFile(run), text), from)
   }
 
   private agentFor(run: string): RunAgent {

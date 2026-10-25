@@ -8,20 +8,23 @@ import type { Command, Reply } from '../src/service.ts'
 import { EventStore } from '../src/store.ts'
 import type { Windows } from '../src/usage.ts'
 import type { Snapshot } from '../src/resources.ts'
+import { appendTranscript, type Entry } from '../src/transcript.ts'
 
 // The screen and the CLI talk to the background service over a local WebSocket with a token only the user can
 // read (a web page could otherwise reach ws://localhost and press "ship").
 function fakeService() {
+  const agent = new Set<(run: string, e: Entry) => void>()
   const notice = new Set<(n: { run: string; text: string }) => void>(), wins = new Set<(w: Windows) => void>(), res = new Set<(r: Snapshot) => void>()
   const sent: Command[] = []
   return {
-    sent, emitNotice: (n: { run: string; text: string }) => notice.forEach(f => f(n)), emitWindows: (w: Windows) => wins.forEach(f => f(w)), emitResources: (r: Snapshot) => res.forEach(f => f(r)),
+    sent, emitAgent: (run: string, e: Entry) => agent.forEach(f => f(run, e)), emitNotice: (n: { run: string; text: string }) => notice.forEach(f => f(n)), emitWindows: (w: Windows) => wins.forEach(f => f(w)), emitResources: (r: Snapshot) => res.forEach(f => f(r)),
     svc: {
       dispatch: (c: Command): Reply => { sent.push(c); return 'run' in c && c.run === 'nope' ? { ok: false, error: 'no run nope' } : { ok: true, run: 'run' in c ? c.run : 'x' } },
       windows: (): Windows => ({ week: { utilization: 0.59, resetsAt: 1, status: 'allowed' } }),
       onNotice: (f: (n: { run: string; text: string }) => void) => { notice.add(f); return () => notice.delete(f) },
       onWindows: (f: (w: Windows) => void) => { wins.add(f); return () => wins.delete(f) },
       resources: (): Snapshot => ({ limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: ['fso-1'], builds: [], devices: [] }, waiting: [] }),
+      onAgent: (f: (run: string, e: Entry) => void) => { agent.add(f); return () => agent.delete(f) },
       projects: () => [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const], patches: ['mobile'], deadlineMinutes: 30 }],
       onResources: (f: (r: Snapshot) => void) => { res.add(f); return () => res.delete(f) },
     },
@@ -40,7 +43,7 @@ function start() {
   const s = serve({ service: f.svc, store, dataDir: data, port: 0, token: 'secret-token' })
   servers.push(s)
   const connect = async (token = 'secret-token') => { const c = await FlowClient.connect(`ws://127.0.0.1:${s.port}`, token); clients.push(c); return c }
-  return { s, store, f, connect }
+  return { s, store, f, connect, data }
 }
 
 describe('the service socket', () => {
@@ -101,6 +104,24 @@ describe('the service socket', () => {
     t.s.stop()
     await closed
     expect(c.connected).toBe(false)
+  })
+  test('the agent\'s session: what was recorded, then each new entry as it comes', async () => {
+    const t = start()
+    appendTranscript(t.data, 'fso-1', { at: 1, own: true, kind: 'text', text: 'earlier words' })
+    const c = await t.connect()
+    expect((await c.transcript('fso-1')).map(e => e.kind === 'text' && e.text)).toEqual(['earlier words'])
+    const got = new Promise(r => c.listen(m => m.type === 'agent' && r(m)))
+    t.f.emitAgent('fso-1', { at: 2, own: true, kind: 'tool', id: 'x', name: 'Bash', input: { command: 'yarn tsc' } })
+    expect(await got).toMatchObject({ run: 'fso-1', entry: { kind: 'tool', name: 'Bash' } })
+  })
+  test('a run\'s logs: the last lines of Metro\'s, the dev server\'s, the device\'s; other names are refused', async () => {
+    const t = start()
+    writeFileSync(join(t.data, 'runs', 'fso-1', 'metro.log'), Array.from({ length: 300 }, (_, i) => `line ${i}`).join('\n') + '\n')
+    const c = await t.connect()
+    const lines = await c.log('fso-1', 'metro', 5)
+    expect(lines).toEqual(['line 295', 'line 296', 'line 297', 'line 298', 'line 299'])
+    expect(await c.log('fso-1', 'devserver', 5)).toEqual([])
+    await expect(c.log('fso-1', '../token' as 'metro', 5)).rejects.toThrow(/not a run log/)
   })
   test('the run detail can read its events and its plan; other files are refused', async () => {
     const t = start(), c = await t.connect()

@@ -6,6 +6,7 @@ import { FakeAgent, type FakeTurn } from '../src/agent/fake.ts'
 import type { Az } from '../src/azure.ts'
 import { parseProject } from '../src/config.ts'
 import { Service } from '../src/service.ts'
+import { readTranscript } from '../src/transcript.ts'
 import { EventStore } from '../src/store.ts'
 
 const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }
@@ -89,6 +90,22 @@ describe('Service: the background process that drives runs', () => {
     await t.svc.idle()
     expect(t.notices).toEqual([])
     expect(t.store.events('ex-1').some(e => e.type === 'device.released')).toBe(false)
+  })
+  test('the agent\'s session is recorded and pushed as it happens: flow\'s prompts, your messages, the agent\'s words and tools', async () => {
+    const say = JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Looking at the picking list.' }, { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'src/a.ts' } }] } })
+    const t = setup(d => [{ stream: `${init}\n${say}\n${result}`, effect: planWith(d.data, '- Q1: x? — default: y') }, turn()])
+    const pushed: string[] = []
+    t.svc.onAgent((run, e) => pushed.push(`${run} ${e.kind}`))
+    t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 }); await t.svc.idle()
+    t.svc.dispatch({ cmd: 'message', run: 'ex-1', text: 'please check the order list too' }); await t.svc.idle()
+    const tr = readTranscript(t.data, 'ex-1')
+    expect(tr.map(e => e.kind)).toEqual(['prompt', 'session', 'text', 'tool', 'result', 'prompt', 'session', 'result'])
+    expect(tr[0]).toMatchObject({ kind: 'prompt', from: 'flow', own: true, at: Date.parse('2026-10-25T10:00:00Z') })
+    expect(tr[2]).toMatchObject({ kind: 'text', text: 'Looking at the picking list.' })
+    expect(tr[3]).toMatchObject({ kind: 'tool', name: 'Read', input: { file_path: 'src/a.ts' } })
+    expect(tr[5]).toMatchObject({ kind: 'prompt', from: 'you', text: 'please check the order list too' })
+    expect(pushed).toEqual(tr.map(e => `ex-1 ${e.kind}`))
+    expect(readTranscript(t.data, 'nope')).toEqual([])
   })
   test('commands for a run that doesn\'t exist, or an unknown project, are refused at once', () => {
     const t = setup(() => [])

@@ -5,12 +5,16 @@ import type { Command, Notice, ProjectSummary, Reply, Service } from './service.
 import type { EventStore } from './store.ts'
 import type { Windows } from './usage.ts'
 import type { Snapshot } from './resources.ts'
+import { readTranscript, tail, type Entry } from './transcript.ts'
 
 /** the files of a run the screen may read */
 export const RUN_FILES = ['ticket.md', 'plan.md', 'pr.md', 'review.json'] as const
 export type RunFile = (typeof RUN_FILES)[number]
 
-export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile }
+/** the logs of a run the screen may read: Metro's, the dev server's, the device's */
+export const RUN_LOGS = ['metro', 'devserver', 'device'] as const
+export type RunLog = (typeof RUN_LOGS)[number]
+export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'log'; run: string; name: RunLog; lines: number }
 export type Request = RequestBody & { id: number }
 
 export type Message =
@@ -21,9 +25,10 @@ export type Message =
   | { type: 'event'; event: RunEvent; state: RunState }
   | { type: 'windows'; windows: Windows }
   | { type: 'notice'; notice: Notice }
-  | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: false; error: string } }
+  | { type: 'agent'; run: string; entry: Entry }
+  | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: false; error: string } }
 
-type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects'>
+type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent'>
 
 /** how many of the latest events the screen gets on connect (its Activity) */
 export const RECENT = 300
@@ -51,6 +56,13 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
         try { r = JSON.parse(String(raw)) } catch { return }
         const reply = (x: Extract<Message, { type: 'reply' }>['reply']) => ws.send(JSON.stringify({ type: 'reply', id: r.id, reply: x } satisfies Message))
         if (r.cmd === 'events') { reply({ ok: true, events: o.store.events(r.run) }); return }
+        const safe = /^[\w.-]+$/.test(r.cmd === 'transcript' || r.cmd === 'log' || r.cmd === 'file' ? r.run : '')
+        if (r.cmd === 'transcript') { reply(safe ? { ok: true, entries: readTranscript(o.dataDir, r.run) } : { ok: false, error: 'not a run' }); return }
+        if (r.cmd === 'log') {
+          if (!RUN_LOGS.includes(r.name) || !safe) { reply({ ok: false, error: `${r.name} is not a run log` }); return }
+          reply({ ok: true, lines: tail(join(o.dataDir, 'runs', r.run, `${r.name}.log`), Math.min(Math.max(1, r.lines), 2000)) })
+          return
+        }
         if (r.cmd === 'file') {
           if (!RUN_FILES.includes(r.name) || !/^[\w.-]+$/.test(r.run)) { reply({ ok: false, error: `${r.name} is not a run file` }); return }
           const f = join(o.dataDir, 'runs', r.run, r.name)
@@ -68,6 +80,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
     o.service.onNotice(n => publish({ type: 'notice', notice: n })),
     o.service.onWindows(w => publish({ type: 'windows', windows: w })),
     o.service.onResources(r => publish({ type: 'resources', resources: r })),
+    o.service.onAgent((run, entry) => publish({ type: 'agent', run, entry })),
   ]
   return { port: server.port!, stop: () => { offs.forEach(f => f()); server.stop(true) } }
 }

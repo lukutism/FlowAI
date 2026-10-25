@@ -1,5 +1,6 @@
 import type { RunEvent, RunState } from './run.ts'
-import { RECENT, type Message, type RequestBody, type RunFile } from './server.ts'
+import { RECENT, type Message, type RequestBody, type RunFile, type RunLog } from './server.ts'
+import type { Entry } from './transcript.ts'
 import type { Command, ProjectSummary, Reply } from './service.ts'
 import type { Windows } from './usage.ts'
 import type { Snapshot } from './resources.ts'
@@ -54,6 +55,19 @@ export class FlowClient {
     const r = await this.request({ cmd: 'file', run, name })
     if (!r.ok || !('text' in r)) throw new Error('error' in r ? r.error : 'no file')
     return r.text
+  }
+
+  /** the run's agent session so far (new entries arrive as 'agent' messages) */
+  async transcript(run: string): Promise<Entry[]> {
+    const r = await this.request({ cmd: 'transcript', run })
+    if (!r.ok || !('entries' in r)) throw new Error('error' in r ? r.error : 'no transcript')
+    return r.entries
+  }
+
+  async log(run: string, name: RunLog, lines: number): Promise<string[]> {
+    const r = await this.request({ cmd: 'log', run, name, lines })
+    if (!r.ok || !('lines' in r)) throw new Error('error' in r ? r.error : 'no log')
+    return r.lines
   }
 
   close() { this.ws.close() }
