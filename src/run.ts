@@ -36,6 +36,9 @@ export type EventBody =
   /** the run's own device is booted, its app installed, its Metro answering */
   | { type: 'device.ready'; platform: 'android' | 'ios'; id: string; metroPort: number }
   | { type: 'device.released' }
+  /** the run's own dev server is listening */
+  | { type: 'devserver.ready'; repo: string; port: number; url: string }
+  | { type: 'devserver.stopped' }
   /** the customer's patch, applied as a local commit (never pushed) so verify and review see only the fix */
   | { type: 'patch.applied'; customer: string; app: string; summary: string; commit: string }
   /** ship of a patch run: the write-back's dry run */
@@ -60,6 +63,7 @@ export interface RunState {
   waitingFor?: string; pausedUntil?: number
   device?: { platform: 'android' | 'ios'; id: string; metroPort: number }
   patch?: { customer: string; app: string; commit: string }
+  devServer?: { repo: string; port: number; url: string }
   createdAt: number; updatedAt: number
 }
 
@@ -76,7 +80,7 @@ const need = (s: RunState, stage: Stage, e: RunEvent) => {
 }
 const go = (s: RunState, e: RunEvent, patch: Partial<RunState>): RunState => {
   const out: RunState = { ...s, ...patch, updatedAt: e.at }
-  for (const k of ['needs', 'waitingFor', 'pausedUntil', 'device'] as const) if (k in patch && patch[k] === undefined) delete out[k]
+  for (const k of ['needs', 'waitingFor', 'pausedUntil', 'device', 'devServer'] as const) if (k in patch && patch[k] === undefined) delete out[k]
   return out
 }
 
@@ -143,6 +147,8 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'tool.denied': return go(s, e, {})
     case 'device.ready': need(s, 'setup', e); return go(s, e, { device: { platform: e.platform, id: e.id, metroPort: e.metroPort } })
     case 'device.released': return go(s, e, { device: undefined })
+    case 'devserver.ready': need(s, 'setup', e); return go(s, e, { devServer: { repo: e.repo, port: e.port, url: e.url } })
+    case 'devserver.stopped': return go(s, e, { devServer: undefined })
     case 'patch.applied': need(s, 'setup', e); return go(s, e, { patch: { customer: e.customer, app: e.app, commit: e.commit } })
     case 'patch.checked':
       if (s.needs?.kind !== 'ship' || !s.patch) throw new TransitionError('patch.checked needs a verified patch run')

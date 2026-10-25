@@ -4,7 +4,7 @@
  *
  *   flow                                                            the screen (starts the background service if needed)
  *   flow serve                                                      the background service: runs, deadlines, the screen's data
- *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--patch <customer>/<app>] [--model <name>]   worktrees, plan; continues until it needs you
+ *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--dev-server] [--patch <customer>/<app>] [--model <name>]   worktrees, plan; continues until it needs you
  *   flow approve <run> [Q1=<answer> …]                             answer the plan's questions (defaults for the rest)
  *   flow message <run> "<text>"                                     to the run's agent; the run carries on afterwards
  *   flow port <run> [--to <branch>]                               the shipped fix onto another line (default develop)
@@ -175,12 +175,12 @@ async function main(argv: string[]) {
       if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
       if (f.device && f.device !== 'android' && f.device !== 'ios') throw new Error('--device is android or ios')
       const device = f.device as 'android' | 'ios' | undefined
-      if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch }).finally(() => service.close())
+      if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch, devServer: args.includes('--dev-server') }).finally(() => service.close())
       const s = store()
       const p = pipeline(s, project, f.model)
       const run = p.runId(tk)
       const release = lock(run)
-      try { await p.start(tk, { base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch }) } finally { await p.close(); release() }
+      try { await p.start(tk, { base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch, devServer: args.includes('--dev-server') }) } finally { await p.close(); release() }
       console.log(`\n${next(s.state(run)!)}\n${windowsLine(p.runner.ingest.windows)}`)
       return
     }

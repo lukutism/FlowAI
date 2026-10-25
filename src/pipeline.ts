@@ -7,6 +7,7 @@ import type { JiraDeps } from './jira.ts'
 import { trackerFor, type Tracker } from './tracker.ts'
 import type { Project, Repo } from './config.ts'
 import { startDevice, stopDevice, type DeviceState } from './device.ts'
+import { startDevServer, stopDevServer, type DevServerState } from './devserver.ts'
 import { createWorktree, shipChange } from './git.ts'
 import { fill, sh, tail } from './sh.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
@@ -24,7 +25,7 @@ import { changedFiles, verify } from './verify.ts'
 interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
-interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios' }
+interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string }
 
 /** a project's git in a worktree (its env), for flow's own local steps */
 const gitIn = (cwd: string, env?: Record<string, string | undefined>) => (...a: string[]) => {
@@ -58,6 +59,8 @@ export interface PipelineDeps {
   resources?: Resources
   /** how long a run's device may take to boot (default 3 minutes) */
   deviceReadyTimeoutMs?: number
+  /** how long a run's dev server may take to listen (default 5 minutes) */
+  devServerReadyTimeoutMs?: number
 }
 
 /**
@@ -103,8 +106,8 @@ export class Pipeline {
   private meta(run: string): Meta {
     const m = JSON.parse(readFileSync(join(this.runDir(run), 'run.json'), 'utf8')) as Meta & { repo?: string }
     if (!m.repos) m.repos = [{ key: m.repo!, worktree: m.worktree, base: m.base }]
-    const device = this.d.store.state(run)?.device
-    return device ? { ...m, device } : m
+    const s = this.d.store.state(run)
+    return { ...m, ...(s?.device ? { device: s.device } : {}), ...(s?.devServer ? { devServer: s.devServer } : {}) }
   }
 
   /** the agent's folder: the worktree with one repo, the run's root with several */
@@ -120,7 +123,7 @@ export class Pipeline {
   }
 
   /** patch: "<customer>/<app>", the customer patch the change goes on (in the run's repo that has patch commands) */
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string } = {}): Promise<string> {
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean } = {}): Promise<string> {
     const p = this.d.project
     const run = this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
@@ -129,6 +132,8 @@ export class Pipeline {
     const keys = o.repos?.length ? o.repos : p.repos.some(r => r.default) ? p.repos.filter(r => r.default).map(r => r.key) : [p.repos[0]!.key]
     const unknown = keys.filter(k => !p.repos.some(r => r.key === k))
     if (unknown.length) throw new Error(`no repo ${unknown.join(', ')} in project ${p.key} (it has ${p.repos.map(r => r.key).join(', ')})`)
+    const web = o.devServer ? keys.find(k => this.repoConfig(k).devServer) : undefined
+    if (o.devServer && !web) throw new Error(`no repo of this run has a dev server (devServer in the repo's config): ${keys.join(', ')}`)
     let patch: Meta['patch']
     if (o.patch) {
       const [customer, app, ...more] = o.patch.split('/')
@@ -142,7 +147,7 @@ export class Pipeline {
     const root = join(p.worktrees, String(id))
     const repos = keys.map((k, i) => ({ key: k, worktree: join(root, k), base: o.bases?.[k] ?? (i === 0 ? o.base : undefined) ?? this.repoConfig(k).defaultBase }))
     const branch = p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}) }
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     writeFileSync(join(this.runDir(run), 'ticket.md'), `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
@@ -174,6 +179,13 @@ export class Pipeline {
     if (m.platform) {
       try { await this.bootDevice(run, m.platform, m.repos[0]!.worktree) } catch (e) {
         this.d.store.append(run, 'engine', { type: 'setup.failed', reason: `device: ${(e as Error).message}` })
+        return false
+      }
+    }
+    if (m.web) {
+      try { await this.bootDevServer(run, m) } catch (e) {
+        await this.releaseDevice(run)
+        this.d.store.append(run, 'engine', { type: 'setup.failed', reason: `dev server: ${(e as Error).message}` })
         return false
       }
     }
@@ -239,8 +251,26 @@ export class Pipeline {
     } catch (e) { free(); throw e }
   }
 
-  /** stop the run's device and free its slot (at ship, or by hand); nothing to do when it has none */
+  /** the run's own dev server, in a build slot while it starts (a first build is heavy), on a port no other run holds */
+  private async bootDevServer(run: string, m: Meta) {
+    const r = m.repos.find(x => x.key === m.web)!, c = this.repoConfig(m.web!).devServer!
+    const taken = new Set<number>()
+    const runs = join(this.d.dataDir, 'runs')
+    for (const other of existsSync(runs) ? readdirSync(runs) : []) {
+      const f = join(runs, other, 'devserver.json')
+      if (other !== run && existsSync(f)) taken.add((JSON.parse(readFileSync(f, 'utf8')) as DevServerState).port)
+    }
+    const d = await this.building(run, () => startDevServer({ run, repo: r.key, cmd: c.cmd, portStart: c.portStart, url: c.url, runDir: this.runDir(run), worktree: r.worktree, taken, readyTimeoutMs: this.d.devServerReadyTimeoutMs }))
+    this.d.store.append(run, 'engine', { type: 'devserver.ready', repo: d.repo, port: d.port, url: d.url })
+  }
+
+  /** stop the run's device and dev server and free the device slot (at ship, or by hand); nothing to do when it has none */
   async releaseDevice(run: string) {
+    const web = join(this.runDir(run), 'devserver.json')
+    if (existsSync(web)) {
+      await stopDevServer(JSON.parse(readFileSync(web, 'utf8')) as DevServerState, this.runDir(run))
+      if (this.d.store.state(run)?.devServer) this.d.store.append(run, 'engine', { type: 'devserver.stopped' })
+    }
     const f = join(this.runDir(run), 'device.json')
     if (!existsSync(f) || !this.d.project.devices) return
     await stopDevice(JSON.parse(readFileSync(f, 'utf8')) as DeviceState, this.d.project.devices, this.runDir(run))
@@ -326,7 +356,7 @@ export class Pipeline {
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
     const root = join(p.worktrees, `${m.id}-${short}`)
     const repos = m.repos.map(r => ({ key: r.key, worktree: join(root, r.key), base: `origin/${to}` }))
-    const { device: _, ...src0 } = m // the source's device is its own; the port boots one of its own if the source had one
+    const { device: _, devServer: __, ...src0 } = m // the source's device and dev server are its own; the port starts its own
     const pm: Meta = { ...src0, base: `origin/${to}`, branch: `${m.branch}-${short}`, repos, worktree: Pipeline.layout(root, repos) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(pm, null, 2) + '\n')

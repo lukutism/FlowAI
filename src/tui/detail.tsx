@@ -280,11 +280,11 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     }
     if (p === 'metro' || p === 'devserver') {
       const what = p === 'metro' ? 'Metro' : 'dev server'
-      const empty = p === 'metro' ? (run.device ? `Metro has written nothing yet` : `This run has no device, so no Metro: start a run with a device`) : 'This run has no dev server'
+      const empty = p === 'metro' ? (run.device ? `Metro has written nothing yet` : `This run has no device, so no Metro: start a run with a device`) : run.devServer ? 'The dev server has written nothing yet' : 'This run has no dev server: start a run with one'
       const lines: Line[] = logs.map(l => [[` ${l.slice(0, right - 2)}`, /error|fail/i.test(l) ? C.danger : /warn/i.test(l) ? C.warning : C.secondary]])
       return (
         <box flexDirection="column" height={rows} onMouseScroll={e => wheel(e, lines.length - rows)}>
-          <text><span fg={C.secondary}>{` ${what}`}</span>{p === 'metro' && run.device ? <span fg={C.success}>{` :${run.device.metroPort} ● running`}</span> : null}<span fg={C.faint}>{`   ${p}.log`}</span></text>
+          <text><span fg={C.secondary}>{` ${what}`}</span>{p === 'metro' && run.device ? <span fg={C.success}>{` :${run.device.metroPort} ● running`}</span> : null}{p === 'devserver' && run.devServer ? <span fg={C.success}>{` ${run.devServer.repo} ${run.devServer.url} ● running`}</span> : null}<span fg={C.faint}>{`   ${p}.log`}</span></text>
           {lines.length ? view(lines, rows - 1).map((l, i) => <Row key={i} l={l} w={right} />) : <text fg={C.muted}>{` ${empty}`}</text>}
         </box>
       )
@@ -310,7 +310,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
 
   const tab = (k: Exclude<Pane, 'file'>, label: string) => {
     const on = top === k || (k === 'shell' && showsShell)
-    const dot = k === 'agent' ? (working ? C.success : '') : k === 'metro' ? (run.device ? C.success : '') : k === 'shell' ? (shell && !shell.ended ? C.success : '') : ''
+    const dot = k === 'agent' ? (working ? C.success : '') : k === 'metro' ? (run.device ? C.success : '') : k === 'devserver' ? (run.devServer ? C.success : '') : k === 'shell' ? (shell && !shell.ended ? C.success : '') : ''
     return <Click key={k} on={() => { setPane(k); if (k !== 'shell') setFocus('none') }}><box backgroundColor={on ? undefined : C.panel} paddingLeft={1} paddingRight={1}><text>{on ? <strong>{label}</strong> : <span fg={C.muted}>{label}</span>}{dot ? <span fg={dot}> ●</span> : ''}</text></box></Click>
   }
 

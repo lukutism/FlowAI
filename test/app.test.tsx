@@ -252,7 +252,7 @@ describe('Run detail', () => {
       const f = await t.frame()
       expect(f).toMatch(/Metro :8300 ● running +metro\.log/)
       expect(f).toContain('BUNDLE  ./index.js 78%')
-      expect(await t.press(']')).toContain('This run has no dev server')
+      expect(await t.press(']')).toContain('This run has no dev server: start a run with one')
     } finally { t.s.renderer.destroy() }
     const u = await screen()
     try { expect(await u.press('enter', ']')).toContain('This run has no device, so no Metro') } finally { u.s.renderer.destroy() }

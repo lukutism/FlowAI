@@ -35,6 +35,8 @@ const repo = z.object({
   verify: z.array(verifyStep),
   /** taken when a run names no repos (if none is marked, the first) */
   default: z.boolean().default(false),
+  /** a web app's dev server, started for a run that asks for one: cmd with {port}; url where it answers */
+  devServer: z.object({ cmd: z.string(), portStart: z.number().int().default(5300), url: z.string().default('http://localhost:{port}') }).optional(),
   /**
    * customer patches: apply puts the customer's patch in the new worktree, staged ({customer} {app} {base} {main});
    * writeBack writes the worktree's whole change back as that patch ({customer} {app} {base} {dryRun}: --dry-run or nothing)

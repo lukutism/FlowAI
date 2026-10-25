@@ -36,14 +36,14 @@ async function must(what: string, cmd: string, cwd: string) {
 }
 
 /** a background process in its own process group, its output in a log file */
-function background(cmd: string, cwd: string, log: string): number {
+export function background(cmd: string, cwd: string, log: string): number {
   const fd = openSync(log, 'a')
   const p = spawn('sh', ['-c', cmd], { cwd, detached: true, stdio: ['ignore', fd, fd] })
   p.unref()
   return p.pid!
 }
 
-const canBind = (port: number) => { try { Bun.listen({ hostname: '127.0.0.1', port, socket: { data() {} } }).stop(true); return true } catch { return false } }
+export const canBind = (port: number) => { try { Bun.listen({ hostname: '127.0.0.1', port, socket: { data() {} } }).stop(true); return true } catch { return false } }
 
 /** the first port from start (in steps) that nothing listens on and no other run has taken */
 export async function freePort(start: number, step: number, taken: Set<number> = new Set()): Promise<number> {
@@ -51,7 +51,7 @@ export async function freePort(start: number, step: number, taken: Set<number> =
   throw new Error(`no free port from ${start}`)
 }
 
-async function until(ok: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
+export async function until(ok: () => Promise<boolean>, timeoutMs: number): Promise<boolean> {
   const end = Date.now() + timeoutMs
   while (Date.now() < end) { if (await ok()) return true; await Bun.sleep(300) }
   return ok()

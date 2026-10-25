@@ -180,6 +180,8 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'setup.failed': return { stage: 'setup', text: `setup failed: ${e.reason}` }
     case 'device.ready': return { stage: 'setup', text: `device ${e.platform} ${e.id}, Metro :${e.metroPort}` }
     case 'device.released': return { stage: '', text: 'device stopped' }
+    case 'devserver.ready': return { stage: 'setup', text: `dev server ${e.repo} at ${e.url}` }
+    case 'devserver.stopped': return { stage: '', text: 'dev server stopped' }
     case 'patch.applied': return { stage: 'setup', text: `customer patch ${e.customer}/${e.app}: ${e.summary}` }
     case 'plan.submitted': return { stage: 'plan', text: e.questions.length ? `plan ready, ${e.questions.length} question${e.questions.length > 1 ? 's' : ''}` : 'plan ready, no questions' }
     case 'plan.decided': return { stage: 'plan', text: e.by === 'human' ? 'approved by you' : 'defaults taken at the deadline' }

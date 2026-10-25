@@ -11,7 +11,7 @@ import { appendTranscript, type Entry } from './transcript.ts'
 import type { Windows } from './usage.ts'
 
 export type Command =
-  | { cmd: 'start'; project: string; ticket: number | string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string }
+  | { cmd: 'start'; project: string; ticket: number | string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
@@ -103,7 +103,7 @@ export class Service {
         const run = p.runId(c.ticket)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
-        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch }) })
+        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer }) })
         return { ok: true, run }
       }
       // a run just started may not be recorded yet (its ticket is still being read): it is busy, not missing
