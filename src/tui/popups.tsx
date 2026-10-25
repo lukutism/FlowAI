@@ -94,7 +94,7 @@ const pending = new Map<string, Comment[]>()
  */
 export function DiffPopup({ run, diffs, file, width, height, bind, onClose, onSend }: {
   run: string; diffs: FileDiff[] | null; file?: string; width: number; height: number
-  bind: (k: PopupKeys | null) => void; onClose: () => void; onSend: (text: string) => void
+  bind: (k: PopupKeys | null) => void; onClose: () => void; onSend: (text: string) => Promise<boolean> | void
 }) {
   const lines = diffLines(diffs ?? [])
   const code = (i: number) => ['ctx', 'add', 'del'].includes(lines[i]?.kind ?? '')
@@ -116,7 +116,12 @@ export function DiffPopup({ run, diffs, file, width, height, bind, onClose, onSe
     setComments(text.trim() ? [...rest, { repo: l.repo, file: l.file, ...at(l), code: l.text, text: text.trim() }] : rest)
     setDraft(null)
   }
-  const send = () => { if (!comments.length) return; onSend(reviewMessage(comments, many)); pending.delete(run); setComments([]); onClose() }
+  // the comments are dropped once the service took them; refused (the agent is busy), they stay for another try
+  const send = async () => {
+    if (!comments.length) return
+    if ((await onSend(reviewMessage(comments, many))) === false) return
+    pending.delete(run); setComments([]); onClose()
+  }
   const move = (d: number) => setCur(c => Math.max(0, Math.min(lines.length - 1, Math.min(c, lines.length - 1) + d)))
   const keys: PopupKeys = (key, typed) => {
     const n = key.name

@@ -39,9 +39,10 @@ type Tab = (typeof TABS)[number]
 
 type Mode =
   | { kind: 'list' }
-  | { kind: 'approve'; run: string; editing: boolean; text: string }
-  | { kind: 'ship'; run: string }
-  | { kind: 'message'; run: string; text: string }
+  // back: asked from the run's detail, which stays on screen and comes back afterwards
+  | { kind: 'approve'; run: string; editing: boolean; text: string; back?: boolean }
+  | { kind: 'ship'; run: string; back?: boolean }
+  | { kind: 'message'; run: string; text: string; back?: boolean }
   | { kind: 'new' }
   | { kind: 'settings'; project: string }
   | { kind: 'detail'; run: string }
@@ -99,7 +100,10 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const item = items[sel]
   const current = item?.kind === 'row' ? item.row : undefined
   const attFocused = focus === 'attention' && att.length ? att[Math.min(attSel, att.length - 1)] : undefined
-  const state = attFocused ? api.runs.get(attFocused.run) : current ? api.runs.get(current.run) : undefined
+  // the run on screen: the detail's own (also while one of its confirms is up), else the one selected in a list
+  const detailId = mode.kind === 'detail' || ('back' in mode && mode.back) ? (mode as { run: string }).run : undefined
+  const state = detailId ? api.runs.get(detailId) : attFocused ? api.runs.get(attFocused.run) : current ? api.runs.get(current.run) : undefined
+  const after = (m: Mode): Mode => ('back' in m && m.back ? { kind: 'detail', run: m.run } : { kind: 'list' })
   // the project picker: every project the service knows or a run belongs to, with its runs
   const projectKeys = [...new Set([...(api.projects ?? []).map(p => p.key), ...all.map(r => r.project)])]
   const choices = [{ key: '', name: 'all projects', count: all.length }, ...projectKeys.map(k => ({ key: k, name: api.projects?.find(p => p.key === k)?.name ?? '', count: all.filter(r => r.project === k).length }))]
@@ -111,17 +115,19 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const recent = api.recent ?? []
 
 
-  const send = async (c: Command, done: string) => {
+  /** true when the service took it; a refused new run keeps its form open with what was typed */
+  const send = async (c: Command, done: string): Promise<boolean> => {
     const r = await api.send(c)
     setNotice(r.ok ? done : r.error)
-    setMode(m => (m.kind === 'detail' ? m : { kind: 'list' }))
+    setMode(m => (m.kind === 'detail' || (m.kind === 'new' && !r.ok) ? m : after(m)))
+    return r.ok
   }
 
   // what a key (or the palette) does to a run
   const ask = {
-    approve: (r: RunState) => (r.needs?.kind === 'plan' ? setMode({ kind: 'approve', run: r.id, editing: false, text: '' }) : setNotice(`${r.ticket}: no plan is waiting for you`)),
-    ship: (r: RunState) => (r.needs?.kind === 'ship' || (r.needs?.kind === 'patch' && r.patch) ? setMode({ kind: 'ship', run: r.id }) : setNotice(`${r.ticket} is not ready to ship`)),
-    message: (r: RunState) => setMode({ kind: 'message', run: r.id, text: '' }),
+    approve: (r: RunState) => (r.needs?.kind === 'plan' ? setMode({ kind: 'approve', run: r.id, editing: false, text: '', back: !!detailId }) : setNotice(`${r.ticket}: no plan is waiting for you`)),
+    ship: (r: RunState) => (r.needs?.kind === 'ship' || (r.needs?.kind === 'patch' && r.patch) ? setMode({ kind: 'ship', run: r.id, back: !!detailId }) : setNotice(`${r.ticket} is not ready to ship`)),
+    message: (r: RunState) => setMode({ kind: 'message', run: r.id, text: '', back: !!detailId }),
     port: (r: RunState) => (r.pr ? void send({ cmd: 'port', run: r.id }, `porting ${r.ticket} to develop`) : setNotice(`${r.ticket} has no draft PR to port yet`)),
     release: (r: RunState) => (r.device ? void send({ cmd: 'release', run: r.id }, `stopping ${r.ticket}'s device`) : setNotice(`${r.ticket} has no device`)),
     open: (r: RunState) => setMode({ kind: 'detail', run: r.id }),
@@ -182,7 +188,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (mode.kind === 'settings' && raw && settingsKeys.current?.(raw, typed)) return    // typing goes through the latest state: keys can arrive faster than the screen redraws
     const edit = (f: (text: string) => string) => setMode(prev => ('text' in prev ? ({ ...prev, text: f(prev.text) } as Mode) : prev))
     const input = (m: Extract<Mode, { text: string }>, enter: (text: string) => void) => {
-      if (name === 'escape') return setMode({ kind: 'list' })
+      if (name === 'escape') return setMode(after(m))
       if (name === 'backspace') return edit(x => x.slice(0, -1))
       if (name === 'return') return enter(m.text)
       if (typed) edit(x => x + typed)
@@ -198,13 +204,14 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (mode.kind === 'message') return input(mode, text => { if (text.trim()) void send({ cmd: 'message', run: mode.run, text: text.trim() }, `message sent to ${mode.run}`) })
     if (mode.kind === 'approve' && mode.editing) return input(mode, text => {
       if (!text.trim()) return
-      const answers = Object.fromEntries(text.trim().split(/\s+/).map(p => p.split('=')).filter(p => p.length === 2 && p[1]).map(([k, v]) => [k!.toUpperCase(), v!]))
+      // Q1=only the list Q2=no: an answer runs up to the next question's id
+      const answers = Object.fromEntries(text.trim().split(/\s+(?=Q\d+\s*=)/i).map(p => [p.slice(0, p.indexOf('=')).trim().toUpperCase(), p.slice(p.indexOf('=') + 1).trim()]).filter(([k, v]) => /^Q\d+$/.test(k!) && v))
       void send({ cmd: 'approve', run: mode.run, answers }, `plan approved: ${mode.run}`)
     })
     if (mode.kind === 'approve') {
       if (typed === 'y') return void send({ cmd: 'approve', run: mode.run }, `plan approved with the defaults: ${mode.run}`)
       if (typed === 'e') return setMode({ ...mode, editing: true, text: '' })
-      if (typed === 'n' || name === 'escape') return setMode({ kind: 'list' })
+      if (typed === 'n' || name === 'escape') return setMode(after(mode))
       return
     }
     if (mode.kind === 'ship') {
@@ -213,7 +220,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         const what = !r?.patch ? 'commit, push, draft PR' : r.needs?.kind === 'patch' ? 'writing the patch back' : 'write-back dry run'
         return void send({ cmd: 'ship', run: mode.run }, `shipping ${mode.run}: ${what}`)
       }
-      if (typed === 'n' || name === 'escape') return setMode({ kind: 'list' })
+      if (typed === 'n' || name === 'escape') return setMode(after(mode))
       return
     }
     if ((key.ctrl && name === 'k') || typed === ':') return setPal({ text: '', index: 0 })
@@ -232,10 +239,18 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (name === 'return' && p) return setMode({ kind: 'settings', project: p.key })
       return
     }
-    if (tab !== 'Runs' && mode.kind !== 'detail') return
-    if (name === 'tab' && mode.kind !== 'detail') return setFocus(f => (f === 'runs' && att.length ? 'attention' : 'runs'))
+    // the detail has its own keys: the list's (move, sort, group, filter) don't reach the list behind it
+    if (mode.kind === 'detail') {
+      if (!state) return
+      if (typed === 'a') return ask.approve(state)
+      if (typed === 'S') return ask.ship(state)
+      if (typed === 'p') return ask.port(state)
+      return
+    }
+    if (tab !== 'Runs') return
+    if (name === 'tab') return setFocus(f => (f === 'runs' && att.length ? 'attention' : 'runs'))
     // one cursor through both lists: down past the last item needing you goes into the runs, up from the first run back
-    if (focus === 'attention' && mode.kind !== 'detail') {
+    if (focus === 'attention') {
       const at = Math.min(attSel, att.length - 1)
       if (name === 'down' || typed === 'j') { if (at >= att.length - 1 && items.length) { setFocus('runs'); setSelected(0) } else setAttSel(at + 1); return }
       if (name === 'up' || typed === 'k') return setAttSel(Math.max(at - 1, 0))
@@ -252,7 +267,6 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'a') return ask.approve(state)
     if (typed === 'S') return ask.ship(state)
     if (typed === 'm') return ask.message(state)
-    if (typed === 'p' && mode.kind === 'detail') return ask.port(state)
   }
   useKeyboard(key => handle(key.name, key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : '', key.ctrl, key))
   // pasted text: into whatever is being typed in (one line where a field has one); never read as keys on the runs
@@ -293,12 +307,14 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
     </box>
   )
-  const detailRun = mode.kind === 'detail' ? api.runs.get(mode.run) : undefined
+  const detailRun = detailId ? api.runs.get(detailId) : undefined
   if (detailRun) return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
       <RunDetail api={api} run={detailRun} now={t} width={width} height={height} message={message} bind={k => { detailKeys.current = k }}
-        onMessage={text => void send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} bindPaste={f => { pasteTo.current = f }} />
+        onMessage={text => send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} bindPaste={f => { pasteTo.current = f }} />
+      {inline ? <Confirm mode={mode} run={detailRun} resources={api.resources} onKey={k => handle('', k)} /> : null}
+      {mode.kind === 'message' ? <Bar mode={mode} run={detailRun} message="" compact={!L.tabNames} tab={tab} onKey={handle} /> : null}
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title={`${detailRun.ticket} commands`} onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
     </box>
   )

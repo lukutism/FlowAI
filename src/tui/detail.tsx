@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { EmbeddedTerminalRenderable, type KeyEvent } from '@opentui/core'
 import { extend } from '@opentui/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -137,21 +138,25 @@ export function runLines(r: RunState, o: { plan: string; review: string; changes
 
 // A run's shell: a real one (a PTY) in its worktree. It outlives the pane: its output is kept and replayed into
 // the terminal whenever the pane is shown again.
-interface Shell { proc: Bun.Subprocess; out: Uint8Array[]; size: number; term?: EmbeddedTerminalRenderable; ended: boolean }
+interface Shell { proc?: Bun.Subprocess; out: Uint8Array[]; size: number; term?: EmbeddedTerminalRenderable; ended: boolean; problem?: string }
 const shells = new Map<string, Shell>()
-export function stopShells() { for (const s of shells.values()) { try { s.proc.kill() } catch {} } shells.clear() }
+export function stopShells() { for (const s of shells.values()) { try { s.proc?.kill() } catch {} } shells.clear() }
 process.on('exit', stopShells)
 
+/** the run's shell, started once; one that ended stays ended (its message shown) until i asks for a new one */
 function shellFor(run: string, cwd: string, cols: number, rows: number, redraw: () => void): Shell {
   const had = shells.get(run)
-  if (had && !had.ended) return had
-  const sh: Shell = { proc: undefined as unknown as Bun.Subprocess, out: [], size: 0, ended: false }
-  sh.proc = Bun.spawn([process.env.FLOW_SHELL ?? process.env.SHELL ?? '/bin/zsh'], {
-    cwd, env: { ...process.env, TERM: 'xterm-256color', FLOW_RUN: run },
-    terminal: { cols, rows, data: (_t, d) => { const copy = new Uint8Array(d); sh.out.push(copy); sh.size += copy.length; while (sh.size > 512_000 && sh.out.length > 1) sh.size -= sh.out.shift()!.length; sh.term?.write(copy) } },
-  })
-  void sh.proc.exited.then(() => { sh.ended = true; redraw() })
+  if (had) return had
+  const sh: Shell = { out: [], size: 0, ended: false }
   shells.set(run, sh)
+  if (!existsSync(cwd)) return Object.assign(sh, { ended: true, problem: `The worktree is not there (${cwd}).` })
+  try {
+    sh.proc = Bun.spawn([process.env.FLOW_SHELL ?? process.env.SHELL ?? '/bin/zsh'], {
+      cwd, env: { ...process.env, TERM: 'xterm-256color', FLOW_RUN: run },
+      terminal: { cols, rows, data: (_t, d) => { const copy = new Uint8Array(d); sh.out.push(copy); sh.size += copy.length; while (sh.size > 512_000 && sh.out.length > 1) sh.size -= sh.out.shift()!.length; sh.term?.write(copy) } },
+    })
+    void sh.proc.exited.then(() => { sh.ended = true; redraw() })
+  } catch (e) { Object.assign(sh, { ended: true, problem: `The shell could not start: ${(e as Error).message}` }) }
   return sh
 }
 
@@ -177,7 +182,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   bindPaste?: (f: ((text: string, bytes: Uint8Array) => void) | null) => void
   /** the screen hands its keys here first */
   bind: (keys: DetailKeys | null) => void
-  onMessage: (text: string) => void
+  onMessage: (text: string) => Promise<boolean> | void
 }) {
   const [pane, setPane] = useState<Pane>('agent')
   /** a pop-up over the detail: a file as Markdown, or the change to comment on */
@@ -186,7 +191,10 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const popupKeys = useRef<PopupKeys | null>(null)
   const [split, setSplit] = useState(false)
   const [focus, setFocus] = useState<'none' | 'message' | 'shell'>('none')
-  const [draft, setDraft] = useState('')
+  // the draft in a ref too: enter right after a burst of keys must send all of them
+  const [draft, setDraftState] = useState('')
+  const draftRef = useRef('')
+  const setDraft = (f: (d: string) => string) => { draftRef.current = f(draftRef.current); setDraftState(draftRef.current) }
   const [entries, setEntries] = useState<Entry[]>([])
   const [logs, setLogs] = useState<string[]>([])
   const [text, setText] = useState('')
@@ -247,10 +255,10 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     for (const chunk of shell.out) term.write(chunk)
     // one way in for keys: flow writes each key itself; from the terminal only its own replies (a focused terminal
     // also turns keys into input, and passing that on as well typed every key twice)
-    term.onData = (d, source) => { if (!shell.ended && source !== 'input') shell.proc.terminal?.write(d) }
+    term.onData = (d, source) => { if (!shell.ended && source !== 'input') shell.proc?.terminal?.write(d) }
     return () => { if (shell.term === term) shell.term = undefined }
   }, [showsShell, shell, term])
-  useEffect(() => { if (shell && !shell.ended) shell.proc.terminal?.resize(right - 2, shellRows) }, [shell, right, shellRows])
+  useEffect(() => { if (shell && !shell.ended) shell.proc?.terminal?.resize(right - 2, shellRows) }, [shell, right, shellRows])
 
   // the panes this run has: Metro only with a device, the dev server only when it has one (a web or backend run)
   const panes: { key: Pane; label: string }[] = [{ key: 'agent', label: 'Agent' },
@@ -261,12 +269,17 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     if (popup) { popupKeys.current?.(key, typed); return true }
     if (focus === 'shell') {
       if (key.ctrl && key.name === ']') { setFocus('none'); return true }
-      if (shell && !shell.ended && term) shell.proc.terminal?.write(term.encodeKey(key))
+      if (shell && !shell.ended && term) shell.proc?.terminal?.write(term.encodeKey(key))
       return true
     }
     if (focus === 'message') {
       if (key.name === 'escape') { setFocus('none'); return true }
-      if (key.name === 'return') { if (draft.trim()) { onMessage(draft.trim()); setDraft('') } setFocus('none'); return true }
+      if (key.name === 'return') {
+        const text = draftRef.current.trim()
+        // the draft is cleared once the service took it; a refused message stays to send again
+        if (text) void Promise.resolve(onMessage(text)).then(ok => { if (ok !== false && draftRef.current.trim() === text) setDraft(() => '') })
+        setFocus('none'); return true
+      }
       if (key.name === 'backspace') { setDraft(d => d.slice(0, -1)); return true }
       if (typed) setDraft(d => d + typed)
       return true
@@ -278,7 +291,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     if (typed === 'v') { setSplit(x => !x); return true }
     if (typed === 'd') { setPopup({ kind: 'diff' }); return true }
     if (typed === 'P') { setPopup({ kind: 'md', file: 'plan.md' }); return true }
-    if (typed === 'i') { if (!showsShell) setPane('shell'); setFocus('shell'); return true }
+    if (typed === 'i') { if (shells.get(run.id)?.ended) { shells.delete(run.id); redraw(x => x + 1) } if (!showsShell) setPane('shell'); setFocus('shell'); return true }
     if (typed === 'm') { setPane(p => (split ? p : 'agent')); setFocus('message'); return true }
     return false
   }
@@ -297,7 +310,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   ]
   useEffect(() => { bindCommands?.(commands); return () => bindCommands?.(null) })
   const paste = (text: string, bytes: Uint8Array) => {
-    if (focus === 'shell' && shell && !shell.ended && term) shell.proc.terminal?.write(term.encodePaste(bytes))
+    if (focus === 'shell' && shell && !shell.ended && term) shell.proc?.terminal?.write(term.encodePaste(bytes))
     else if (focus === 'message') setDraft(d => d + text.replace(/\r?\n/g, ' '))
   }
   useEffect(() => { bindPaste?.(paste); return () => bindPaste?.(null) })
@@ -341,7 +354,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     <box flexDirection="column" height={rows + 1} onMouseDown={() => setFocus('shell')}>
       <text><strong>{' Shell '}</strong><span fg={C.secondary}>{`· ${data.worktree ? data.worktree.replace(process.env.HOME ?? '~', '~') : 'no worktree yet'} `}</span>{focus === 'shell' ? <span fg={C.accent}>● typing here · ctrl+] leaves</span> : <span fg={C.faint}>i or a click to type here</span>}</text>
       {shell && !shell.ended ? <terminal ref={setTerm} width={right - 2} height={rows} cols={right - 2} rows={rows} />
-        : <text fg={C.muted}>{shell?.ended ? ' The shell ended. i starts a new one.' : data.worktree ? ' Starting…' : ' The run has no worktree yet.'}</text>}
+        : <text fg={C.muted}>{shell?.problem ? ` ${shell.problem}` : shell?.ended ? ' The shell ended. i starts a new one.' : data.worktree ? ' Starting…' : ' The run has no worktree yet.'}</text>}
     </box>
   )
 

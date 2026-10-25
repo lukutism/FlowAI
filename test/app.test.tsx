@@ -72,6 +72,14 @@ describe('Runs screen', () => {
       expect(t.f.sent).toEqual([{ cmd: 'approve', run: 'fso-105' }])
     } finally { t.s.renderer.destroy() }
   })
+  test('an answer with spaces is kept whole: Q1=only the list Q2=no', async () => {
+    const t = await screen([base('fso-105', { stage: 'plan', status: 'needs-you', needs: { kind: 'plan', ask: '2 open questions', held: false },
+      plan: { summary: 's', questions: [{ id: 'Q1', text: 'a?', default: 'no', held: false }, { id: 'Q2', text: 'b?', default: 'yes', held: false }] } })])
+    try {
+      await t.press('a', 'e', ...'Q1=only the list q2=no', 'enter')
+      expect(t.f.sent).toEqual([{ cmd: 'approve', run: 'fso-105', answers: { Q1: 'only the list', Q2: 'no' } }])
+    } finally { t.s.renderer.destroy() }
+  })
   test('other answers: e, type Q1=yes, enter', async () => {
     const t = await screen()
     try {
@@ -836,6 +844,16 @@ describe('project settings', () => {
       expect(await t.frame()).not.toContain('change not saved')
     } finally { t.s.renderer.destroy() }
   })
+  test('a burst of keys typed faster than the screen redraws: every one lands, and enter keeps them all', async () => {
+    const t = await open()
+    try {
+      await t.press('4'); await k(t, 'enter'); await k(t, 'enter') // the fields of General; Name first
+      await k(t, 'enter')
+      await act(async () => { for (const c of ' Hub') t.s.mockInput.pressKey(c); t.s.mockInput.pressEnter() })
+      const f = await k(t, 'S')
+      expect(f).toMatch(/name[\s\S]*- "?FSO"? +\+ "?FSO Hub"?/)
+    } finally { t.s.renderer.destroy() }
+  })
   test('a list: added to in its editor; a text typed; leaving with changes asks once', async () => {
     const t = await open()
     try {
@@ -896,6 +914,66 @@ describe('fixes from use', () => {
       // on the runs, a paste is not read as keys (a pasted q must not quit)
       await act(async () => { await t.s.mockInput.pasteBracketedText('q') })
       expect(t.quit()).toBe(false)
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe('the run detail acts on its own run', () => {
+  test('opened from the palette while another run is selected: S ships the run on screen, and the screen stays on it', async () => {
+    const t = await screen()
+    try {
+      await t.press('ctrl+k', '1', '0', '4', 'enter')
+      const f = await t.press('S')
+      expect(f).toContain('Ship #104?')
+      expect(f).toContain('Agent') // still the detail
+      await t.press('y')
+      expect(t.f.sent).toEqual([{ cmd: 'ship', run: 'fso-104' }])
+      expect(await t.frame()).toContain('Agent')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('cancelling a confirm goes back to the detail; list keys (/ j s g) do nothing there', async () => {
+    const t = await screen()
+    try {
+      await t.press('ctrl+k', '1', '0', '4', 'enter')
+      await t.press('S', 'n')
+      const f = await t.press('/')
+      expect(f).toContain('Agent')
+      expect(f).not.toContain('Filter by status')
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe('the shell pane of a run without its worktree', () => {
+  test('says so instead of crashing the screen (setup failed, or the worktree was removed)', async () => {
+    const gone = base('fso-9', { stage: 'setup', status: 'failed', needs: { kind: 'setup', ask: 'base origin/x not found' } })
+    const t = await screen([gone], { width: 130, height: 34 }, { file: async (_run: string, name: string) => (name === 'run.json' ? JSON.stringify({ worktree: '/nonexistent/flow/9/mobile' }) : '') })
+    try {
+      await t.press('enter')
+      const f = await t.press('i')
+      expect(f).toContain('The worktree is not there')
+    } finally { stopShells(); t.s.renderer.destroy() }
+  })
+})
+
+describe('what you typed is kept when the service refuses it', () => {
+  const patch = 'diff --git a/src/walk.ts b/src/walk.ts\n--- a/src/walk.ts\n+++ b/src/walk.ts\n@@ -1,2 +1,2 @@\n const a = 1\n-const left = need - got\n+const left = Math.max(0, need - got)\n'
+  test('review comments refused (the run is busy) stay, to send again', async () => {
+    const t = await screen(runs, undefined, { diff: async () => [{ repo: 'mobile', file: 'src/walk.ts', status: 'M', added: 1, removed: 1, patch }] })
+    t.f.a.send = async c => { t.f.sent.push(c); return { ok: false, error: 'fso-105 is busy: wait for its current step to end' } }
+    try {
+      await t.press('enter', 'd'); await act(async () => { await Bun.sleep(50) })
+      await t.press('j', 'j', 'j', 'j', 'c', ...'why?'.split(''), 'enter', 'S'); await act(async () => { await Bun.sleep(20) })
+      expect(t.f.sent).toHaveLength(1)
+      expect(await t.frame()).toContain('1 comment not sent')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a message to the agent refused stays in the box', async () => {
+    const t = await screen()
+    t.f.a.send = async c => { t.f.sent.push(c); return { ok: false, error: 'busy' } }
+    try {
+      await t.press('enter', 'm', ...'try again'.split(''), 'enter'); await act(async () => { await Bun.sleep(20) })
+      expect(t.f.sent).toHaveLength(1)
+      expect(await t.press('m')).toContain('try again▏')
     } finally { t.s.renderer.destroy() }
   })
 })

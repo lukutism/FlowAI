@@ -1,5 +1,5 @@
 import type { KeyEvent } from '@opentui/core'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Command, Query, Reply } from '../service.ts'
 import { C } from './detail.tsx'
 import { changes, fields, get, itemsMap, mapItems, SECTIONS, set, shown, type FieldDef, type Json } from './settings-model.ts'
@@ -34,7 +34,11 @@ export function ProjectSettings({ api, project, width, height, bind, bindPaste, 
   const [focus, setFocus] = useState<'sections' | 'fields'>('sections')
   const [at, setAt] = useState(0)
   const [repo, setRepo] = useState(0)
-  const [edit, setEdit] = useState<Edit | null>(null)
+  // the edit being typed lives in a ref: keys can come faster than the screen redraws, and each must see the last
+  const editRef = useRef<Edit | null>(null)
+  const [, redraw] = useState(0)
+  const setEdit = (e: Edit | null) => { editRef.current = e; redraw(x => x + 1) }
+  const edit = editRef.current
   const [review, setReview] = useState(false)
   const [leaving, setLeaving] = useState(false)
 
@@ -75,6 +79,7 @@ export function ProjectSettings({ api, project, width, height, bind, bindPaste, 
     step(fd, 1)
   }
   const commit = () => {
+    const edit = editRef.current
     if (!edit || !f) return
     if (edit.kind === 'text') {
       const v = edit.value.trim()
@@ -92,7 +97,7 @@ export function ProjectSettings({ api, project, width, height, bind, bindPaste, 
   }
 
   const keys = (key: KeyEvent, typed: string): boolean => {
-    const n = key.name
+    const n = key.name, edit = editRef.current
     if (key.ctrl && n === 'k') return false // the commands, over this screen
     if (review) {
       if (typed === 'y') void save()
@@ -149,7 +154,7 @@ export function ProjectSettings({ api, project, width, height, bind, bindPaste, 
   useEffect(() => { bind(keys); return () => bind(null) })
   // pasted text: into a text being edited, or a list item being added (a field not being typed in takes none)
   const paste = (text: string) => {
-    const one = text.replace(/\r?\n/g, ' ').trim()
+    const one = text.replace(/\r?\n/g, ' ').trim(), edit = editRef.current
     if (edit?.kind === 'text') setEdit({ ...edit, value: edit.value + one })
     else if (edit?.kind === 'list' && edit.adding !== null) setEdit({ ...edit, adding: edit.adding + one })
   }
