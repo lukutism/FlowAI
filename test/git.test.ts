@@ -97,3 +97,24 @@ describe('shipChange: flow\'s own commit and push of the agent\'s uncommitted ch
     expect(await pending(p.wt, 'origin/develop')).toBe(true)
   })
 })
+
+describe('createWorktree: the main checkout\'s local files the agent needs', () => {
+  test('ignored local files (skills, MCP servers, registry auth) are linked in; a tracked folder gets its missing ignored entries; nothing tracked or unignored is touched', async () => {
+    const p = project()
+    writeFileSync(join(p.main, '.gitignore'), 'node_modules/\n.mcp.json\n.npmrc\n.claude/skills/\n.claude/settings.local.json\n')
+    mkdirSync(join(p.main, '.claude', 'commands'), { recursive: true }); writeFileSync(join(p.main, '.claude', 'commands', 'a.md'), 'tracked\n')
+    git(p.main, 'add', '.'); git(p.main, 'add', '-f', '.claude/commands/a.md'); git(p.main, 'commit', '-qm', 'claude'); git(p.main, 'push', '-q', 'origin', 'HEAD:develop')
+    mkdirSync(join(p.main, '.claude', 'skills', 'ui'), { recursive: true }); writeFileSync(join(p.main, '.claude', 'skills', 'ui', 'SKILL.md'), 'skill\n')
+    writeFileSync(join(p.main, '.claude', 'settings.local.json'), '{}\n'); writeFileSync(join(p.main, '.mcp.json'), '{}\n'); writeFileSync(join(p.main, 'notes.txt'), 'not ignored\n')
+    const r = await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/1', base: 'origin/develop', localFiles: ['.claude', '.mcp.json', '.npmrc', 'notes.txt'] })
+    const { lstatSync, readlinkSync } = require('node:fs') as typeof import('node:fs')
+    expect(readlinkSync(join(p.wt, '.mcp.json'))).toBe(join(p.main, '.mcp.json'))
+    expect(readlinkSync(join(p.wt, '.claude', 'skills'))).toBe(join(p.main, '.claude', 'skills'))
+    expect(lstatSync(join(p.wt, '.claude', 'settings.local.json')).isSymbolicLink()).toBe(true)
+    expect(lstatSync(join(p.wt, '.claude', 'commands')).isSymbolicLink()).toBe(false)
+    expect(existsSync(join(p.wt, 'notes.txt'))).toBe(false) // not ignored: it would be shipped
+    expect(existsSync(join(p.wt, '.npmrc'))).toBe(false) // the main checkout has none
+    expect(git(p.wt, 'status', '--porcelain')).toBe('')
+    expect(r.notes.join(' ')).toContain('linked .claude/settings.local.json, .claude/skills, .mcp.json')
+  })
+})

@@ -77,3 +77,20 @@ describe('the run\'s settings: what the security review closed', () => {
     } finally { process.env.PATH = path }
   })
 })
+
+describe('the run\'s settings: CLAUDE.md files that are not for flow\'s agents', () => {
+  test('the project names them (another tool\'s instructions in a parent folder): the settings exclude them, ~ expanded', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-sb-')), home = require('node:os').homedir() as string
+    const s = JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w', claudeMdExcludes: ['~/fso/CLAUDE.md', '**/.hwt/**'] }), 'utf8'))
+    expect(s.claudeMdExcludes).toEqual([`${home}/fso/CLAUDE.md`, '**/.hwt/**'])
+    expect(JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w' }), 'utf8')).claudeMdExcludes).toBeUndefined()
+  })
+})
+
+describe('the run\'s settings: tools the project denies', () => {
+  test('an MCP server\'s write tools are denied by rule, beside the token\'s read rule', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-sb-'))
+    const s = JSON.parse(readFileSync(writeRunSettings({ dir, worktree: '/w', deny: ['/t'], denyTools: ['mcp__azure-devops__repo_pull_request_write'] }), 'utf8'))
+    expect(s.permissions.deny).toEqual(['Read(//t)', 'mcp__azure-devops__repo_pull_request_write'])
+  })
+})

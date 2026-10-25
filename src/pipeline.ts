@@ -228,7 +228,7 @@ export class Pipeline {
     try {
       for (const r of m.repos) {
         const c = this.repoConfig(r.key)
-        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install }))
+        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles }))
         notes.push(...w.notes.map(n => `${r.key}: ${n}`))
       }
     } catch (e) {
@@ -514,7 +514,7 @@ export class Pipeline {
     if (cached) return cached
     const m = this.meta(run)
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.planFile(run), this.prFile(run)], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox })
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.planFile(run), this.prFile(run)], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent
@@ -654,7 +654,7 @@ export class Pipeline {
     if (!this.d.project.review.enabled) return skip('review is off for this project')
     if (!this.d.makeReviewer) return skip('no reviewer configured')
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
-    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox })
+    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
     const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')

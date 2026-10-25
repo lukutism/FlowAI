@@ -11,12 +11,15 @@ const expand = (p: string) => resolve(p.replace(/^~(?=\/|$)/, homedir()))
  * plugins, skills, MCP servers and hooks all stay; flow adds only its guard.
  * deny: files the agent must not read (flow's token).
  */
-export function writeRunSettings(o: { dir: string; worktree: string; allow?: string[]; deny?: string[]; sandbox?: Record<string, unknown> }): string {
+export function writeRunSettings(o: { dir: string; worktree: string; allow?: string[]; deny?: string[]; sandbox?: Record<string, unknown>; claudeMdExcludes?: string[]; denyTools?: string[] }): string {
   const deny = o.deny ?? []
   // a guard that fails to start would otherwise let the tool through (a hook's error is not a refusal); exit 2 blocks
   const command = `FLOW_WORKTREE=${sh(o.worktree)} FLOW_ALLOW=${sh((o.allow ?? []).join(':'))} FLOW_DENY=${sh(deny.join(':'))} ${sh(process.execPath)} ${sh(GUARD)} || { echo 'flow guard failed to run' >&2; exit 2; }`
   const settings: Record<string, unknown> = { hooks: { PreToolUse: [{ matcher: 'Bash|Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command }] }] } }
-  if (deny.length) settings.permissions = { deny: deny.map(f => `Read(/${f})`) }
+  const denied = [...deny.map(f => `Read(/${f})`), ...(o.denyTools ?? [])]
+  if (denied.length) settings.permissions = { deny: denied }
+  // CLAUDE.md files above the worktree meant for something else (another tool's agents): not loaded
+  if (o.claudeMdExcludes?.length) settings.claudeMdExcludes = o.claudeMdExcludes.map(p => (p.startsWith('~/') ? expand(p) : p))
   // the project's OS sandbox (Claude Code's): shell commands can then write only where it allows, the run's own
   // folders first; this closes what the guard can't see (a redirect such as echo > ../x)
   if (o.sandbox) {

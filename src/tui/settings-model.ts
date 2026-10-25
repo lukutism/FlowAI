@@ -51,6 +51,8 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
       { kind: 'text', label: 'Name', path: ['name'] },
       { kind: 'text', label: 'Worktrees', path: ['worktrees'], hint: "where runs' worktrees go" },
       { kind: 'list', label: 'Brief', path: ['brief'], hint: 'what agents should know: tools to check data with, where things are (a line each)' },
+      { kind: 'list', label: 'Local files', path: ['localFiles'], hint: "the main checkout's ignored files each worktree gets: .claude, .mcp.json, .npmrc" },
+      { kind: 'list', label: 'Not loaded', path: ['claudeMdExcludes'], hint: "CLAUDE.md files agents skip: another tool's, in a folder above" },
     ]
     case 'Tickets & PRs': return [
       { kind: 'heading', label: 'Tickets', hint: tracker === 'jira' ? 'Jira' : 'Azure DevOps' },
@@ -117,6 +119,8 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
       { kind: 'heading', label: 'Review and plan' },
       { kind: 'toggle', label: 'Review', path: ['review', 'enabled'], fallback: true, hint: 'read-only, findings ≥80% go back to the agent' },
       { kind: 'number', label: 'Plan deadline', path: ['plan', 'deadlineMinutes'], fallback: 30, hint: 'minutes' },
+      { kind: 'heading', label: 'Tools' },
+      { kind: 'list', label: 'Denied tools', path: ['denyTools'], hint: "tools agents can't call: an MCP server's write tools (permission rules)" },
     ]
     case 'Devices': {
       const d = get(json, ['devices'])

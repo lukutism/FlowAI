@@ -93,6 +93,12 @@ const project = z.object({
   }).default({}),
   /** Claude Code's OS sandbox for the agents' shell commands (its settings block); flow adds the run's folders */
   sandbox: z.record(z.unknown()).optional(),
+  /** CLAUDE.md files (paths or globs) the agents don't load: another tool's instructions in a folder above the worktrees */
+  claudeMdExcludes: z.array(z.string()).optional(),
+  /** the main checkout's git-ignored files linked into each worktree (project skills, .mcp.json, .npmrc, a code index) */
+  localFiles: z.array(z.string()).default([]),
+  /** tools the agents may not call (an MCP server's write tools); permission rules, as in Claude Code's settings */
+  denyTools: z.array(z.string()).default([]),
   /** an independent reviewer (a fresh, read-only claude session) before ship */
   review: z.object({ enabled: z.boolean().default(true) }).default({}),
   /** what the agent should know about this project, from you (tools to check data with, where things are): a line each */

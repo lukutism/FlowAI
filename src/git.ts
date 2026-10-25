@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { changedFiles } from './verify.ts'
@@ -16,7 +16,7 @@ const tail = (s: string, n = 6) => s.split('\n').slice(-n).join('\n')
  * The run's own git worktree on a new branch from its base. node_modules is cloned from the user's main checkout
  * (copy-on-write on APFS, so instant and separate), then the project's install brings it in line with the base.
  */
-export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string }): Promise<{ notes: string[] }> {
+export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[] }): Promise<{ notes: string[] }> {
   const notes: string[] = []
   const fetch = await run(['git', 'fetch', '--prune', '--quiet', 'origin'], o.repo)
   if (fetch.code !== 0) notes.push(`fetch failed, using local refs: ${tail(fetch.err, 1)}`)
@@ -25,6 +25,8 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   mkdirSync(dirname(o.worktree), { recursive: true })
   const add = await run(['git', 'worktree', 'add', '--quiet', '--no-track', '-b', o.branch, o.worktree, o.base], o.repo)
   if (add.code !== 0) throw new Error(`git worktree add failed: ${tail(add.err)}`)
+  const linked = await linkLocal(o.repo, o.worktree, o.localFiles ?? [])
+  if (linked.length) notes.push(`linked ${linked.join(', ')} from the main checkout`)
   const nm = join(o.repo, 'node_modules')
   if (existsSync(nm)) {
     // macOS: cp -c clones the whole tree in one call (APFS clonefile); elsewhere a per-file copy-on-write copy
@@ -91,4 +93,30 @@ export async function contentHash(worktree: string): Promise<string> {
     const tree = await run(['git', 'write-tree'], worktree, env)
     return add.code === 0 && tree.code === 0 ? tree.out : ''
   } finally { rmSync(tmp, { force: true }) }
+}
+
+/**
+ * The main checkout's local files git ignores (project skills, .mcp.json, registry auth, a code index) linked into
+ * the worktree, so its agent has the same setup. Only ignored ones: anything else would be shipped. A folder the
+ * repo tracks gets its missing ignored entries one by one. Links point out of the worktree, so the guard and the
+ * sandbox keep the agent from writing through them.
+ */
+async function linkLocal(repo: string, worktree: string, names: string[]): Promise<string[]> {
+  const out: string[] = []
+  const ignored = async (rel: string) => (await run(['git', 'check-ignore', '-q', '--no-index', rel], worktree)).code === 0
+  const one = async (rel: string) => {
+    const src = join(repo, rel), dst = join(worktree, rel)
+    if (!existsSync(src)) return
+    if (existsSync(dst)) {
+      if (statSync(dst).isDirectory() && statSync(src).isDirectory()) for (const c of readdirSync(src).sort()) await one(join(rel, c))
+      return
+    }
+    // a folder is asked about as one (a rule like skills/ matches only folders, and it isn't in the worktree yet)
+    if (!(await ignored(statSync(src).isDirectory() ? `${rel}/` : rel))) return
+    mkdirSync(dirname(dst), { recursive: true })
+    symlinkSync(src, dst)
+    out.push(rel)
+  }
+  for (const n of names) await one(n)
+  return out
 }
