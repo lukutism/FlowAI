@@ -401,11 +401,11 @@ describe('the command palette', () => {
     try {
       const f = await t.press('ctrl+k')
       expect(f).toContain('New run')
-      expect(f).toContain('Open #103 Title fso-103')
+      expect(f).toContain('Open #103 develop Title fso-103')
       expect(f).not.toContain('Message') // a run's own commands are in its detail
       await t.press(...'103'.split(''))
       const g = await t.frame()
-      expect(g).toContain('▸ Open #103 Title fso-103')
+      expect(g).toContain('▸ Open #103 develop Title fso-103')
       expect(g).not.toContain('Open #105')
       expect(await t.press('enter')).toContain('← esc  #103')
     } finally { t.s.renderer.destroy() }
