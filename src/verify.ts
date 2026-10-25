@@ -85,6 +85,9 @@ function newOnes(head: string[], base: string[]): string[] {
   return head.filter(h => { const n = left.get(h) ?? 0; if (n) { left.set(h, n - 1); return false } return true })
 }
 
+/** base findings by worktree, commit, step and files: the base doesn't change while the agent loops on its change */
+const BASE = new Map<string, Run>()
+
 export async function verify(worktree: string, steps: VerifyStep[]): Promise<VerifyResult> {
   // tools report real paths (macOS: /var is /private/var); compare against the worktree's real path
   const wt = realpathSync(worktree)
@@ -94,20 +97,31 @@ export async function verify(worktree: string, steps: VerifyStep[]): Promise<Ver
   const todo = steps.map(s => ({ s, files: filesFor(s) }))
   const head = await Promise.all(todo.map(t => (t.s.changedOnly && !t.files.length ? null : runStep(t.s, wt, t.files))))
 
-  // the base: the same tree with the change set aside (untracked files too), restored whatever happens
-  const stash = git(wt, 'stash', 'push', '--include-untracked', '-m', 'flow verify: base run')
-  if (stash.code !== 0) throw new Error(`could not set the change aside for the base run: ${stash.err.trim()}`)
-  let base: (Run | null)[]
-  try {
-    base = await Promise.all(todo.map(t => {
-      if (t.s.changedOnly && !t.files.length) return null
-      const atBase = t.files.filter(f => existsSync(join(wt, f)))
-      return t.s.changedOnly && !atBase.length ? { findings: [] } : runStep(t.s, wt, atBase).then(r => r ?? { findings: [] })
-    }))
-  } finally {
-    const pop = git(wt, 'stash', 'pop', '--index')
-    if (pop.code !== 0) throw new Error(`the change could not be restored after the base run; it is kept in git stash (${pop.err.trim()})`)
+  // the base: the same tree with the change set aside (untracked files too), restored whatever happens. Its
+  // findings depend only on the commit and the files asked about, so a later loop on the same commit reuses them.
+  const headSha = git(wt, 'rev-parse', 'HEAD').out.trim()
+  const atBase = todo.map(t => t.files.filter(f => git(wt, 'cat-file', '-e', `HEAD:${f}`).code === 0))
+  const keys = todo.map((t, i) => `${wt}|${headSha}|${t.s.name}|${t.s.cmd}|${atBase[i]!.join(',')}`)
+  const needed = todo.map((t, i) => !(t.s.changedOnly && !t.files.length) && !(t.s.changedOnly && !atBase[i]!.length) && !BASE.has(keys[i]!))
+  if (needed.some(Boolean)) {
+    const before = git(wt, 'rev-parse', '--verify', '--quiet', 'refs/stash').out.trim()
+    const stash = git(wt, 'stash', 'push', '--include-untracked', '-m', 'flow verify: base run')
+    if (stash.code !== 0) throw new Error(`could not set the change aside for the base run: ${stash.err.trim()}`)
+    // never clean a tree whose change was not set aside: that would delete the agent's work
+    if (git(wt, 'rev-parse', '--verify', '--quiet', 'refs/stash').out.trim() === before) throw new Error('git stash set nothing aside for the base run; verify stopped before touching the worktree')
+    try {
+      const runs = await Promise.all(todo.map((t, i) => (needed[i] ? runStep(t.s, wt, atBase[i]!).then(r => r ?? { findings: [] }) : null)))
+      runs.forEach((r, i) => { if (r) BASE.set(keys[i]!, r) })
+    } finally {
+      // what the base run left (a cache file, a rewritten file) goes first: the stash holds every change of the
+      // agent's, untracked files included, so anything here now is the tools' own
+      git(wt, 'reset', '--quiet', '--hard')
+      git(wt, 'clean', '-fdq')
+      const pop = git(wt, 'stash', 'pop', '--index')
+      if (pop.code !== 0) throw new Error(`the change could not be restored after the base run; it is kept in git stash (${pop.err.trim()})`)
+    }
   }
+  const base: (Run | null)[] = todo.map((t, i) => (t.s.changedOnly && !t.files.length ? null : t.s.changedOnly && !atBase[i]!.length ? { findings: [] } : BASE.get(keys[i]!) ?? { findings: [] }))
 
   const results: StepResult[] = todo.map((t, i) => {
     const h = head[i], b = base[i]

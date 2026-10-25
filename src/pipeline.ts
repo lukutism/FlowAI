@@ -520,6 +520,9 @@ export class Pipeline {
     return agent
   }
 
+  /** the run's agent process closed (it holds about 2 GB); its next turn starts one again on the same session */
+  async closeAgent(run: string) { await this.agents.get(run)?.close?.() }
+
   async close() { await Promise.all([...this.agents.values()].map(a => a.close?.())) }
 
   private readPlan(run: string): { plan: ReturnType<typeof parsePlan> } | { problem: string } {

@@ -42,9 +42,12 @@ export class ClaudeAgent implements Agent {
         const next = await this.lines!.next()
         if (next.done) {
           const code = await proc.exited
+          if (this.proc === proc) this.proc = undefined // the next turn starts a new process on the same session
           throw new Error(`claude exited with ${code} before the turn ended: ${this.stderr.trim().split('\n').slice(-3).join(' | ') || '(no stderr)'}`)
         }
         for (const e of parseLine(next.value)) {
+          // the session to resume if this process ends (a crash, or closed to free its memory)
+          if ((e.kind === 'session' || e.kind === 'result') && e.session) this.o = { ...this.o, resume: e.session }
           yield e
           if (e.kind === 'result') return
         }

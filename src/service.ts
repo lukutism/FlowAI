@@ -229,7 +229,12 @@ export class Service {
         for (const l of this.notices) l({ run, text: (e as Error).message })
       }
     })()
-      .finally(() => { this.busy.delete(run) })
+      .finally(() => {
+        this.busy.delete(run)
+        // a run that stopped for the human (or ended) gives its agent process back; the next turn resumes the session
+        const s = this.d.store.state(run)
+        if (s && s.status !== 'running' && s.status !== 'waiting' && s.status !== 'paused') void this.pipeline(s.project).closeAgent(run)
+      })
     this.busy.set(run, p)
   }
 }

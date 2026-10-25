@@ -32,7 +32,7 @@ function setup(turns: (d: { root: string; data: string }) => FakeTurn[]) {
   const svc = new Service({ store, projects: { ex: project }, az, dataDir: data, gitEnv: env, now: () => now, makeAgent: () => agent })
   const notices: string[] = []
   svc.onNotice(n => notices.push(`${n.run}: ${n.text}`))
-  return { svc, store, notices, data, at: (iso: string) => { now = Date.parse(iso) } }
+  return { svc, store, notices, data, agent, at: (iso: string) => { now = Date.parse(iso) } }
 }
 const planWith = (data: string, q: string) => () => { mkdirSync(join(data, 'runs', 'ex-1'), { recursive: true }); writeFileSync(join(data, 'runs', 'ex-1', 'plan.md'), `# Plan\n\nDo it.\n\n## Open questions\n${q}\n`) }
 
@@ -155,5 +155,17 @@ describe('Service: after a restart, and when a step throws', () => {
     t.svc.dispatch({ cmd: 'message', run: 'ex-7', text: 'go on' })
     await t.svc.idle()
     expect(t.store.state('ex-7')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/run\.json|ENOENT/) } })
+  })
+})
+
+describe('Service: idle agents are closed', () => {
+  test('a run that stops for you has its agent process closed (about 2 GB each); one still working keeps it', async () => {
+    const t = setup(d => [turn(planWith(d.data, '- Q1: x? — default: y'))])
+    let closed = 0
+    ;(t.agent as unknown as { close: () => Promise<void> }).close = async () => { closed++ }
+    t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 })
+    await t.svc.idle()
+    expect(t.store.state('ex-1')).toMatchObject({ status: 'needs-you' })
+    expect(closed).toBe(1)
   })
 })

@@ -112,3 +112,39 @@ describe('verify per package (a monorepo whose tools run inside each package)', 
     expect(r.steps[0]!.newFindings).toEqual(['packages/a/src/x.ts|src/x.ts works'])
   })
 })
+
+describe('verify: the base run leaves nothing behind', () => {
+  test('a tool that writes a cache file the repo does not ignore: the change comes back, no stash is left, verify works again', async () => {
+    const wt = repo()
+    const cache: VerifyStep = { name: 'cache', kind: 'command', cmd: 'echo x > .toolcache && true', changedOnly: false }
+    writeFileSync(join(wt, 'src/b.ts'), 'const b = 3\n')
+    for (let i = 0; i < 2; i++) {
+      const r = await verify(wt, [cache])
+      expect(r.ok).toBe(true)
+    }
+    expect(readFileSync(join(wt, 'src/b.ts'), 'utf8')).toBe('const b = 3\n')
+    expect(new TextDecoder().decode(git(wt, 'stash', 'list').stdout)).toBe('')
+  })
+  test('a tool that rewrites a tracked file at the base: the base is put back before the change returns', async () => {
+    const wt = repo()
+    const fmt: VerifyStep = { name: 'fmt', kind: 'command', cmd: 'echo "// formatted" >> src/a.ts', changedOnly: false }
+    writeFileSync(join(wt, 'src/b.ts'), 'const b = 3\n')
+    await verify(wt, [fmt])
+    expect(readFileSync(join(wt, 'src/b.ts'), 'utf8')).toBe('const b = 3\n')
+    expect(new TextDecoder().decode(git(wt, 'stash', 'list').stdout)).toBe('')
+  })
+  test('the base is checked once per commit: a second verify on the same base runs the tool only on the change', async () => {
+    const wt = repo(), counter = join(mkdtempSync(join(tmpdir(), 'flow-count-')), 'n')
+    const count: VerifyStep = { name: 'count', kind: 'command', cmd: `echo run >> ${counter}`, changedOnly: false }
+    const runs = () => readFileSync(counter, 'utf8').split('\n').filter(Boolean).length
+    writeFileSync(join(wt, 'src/b.ts'), 'const b = 3\n')
+    await verify(wt, [count])
+    expect(runs()).toBe(2) // the change, then the base
+    writeFileSync(join(wt, 'src/b.ts'), 'const b = 4\n')
+    await verify(wt, [count])
+    expect(runs()).toBe(3)
+    git(wt, 'commit', '-qam', 'moved on'); writeFileSync(join(wt, 'src/b.ts'), 'const b = 5\n')
+    await verify(wt, [count])
+    expect(runs()).toBe(5) // a new base commit: checked again
+  })
+})
