@@ -173,7 +173,7 @@ describe('Run detail', () => {
       expect(f).toContain('R1 [P1] src/b.ts:4 the order list')
       expect(f).toMatch(/\d\d:\d\d setup +started from b/)
       expect(f).toMatch(/\d\d:\d\d plan +plan ready, no questions/)
-      expect(f).toMatch(/Agent +Diff +Plan +Shell/) // no Metro without a device, no dev server without one
+      expect(f).toMatch(/Agent +Shell/) // no Metro without a device, no dev server without one
       expect(f).not.toMatch(/Metro|Dev server/)
       expect(await t.press('esc')).toContain('Needs attention')
     } finally { t.s.renderer.destroy() }
@@ -211,8 +211,8 @@ describe('Run detail', () => {
     const withDevice = [base('fso-105', { device: { platform: 'android', id: 'emulator-5700', metroPort: 8300 }, devServer: { repo: 'portal', port: 5300, url: 'https://localhost:5300' } })]
     const t = await screen(withDevice, undefined, { log: async (_r, name) => (name === 'metro' ? [' BUNDLE  ./index.js 78%', ' WARN  Require cycle'] : [' VITE ready in 812 ms']) })
     try {
-      expect(await t.press('enter')).toMatch(/Agent +Diff +Plan +Metro ● +Dev server ● +Shell/)
-      await t.press(']', ']', ']')
+      expect(await t.press('enter')).toMatch(/Agent +Metro ● +Dev server ● +Shell/)
+      await t.press(']')
       await act(async () => { await Bun.sleep(20) })
       const f = await t.frame()
       expect(f).toMatch(/Metro :8300 ● running +metro\.log/)
@@ -221,34 +221,73 @@ describe('Run detail', () => {
       expect(await t.frame()).toMatch(/dev server portal https:\/\/localhost:5300 ● running[\s\S]*VITE ready in 812 ms/)
     } finally { t.s.renderer.destroy() }
   })
-  test('Diff: each changed file with its lines added and removed', async () => {
+  test('d opens the change: each file, its lines numbered before and after; a file too large is named', async () => {
     const patch = 'diff --git a/src/walk.ts b/src/walk.ts\n--- a/src/walk.ts\n+++ b/src/walk.ts\n@@ -1,2 +1,2 @@\n const a = 1\n-const left = need - got\n+const left = Math.max(0, need - got)\n'
     const t = await screen(runs, undefined, { diff: async () => [{ repo: 'mobile', file: 'src/walk.ts', status: 'M', added: 1, removed: 1, patch }, { repo: 'mobile', file: 'yarn.lock', status: 'M', added: 4000, removed: 10, patch: '' }] })
     try {
-      await t.press('enter', ']'); await act(async () => { await Bun.sleep(50) })
+      await t.press('enter', 'd'); await act(async () => { await Bun.sleep(50) })
       const f = await t.frame()
-      expect(f).toMatch(/2 files +\+4001 −11/)
+      expect(f).toMatch(/Diff +2 files +\+4001 −11/)
       expect(f).toMatch(/M src\/walk\.ts +\+1 −1/)
-      expect(f).toContain('- const left = need - got')
-      expect(f).toContain('+ const left = Math.max(0, need - got)')
+      expect(f).toMatch(/1 +1 +const a = 1/)
+      expect(f).toMatch(/2 +- const left = need - got/)
+      expect(f).toMatch(/2 \+ const left = Math\.max\(0, need - got\)/)
       expect(f).toContain('too large to show here')
+      expect(await t.press('esc')).not.toContain('from where the branch left its base')
     } finally { t.s.renderer.destroy() }
   })
-  test('Plan, the ticket, the PR, the review are drawn as Markdown', async () => {
-    const t = await screen(runs, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nClamp the **remaining** quantity.\n\n## Approach\n- one\n- two\n' : '') })
+  test('in the change, c comments the line under the cursor; S sends the comments to the agent as one message', async () => {
+    const patch = 'diff --git a/src/walk.ts b/src/walk.ts\n--- a/src/walk.ts\n+++ b/src/walk.ts\n@@ -1,2 +1,2 @@\n const a = 1\n-const left = need - got\n+const left = Math.max(0, need - got)\n'
+    const t = await screen(runs, undefined, { diff: async () => [{ repo: 'mobile', file: 'src/walk.ts', status: 'M', added: 1, removed: 1, patch }] })
     try {
-      await t.press('enter', ']', ']'); await act(async () => { await Bun.sleep(80) })
+      await t.press('enter', 'd'); await act(async () => { await Bun.sleep(50) })
+      // the file, the hunk, a = 1, the removed line, the added one
+      await t.press('j', 'j', 'j', 'j', 'c', ...'what if need is undefined?'.split(''))
+      expect(await t.frame()).toContain('┃ what if need is undefined?▏')
+      const f = await t.press('enter')
+      expect(f).toContain('┃ what if need is undefined?')
+      expect(f).toContain('1 comment not sent')
+      await t.press('S')
+      expect(t.f.sent).toEqual([{ cmd: 'message', run: 'fso-105', text: 'Review comments on your change (1):\n\nsrc/walk.ts:2\n> const left = Math.max(0, need - got)\nwhat if need is undefined?\n\nAddress each one in the code, or answer it if you disagree; then stop.' }])
+      expect(await t.frame()).not.toContain('from where the branch left its base')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a click on a changed file opens the change there; x removes a comment', async () => {
+    const one = (file: string) => `diff --git a/${file} b/${file}\n--- a/${file}\n+++ b/${file}\n@@ -1 +1 @@\n-x\n+y\n`
+    const t = await screen(runs, undefined, { changes: async () => [{ repo: 'mobile', file: 'src/a.ts', added: 1, removed: 1, status: 'M' }, { repo: 'mobile', file: 'src/b.ts', added: 1, removed: 1, status: 'M' }],
+      diff: async () => [{ repo: 'mobile', file: 'src/a.ts', status: 'M', added: 1, removed: 1, patch: one('src/a.ts') }, { repo: 'mobile', file: 'src/b.ts', status: 'M', added: 1, removed: 1, patch: one('src/b.ts') }] })
+    try {
+      await t.press('enter'); await act(async () => { await Bun.sleep(30) })
+      const p = at(await t.frame(), 'M src/b.ts')
+      await act(async () => { await t.s.mockMouse.click(p.x + 3, p.y) }); await act(async () => { await Bun.sleep(50) })
+      expect(await t.frame()).toMatch(/▌ M src\/b\.ts/)
+      await t.press('j', 'j', 'j', 'c', 'n', 'o', 'enter')
+      expect(await t.frame()).toContain('1 comment not sent')
+      // a comment not sent waits for the next time the change is opened
+      await t.press('esc', 'd'); await act(async () => { await Bun.sleep(50) })
+      expect(await t.frame()).toContain('1 comment not sent')
+      await t.press(']', 'j', 'j', 'j')
+      expect(await t.press('x')).not.toContain('comment not sent')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('the plan, the ticket, the PR, the review open as Markdown over the detail', async () => {
+    const t = await screen(runs, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nClamp the **remaining** quantity.\n\n## Approach\n- one\n- two\n' : n === 'pr.md' ? '# Fix picking\n\nVerified: yarn tsc → ok\n' : '') })
+    try {
+      await t.press('enter', 'P'); await act(async () => { await Bun.sleep(80) })
       const f = await t.frame()
-      expect(f).toContain('Clamp the remaining quantity.')
-      expect(f).not.toContain('**remaining**')
-      expect(f).not.toContain('## Approach')
+      expect(f).toContain('plan.md')
       expect(f).toContain('Approach')
+      expect(f).not.toContain('## Approach')
+      await t.press('esc')
+      const p = at(await t.frame(), 'pr.md  ')
+      await act(async () => { await t.s.mockMouse.click(p.x, p.y) }); await act(async () => { await Bun.sleep(80) })
+      expect(await t.frame()).toContain('Verified: yarn tsc → ok')
     } finally { t.s.renderer.destroy() }
   })
   test('a click on Agent puts you in its message box, which stays above the shell when split', async () => {
     const t = await screen()
     try {
-      const f = await t.press('enter', ']')
+      const f = await t.press('enter')
       const p = at(f, 'Agent')
       await act(async () => { await t.s.mockMouse.click(p.x + 1, p.y) })
       await t.press(...'hello'.split(''))
@@ -261,14 +300,6 @@ describe('Run detail', () => {
       expect(box).toBeGreaterThan(0)
       expect(box).toBeLessThan(shell)
     } finally { t.s.renderer.destroy(); stopShells() }
-  })
-  test('the files: a click opens one in the right pane', async () => {
-    const t = await screen()
-    try {
-      const p = at(await t.press('enter'), 'plan.md  ')
-      await act(async () => { await t.s.mockMouse.click(p.x, p.y) })
-      expect(await t.frame()).toContain('Guard the walk against missing assets.')
-    } finally { t.s.renderer.destroy() }
   })
   test('the Shell pane: a real shell in the run\'s worktree; i types into it, ctrl+] leaves; v splits it with the session', async () => {
     const wt = mkdtempSync(join(tmpdir(), 'flow-shell-'))
@@ -285,7 +316,7 @@ describe('Run detail', () => {
       expect(f).toContain('typing in Shell')
       await act(async () => { t.s.mockInput.pressKey(']', { ctrl: true }) })
       f = await t.frame()
-      expect(f).toContain('esc back   [ ] pane')
+      expect(f).toContain('esc back   d diff   P plan   [ ] pane')
       f = await t.press('v')
       expect(f).toContain('split on')
       expect(f).toContain('No agent session recorded for this run yet.')

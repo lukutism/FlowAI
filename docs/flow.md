@@ -12,7 +12,9 @@ weekly windows, which flow reads from the CLI after every turn.
 1. Bun, git, and the `claude` CLI signed in to your subscription. For Azure DevOps, the `az` CLI signed in; for
    GitHub, `gh`; for Jira, an API token in the macOS keychain (`security add-generic-password -U -s flow-jira -a <email> -w`).
 2. A project file in `~/.config/flow/projects/<key>.json` (see `test/fixtures/project.example.json`):
-   - `tracker`: Azure DevOps (`org`, `project`) or Jira (`site`, `key`, `email`, `keychain`)
+   - `tracker`: Azure DevOps (`org`, `project`) or Jira (`site`, `key`, `email`, `keychain`). An Azure ticket may sit on any
+     board of the organisation (a customer's too): it is read from its own board, its code and PRs go to the project's
+     repos; a number or a pasted link both work
    - `forge`: Azure DevOps or GitHub (`owner`)
    - `repos`: each repo's main checkout, default base, release branch patterns, install command and verify steps
      (`tsc`, `eslint`, `jest`, `vitest` or a `command`; `perPackage` runs a step inside each package of a monorepo);
@@ -38,7 +40,7 @@ weekly windows, which flow reads from the CLI after every turn.
 | `p` in a run's detail | Port a shipped run to develop (also in the commands) |
 | `s` / `g` / `/` | Sort (newest, oldest, latest activity, tokens) / group by stage (`↵` on a group folds it) / filter: `project:fso status:needs-you stage:build` or any text; `esc` clears it |
 | `ctrl+k` or `:` | Commands: every action for the selected run, filters, sorts, tabs, typed to narrow |
-| `↵` / `esc` | A run's detail / back. The run on the left (what it needs, plan and answers, verify and review, the files it changed, the timeline, its files); panes on the right: Agent (the session live; its message box right under it, a click on Agent types there), Diff (each changed file, from where the branch left its base), Plan (and the ticket, PR, review: drawn as Markdown), Metro (runs with a device), Dev server (runs with one), Shell (a real shell in the worktree: `i` types into it, `ctrl+]` leaves); `[` `]` switch panes, `v` splits a pane with the shell |
+| `↵` / `esc` | A run's detail / back. The run on the left (what it needs, plan and answers, verify and review, the files it changed, the timeline); the live panes on the right: Agent (the session; its message box right under it, a click on Agent types there), Metro (runs with a device), Dev server (runs with one), Shell (a real shell in the worktree: `i` types into it, `ctrl+]` leaves); `[` `]` switch panes, `v` splits a pane with the shell. A click on Plan, a review line or a file (or `P`) opens it as Markdown over the detail; a click on Changes or a changed file (or `d`) opens the change: `j`/`k` move line by line, `[` `]` file by file, `c` comments the line (as on a PR), `x` removes a comment, `S` sends them to the agent as one message (file, line, the code quoted, your words); comments not sent wait for the next time |
 
 The mouse works too: click a tab, a run (a second click opens it), an item's key hint, a confirm's answer, a command,
 or any key in the bottom line; the wheel over the table moves the selection. To select text for copying while the

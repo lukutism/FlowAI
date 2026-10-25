@@ -19,7 +19,8 @@ export interface Tracker {
 
 export function azureTracker(az: Az, t: { org: string; project: string }): Tracker {
   return {
-    parseKey: arg => { const m = /^#?(\d+)$/.exec(arg.trim()); return m ? { id: Number(m[1]), key: `#${m[1]}` } : null },
+    // a number, or a work item's link from any board of the organisation (a customer's board too)
+    parseKey: arg => { const m = /^#?(\d+)$/.exec(arg.trim()) ?? /\/_workitems\/edit\/(\d+)/.exec(arg); return m ? { id: Number(m[1]), key: `#${m[1]}` } : null },
     read: async id => azureTicket(az, t, Number(id)),
   }
 }

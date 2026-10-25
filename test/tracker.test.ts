@@ -27,6 +27,7 @@ describe('jiraTracker', () => {
     expect(t.parseKey('sgl-692')).toEqual({ id: 'SGL-692', key: 'SGL-692' })
     expect(t.parseKey('ABC-1')).toBeNull()
     expect(t.parseKey('692')).toBeNull()
+    expect(t.parseKey('https://x.atlassian.net/browse/SGL-692')).toEqual({ id: 'SGL-692', key: 'SGL-692' })
   })
   test('the issue as the agent reads it: Markdown from Jira\'s document format, comments newest first, attachments named', async () => {
     const tk = await t.read('SGL-692')
@@ -65,5 +66,16 @@ describe('githubForge', () => {
   test('gh not logged in says so', () => {
     const gh: Gh = () => ({ code: 1, out: '', err: 'To get started with GitHub CLI, please run:  gh auth login' })
     expect(() => githubForge({ kind: 'github', owner: 'O' }, gh).draftPr({ repository: 'r', head: 'h', base: 'b', title: 't', body: 'b' })).toThrow(/gh auth login/)
+  })
+})
+
+describe('azure tickets from any board', () => {
+  test('a number, or a link from any board of the organisation (the customer\'s or the product\'s)', async () => {
+    const { azureTracker } = await import('../src/tracker.ts')
+    const t = azureTracker(() => ({ code: 1, out: '', err: '' }), { org: 'https://dev.azure.com/org', project: 'product' })
+    expect(t.parseKey('204598')).toEqual({ id: 204598, key: '#204598' })
+    expect(t.parseKey('https://dev.azure.com/org/customer-hub/_workitems/edit/204598/')).toEqual({ id: 204598, key: '#204598' })
+    expect(t.parseKey('https://dev.azure.com/org/product/_workitems/edit/201601')).toEqual({ id: 201601, key: '#201601' })
+    expect(t.parseKey('nope')).toBeNull()
   })
 })

@@ -1,9 +1,10 @@
-import { EmbeddedTerminalRenderable, RGBA, SyntaxStyle, type KeyEvent } from '@opentui/core'
+import { EmbeddedTerminalRenderable, type KeyEvent } from '@opentui/core'
 import { extend } from '@opentui/react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { RunEvent, RunState } from '../run.ts'
 import type { Change, FileDiff, RunFile, RunLog } from '../server.ts'
 import type { Entry } from '../transcript.ts'
+import { DiffPopup, MarkdownPopup, type PopupKeys } from './popups.tsx'
 import { describeEvent, duration, hhmm, line as lineOf, tokens, track } from './model.ts'
 
 extend({ terminal: EmbeddedTerminalRenderable })
@@ -20,12 +21,6 @@ export interface DetailApi {
 }
 
 export const C = { text: '#DDE2E8', secondary: '#A3ABB5', muted: '#6D7681', faint: '#434A54', accent: '#78A6EC', success: '#72C08A', warning: '#E2B35F', danger: '#EC7A70', selected: '#1B2533', panel: '#161A20' }
-/** how Markdown (plan, ticket, PR, review) is drawn: the screen's colours */
-const md = SyntaxStyle.fromStyles({
-  default: { fg: RGBA.fromHex('#A3ABB5') }, 'markup.heading': { fg: RGBA.fromHex('#DDE2E8'), bold: true }, 'markup.strong': { fg: RGBA.fromHex('#DDE2E8'), bold: true },
-  'markup.italic': { italic: true }, 'markup.raw': { fg: RGBA.fromHex('#E2B35F') }, 'markup.link': { fg: RGBA.fromHex('#78A6EC'), underline: true }, 'markup.list': { fg: RGBA.fromHex('#78A6EC') },
-})
-
 const fit = (s: string, n: number) => (n <= 0 ? '' : s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s.padEnd(n))
 
 /** a line as coloured pieces */
@@ -85,19 +80,24 @@ export function sessionLines(entries: Entry[], width: number): Line[] {
 
 interface Review { review: number; findings: { severity: string; file: string; line?: number; problem: string }[]; dropped: number; below?: { severity: string; file: string; line?: number; problem: string; confidence: number }[] }
 
+/** what a line of the run column opens: a file as Markdown, or the change (at a file) */
+export type Target = { kind: 'md'; file: RunFile } | { kind: 'diff'; file?: string }
+export type RunLine = Line & { open?: Target }
+
 /** the run column: what it needs, the plan and its answers, the checks, the changes, the timeline */
-export function runLines(r: RunState, o: { plan: string; review: string; changes: Change[]; events: RunEvent[]; width: number }): Line[] {
-  const w = o.width - 1, out: Line[] = []
-  const head = (t: string, extra: Line = []) => out.push([[` ${t}`, C.text], ...extra])
+export function runLines(r: RunState, o: { plan: string; review: string; changes: Change[]; events: RunEvent[]; width: number }): RunLine[] {
+  const w = o.width - 1, out: RunLine[] = []
+  const push = (l: Line, open?: Target) => out.push(Object.assign(l, open ? { open } : {}))
+  const head = (t: string, extra: Line = [], open?: Target) => push([[` ${t}`, C.text], ...extra, ...(open ? [['  ↗', C.faint] as Seg] : [])], open)
   const blank = () => out.push([])
   out.push(r.needs ? [[' Needs you: ', C.warning], [fit(r.needs.ask, w - 12), C.warning]] : [[` ${r.status === 'done' ? 'Done' : 'Nothing needs you right now'}`, C.muted]])
   blank()
-  head('Plan')
-  // the plan's first paragraph, its Markdown marks dropped (the Plan pane draws the whole of it)
+  head('Plan', [], { kind: 'md', file: 'plan.md' })
+  // the plan's first paragraph, its Markdown marks dropped (a click opens the whole of it)
   const summary = o.plan.replace(/^#.*\n/, '').trim().split(/\n\s*\n/)[0]?.replace(/\*\*|__|`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\s+/g, ' ') ?? ''
   const plan = wrap(summary || (r.plan?.summary ?? '') || 'no plan yet', w - 1)
-  for (const l of plan.slice(0, 4)) out.push([[` ${l}`, C.secondary]])
-  if (plan.length > 4) out.push([[' … plan.md has the rest', C.faint]])
+  for (const l of plan.slice(0, 4)) push([[` ${l}`, C.secondary]], { kind: 'md', file: 'plan.md' })
+  if (plan.length > 4) push([[' … the rest: click Plan', C.faint]], { kind: 'md', file: 'plan.md' })
   for (const q of r.plan?.questions ?? []) {
     const a = r.plan?.answers?.[q.id]
     wrap(`${q.id}${q.held ? ' (held)' : ''} ${q.text}`, w - 1).slice(0, 2).forEach(l => out.push([[` ${l}`, C.muted]]))
@@ -112,18 +112,18 @@ export function runLines(r: RunState, o: { plan: string; review: string; changes
   if (v && v.type === 'verify.result' && !v.ok) for (const f of v.newFindings.slice(0, 3)) out.push([[`   ${fit(f, w - 3)}`, C.danger]])
   let review: Review | undefined
   try { review = o.review.trim() ? JSON.parse(o.review) : undefined } catch {}
-  out.push(review
+  push(review
     ? [[' review  ', C.muted], [review.findings.length ? `${review.findings.length} finding${review.findings.length === 1 ? '' : 's'}` : 'nothing ≥80%', review.findings.length ? C.warning : C.success], [` · ${review.below?.length ?? review.dropped} below`, C.muted]]
-    : [[' review  ', C.muted], ['not run yet', C.muted]])
-  for (const [i, f] of (review?.findings ?? []).slice(0, 3).entries()) out.push([[`   R${i + 1} [${f.severity}] ${fit(`${f.file}${f.line ? `:${f.line}` : ''} ${f.problem}`, w - 12)}`, C.warning]])
+    : [[' review  ', C.muted], ['not run yet', C.muted]], review ? { kind: 'md', file: 'review.json' } : undefined)
+  for (const [i, f] of (review?.findings ?? []).slice(0, 3).entries()) push([[`   R${i + 1} [${f.severity}] ${fit(`${f.file}${f.line ? `:${f.line}` : ''} ${f.problem}`, w - 12)}`, C.warning]], { kind: 'md', file: 'review.json' })
   blank()
   const add = o.changes.reduce((n, c) => n + c.added, 0), del = o.changes.reduce((n, c) => n + c.removed, 0)
-  head('Changes', o.changes.length ? [[`  ${o.changes.length} file${o.changes.length === 1 ? '' : 's'}  `, C.muted], [`+${add} `, C.success], [`−${del}`, C.danger]] : [['  none yet', C.muted]])
+  head('Changes', o.changes.length ? [[`  ${o.changes.length} file${o.changes.length === 1 ? '' : 's'}  `, C.muted], [`+${add} `, C.success], [`−${del}`, C.danger]] : [['  none yet', C.muted]], o.changes.length ? { kind: 'diff' } : undefined)
   const many = new Set(o.changes.map(c => c.repo)).size > 1
   for (const c of o.changes.slice(0, 5)) {
     const name = many ? `${c.repo}/${c.file}` : c.file
     const nums = `+${c.added} −${c.removed}`
-    out.push([[` ${c.status} `, c.status === 'A' ? C.success : c.status === 'D' ? C.danger : C.secondary], [fit(name, Math.max(6, w - nums.length - 4)), C.secondary], [` ${nums}`, C.muted]])
+    push([[` ${c.status} `, c.status === 'A' ? C.success : c.status === 'D' ? C.danger : C.secondary], [fit(name, Math.max(6, w - nums.length - 4)), C.secondary], [` ${nums}`, C.muted]], { kind: 'diff', file: c.file })
   }
   if (o.changes.length > 5) out.push([[`   and ${o.changes.length - 5} more`, C.faint]])
   blank()
@@ -155,7 +155,7 @@ function shellFor(run: string, cwd: string, cols: number, rows: number, redraw: 
   return sh
 }
 
-export type Pane = 'agent' | 'diff' | 'metro' | 'devserver' | 'shell' | 'file'
+export type Pane = 'agent' | 'metro' | 'devserver' | 'shell'
 
 /** the keys the detail handles itself; the rest (esc, a, S, p, ^K, q) go back to the screen */
 export type DetailKeys = (key: KeyEvent, typed: string) => boolean
@@ -173,7 +173,10 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   onMessage: (text: string) => void
 }) {
   const [pane, setPane] = useState<Pane>('agent')
-  const [file, setFile] = useState<RunFile>('plan.md')
+  /** a pop-up over the detail: a file as Markdown, or the change to comment on */
+  const [popup, setPopup] = useState<Target | null>(null)
+  // the pop-up's keys: a ref (it hands them over on each draw; a state would draw again, without end)
+  const popupKeys = useRef<PopupKeys | null>(null)
   const [split, setSplit] = useState(false)
   const [focus, setFocus] = useState<'none' | 'message' | 'shell'>('none')
   const [draft, setDraft] = useState('')
@@ -225,9 +228,9 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     return () => { live = false; clearInterval(t) }
   }, [api, run.id, top])
 
-  useEffect(() => { if (top === 'file') void api.file(run.id, file).then(setText) }, [api, run.id, top, file])
-  useEffect(() => { if (top === 'diff') void (api.diff?.(run.id) ?? Promise.resolve([])).then(setDiffs).catch(() => setDiffs([])) }, [api, run.id, top, run.updatedAt])
-  useEffect(() => { setScroll(0) }, [top, file])
+  useEffect(() => { if (popup?.kind === 'md') { setText(''); void api.file(run.id, popup.file).then(setText) } }, [api, run.id, popup])
+  useEffect(() => { if (popup?.kind === 'diff') { setDiffs(null); void (api.diff?.(run.id) ?? Promise.resolve([])).then(setDiffs).catch(() => setDiffs([])) } }, [api, run.id, popup?.kind])
+  useEffect(() => { setScroll(0) }, [top])
 
   // the shell: started when its pane is first shown, its output replayed into each new terminal
   const shell = showsShell && data.worktree ? shellFor(run.id, data.worktree, right - 2, shellRows, () => redraw(x => x + 1)) : shells.get(run.id)
@@ -241,11 +244,12 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   useEffect(() => { if (shell && !shell.ended) shell.proc.terminal?.resize(right - 2, shellRows) }, [shell, right, shellRows])
 
   // the panes this run has: Metro only with a device, the dev server only when it has one (a web or backend run)
-  const panes: { key: Pane; label: string; file?: RunFile }[] = [{ key: 'agent', label: 'Agent' }, { key: 'diff', label: 'Diff' }, { key: 'file', label: 'Plan', file: 'plan.md' },
+  const panes: { key: Pane; label: string }[] = [{ key: 'agent', label: 'Agent' },
     ...(run.device ? [{ key: 'metro' as const, label: 'Metro' }] : []), ...(run.devServer ? [{ key: 'devserver' as const, label: 'Dev server' }] : []), { key: 'shell', label: 'Shell' }]
   const order = panes.map(p => p.key)
-  const openPane = (k: Pane, f?: RunFile) => { if (f) setFile(f); setPane(k); setFocus(k === 'agent' ? 'message' : 'none') }
+  const openPane = (k: Pane) => { setPane(k); setFocus(k === 'agent' ? 'message' : 'none') }
   const keys: DetailKeys = (key, typed) => {
+    if (popup) { popupKeys.current?.(key, typed); return true }
     if (focus === 'shell') {
       if (key.ctrl && key.name === ']') { setFocus('none'); return true }
       if (shell && !shell.ended && term) shell.proc.terminal?.write(term.encodeKey(key))
@@ -259,12 +263,12 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       return true
     }
     if (typed === ']' || typed === '[') {
-      const next = panes[(Math.max(0, order.indexOf(top)) + (typed === ']' ? 1 : order.length - 1)) % order.length]!
-      if (next.file) setFile(next.file)
-      setPane(next.key)
+      setPane(panes[(Math.max(0, order.indexOf(top)) + (typed === ']' ? 1 : order.length - 1)) % order.length]!.key)
       return true
     }
     if (typed === 'v') { setSplit(x => !x); return true }
+    if (typed === 'd') { setPopup({ kind: 'diff' }); return true }
+    if (typed === 'P') { setPopup({ kind: 'md', file: 'plan.md' }); return true }
     if (typed === 'i') { if (!showsShell) setPane('shell'); setFocus('shell'); return true }
     if (typed === 'm') { setPane(p => (split ? p : 'agent')); setFocus('message'); return true }
     return false
@@ -303,32 +307,6 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
         </box>
       )
     }
-    if (p === 'file') {
-      const content = file === 'review.json' ? reviewText(text) : text
-      return (
-        <scrollbox height={rows} width={right} paddingLeft={1} paddingRight={1}>
-          {content.trim() ? <markdown content={content} syntaxStyle={md} /> : <text fg={C.muted}>{`${file} is empty`}</text>}
-        </scrollbox>
-      )
-    }
-    if (p === 'diff') {
-      const all = diffs ?? []
-      const add = all.reduce((n, d) => n + d.added, 0), del = all.reduce((n, d) => n + d.removed, 0)
-      const many = new Set(all.map(d => d.repo)).size > 1
-      return (
-        <scrollbox height={rows} width={right}>
-          <text><span fg={C.secondary}>{diffs === null ? ' reading the change…' : all.length ? ` ${all.length} file${all.length === 1 ? '' : 's'}  ` : ' No change yet.'}</span>{all.length ? <><span fg={C.success}>{`+${add} `}</span><span fg={C.danger}>{`−${del}`}</span><span fg={C.faint}>   from where the branch left its base</span></> : null}</text>
-          {all.map(d => (
-            <box key={`${d.repo}/${d.file}`} flexDirection="column">
-              <text> </text>
-              <text><span fg={d.status === 'A' ? C.success : d.status === 'D' ? C.danger : C.accent}>{` ${d.status} `}</span><strong>{many ? `${d.repo}/${d.file}` : d.file}</strong><span fg={C.muted}>{`  +${d.added} −${d.removed}`}</span></text>
-              {d.patch ? <diff diff={d.patch} view="unified" showLineNumbers height={Math.max(1, d.patch.split('\n').filter(l => /^[ +-]/.test(l) && !/^(\+\+\+|---) /.test(l)).length)} width={right - 1}
-                addedBg="#16261C" removedBg="#2B1A1A" addedSignColor={C.success} removedSignColor={C.danger} lineNumberFg={C.faint} /> : <text fg={C.muted}>   too large to show here: open it in the Shell (git diff)</text>}
-            </box>
-          ))}
-        </scrollbox>
-      )
-    }
     return null
   }
 
@@ -340,11 +318,11 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     </box>
   )
 
-  const tab = (t: { key: Pane; label: string; file?: RunFile }) => {
+  const tab = (t: { key: Pane; label: string }) => {
     const k = t.key
-    const on = (top === k && (!t.file || file === t.file)) || (k === 'shell' && showsShell)
+    const on = top === k || (k === 'shell' && showsShell)
     const dot = k === 'agent' ? (working ? C.success : '') : k === 'metro' || k === 'devserver' ? C.success : k === 'shell' ? (shell && !shell.ended ? C.success : '') : ''
-    return <Click key={t.label} on={() => openPane(k, t.file)}><box backgroundColor={on ? undefined : C.panel} paddingLeft={1} paddingRight={1}><text>{on ? <strong>{t.label}</strong> : <span fg={C.muted}>{t.label}</span>}{dot ? <span fg={dot}> ●</span> : ''}</text></box></Click>
+    return <Click key={t.label} on={() => openPane(k)}><box backgroundColor={on ? undefined : C.panel} paddingLeft={1} paddingRight={1}><text>{on ? <strong>{t.label}</strong> : <span fg={C.muted}>{t.label}</span>}{dot ? <span fg={dot}> ●</span> : ''}</text></box></Click>
   }
   // the message box: always right under the agent's session (above the shell when split)
   const msgBox = (
@@ -358,7 +336,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const fake = (typed: string, name = typed) => ({ name, ctrl: false, shift: false, meta: false, sequence: typed }) as unknown as KeyEvent
   const keyLine: [string, () => void][] = focus === 'shell' ? [['typing in Shell: keys go to the shell', () => {}], ['ctrl+] leave', () => setFocus('none')], ['^K commands', () => onKey('palette')]]
     : focus === 'message' ? [['typing a message to the agent', () => {}], ['↵ send', () => keys(fake('', 'return'), '')], ['esc leave', () => setFocus('none')]]
-    : [['esc back', onBack], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
+    : [['esc back', onBack], ['d diff', () => setPopup({ kind: 'diff' })], ['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
       ['a approve', () => onKey('a')], ['S ship', () => onKey('S')], ['p port', () => onKey('p')], ['^K commands', () => onKey('palette')]]
   const rule = <text fg={C.faint}>{'─'.repeat(W)}</text>
   return (
@@ -378,17 +356,17 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       {rule}
       <box flexDirection="row" height={body}>
         <box flexDirection="column" width={left}>
-          {runCol.slice(0, body - 1).map((l, i) => <Row key={i} l={l} w={left} />)}
+          {runCol.slice(0, body - 1).map((l, i) => (l.open ? <Click key={i} on={() => setPopup(l.open!)}><Row l={l} /></Click> : <Row key={i} l={l} w={left} />))}
           <box flexDirection="row">
             <text fg={C.muted}>{' Open '}</text>
-            {(['ticket.md', 'plan.md', 'pr.md', 'review.json'] as RunFile[]).map(f => <Click key={f} on={() => openPane('file', f)}><text fg={top === 'file' && file === f ? C.text : C.accent}>{`${f.replace('.json', '')}  `}</text></Click>)}
+            {(['ticket.md', 'plan.md', 'pr.md', 'review.json'] as RunFile[]).map(f => <Click key={f} on={() => setPopup({ kind: 'md', file: f })}><text fg={C.accent}>{`${f.replace('.json', '')}  `}</text></Click>)}
+            <Click on={() => setPopup({ kind: 'diff' })}><text fg={C.accent}>diff</text></Click>
           </box>
         </box>
         <box flexDirection="column" width={right + 1} border={['left']} borderColor={C.faint}>
           <box flexDirection="row" backgroundColor={C.panel}>
             {panes.map(tab)}
             <Click on={() => setSplit(x => !x)}><text fg={C.faint}>{split ? '   ⊟ split on (v)' : '   ⊟ split (v)'}</text></Click>
-            {top === 'file' && file !== 'plan.md' ? <text fg={C.text}>{`   ${file}`}</text> : null}
           </box>
           {split ? (
             <>
@@ -408,6 +386,10 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       {rule}
       <text fg={message.startsWith('✕') ? C.danger : message.startsWith('✓') ? C.success : C.accent}>{message || ' '}</text>
       <box flexDirection="row"><text>{' '}</text>{keyLine.map(([label, on]) => <Click key={label} on={on}><text fg={C.muted}>{`${label}   `}</text></Click>)}</box>
+      {popup?.kind === 'md' ? <MarkdownPopup title={popup.file === 'review.json' ? 'Review' : popup.file} content={popup.file === 'review.json' ? reviewText(text) : text} width={W - 2} height={height - 4}
+        bind={k => { popupKeys.current = k }} onClose={() => setPopup(null)} /> : null}
+      {popup?.kind === 'diff' ? <DiffPopup run={run.id} diffs={diffs} file={popup.file} width={W - 2} height={height - 4}
+        bind={k => { popupKeys.current = k }} onClose={() => setPopup(null)} onSend={onMessage} /> : null}
     </box>
   )
 }

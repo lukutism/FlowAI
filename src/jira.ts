@@ -72,7 +72,7 @@ export function jiraTracker(t: JiraConfig, deps: JiraDeps = {}): Tracker {
     return r
   }
   return {
-    parseKey: arg => { const m = /^([A-Za-z][A-Za-z0-9]+)-(\d+)$/.exec(arg.trim()); return m && m[1]!.toUpperCase() === t.key.toUpperCase() ? { id: `${t.key.toUpperCase()}-${m[2]}`, key: `${t.key.toUpperCase()}-${m[2]}` } : null },
+    parseKey: arg => { const m = /^([A-Za-z][A-Za-z0-9]+)-(\d+)$/.exec(arg.trim()) ?? /\/browse\/([A-Za-z][A-Za-z0-9]+)-(\d+)/.exec(arg); return m && m[1]!.toUpperCase() === t.key.toUpperCase() ? { id: `${t.key.toUpperCase()}-${m[2]}`, key: `${t.key.toUpperCase()}-${m[2]}` } : null },
     async read(id): Promise<Ticket> {
       const key = String(id)
       const r = await get(`/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,description,issuetype,environment,comment,attachment`)
