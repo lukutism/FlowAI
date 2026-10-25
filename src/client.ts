@@ -22,26 +22,52 @@ export class FlowClient {
   private pending = new Map<number, Pending>()
   private nextId = 1
 
-  private constructor(private ws: WebSocket) {}
+  private constructor(private ws: WebSocket, private again?: () => Promise<{ url: string; token: string } | null>) {}
 
-  static connect(url: string, token: string): Promise<FlowClient> {
+  /** again: where the service is now, asked when the connection drops (a restart moves it to another port) */
+  static connect(url: string, token: string, again?: () => Promise<{ url: string; token: string } | null>): Promise<FlowClient> {
     return new Promise((ok, fail) => {
-      const ws = new WebSocket(`${url}/?token=${encodeURIComponent(token)}`)
-      const c = new FlowClient(ws)
-      let ready = false
-      ws.onmessage = ev => {
-        const m = JSON.parse(String(ev.data)) as Message
-        c.take(m)
-        if (m.type === 'snapshot' && !ready) { ready = true; ok(c) }
-      }
-      ws.onerror = () => { if (!ready) fail(new Error('the flow service refused the connection (not running, or a wrong token)')) }
-      ws.onclose = () => {
-        if (!ready) return fail(new Error('the flow service refused the connection (not running, or a wrong token)'))
-        c.connected = false
-        c.take({ type: 'closed' })
-      }
+      let c: FlowClient | undefined
+      FlowClient.open(url, token, m => c?.take(m), () => c?.dropped()).then(ws => { c = new FlowClient(ws, again); ok(c) }, fail)
     })
   }
+
+  /** a socket to the service, once its snapshot came */
+  private static open(url: string, token: string, take: (m: Message) => void, closed: () => void): Promise<WebSocket> {
+    return new Promise((ok, fail) => {
+      const ws = new WebSocket(`${url}/?token=${encodeURIComponent(token)}`)
+      let ready = false, first: Message | undefined
+      ws.onmessage = ev => {
+        const m = JSON.parse(String(ev.data)) as Message
+        if (m.type === 'snapshot' && !ready) { ready = true; first = m; ok(ws); queueMicrotask(() => take(first!)); return }
+        take(m)
+      }
+      ws.onerror = () => { if (!ready) fail(new Error('the flow service refused the connection (not running, or a wrong token)')) }
+      ws.onclose = () => { if (!ready) fail(new Error('the flow service refused the connection (not running, or a wrong token)')); else closed() }
+    })
+  }
+
+  /** the connection dropped: requests in flight are answered, then the service is looked for again until it answers */
+  private dropped() {
+    this.connected = false
+    for (const p of this.pending.values()) p({ ok: false, error: 'the flow service restarted: try again' })
+    this.pending.clear()
+    this.take({ type: 'closed' })
+    if (!this.again || this.closing) return
+    void (async () => {
+      while (!this.closing) {
+        await Bun.sleep(1000)
+        const t = await this.again!().catch(() => null)
+        if (!t) continue
+        try {
+          this.ws = await FlowClient.open(t.url, t.token, m => this.take(m), () => this.dropped())
+          this.connected = true
+          return
+        } catch {}
+      }
+    })()
+  }
+  private closing = false
 
   listen(fn: (m: Message) => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
 
@@ -92,7 +118,7 @@ export class FlowClient {
     return r.data as T
   }
 
-  close() { this.ws.close() }
+  close() { this.closing = true; this.ws.close() }
 
   private request(body: RequestBody): Promise<Extract<Message, { type: 'reply' }>['reply']> {
     const id = this.nextId++

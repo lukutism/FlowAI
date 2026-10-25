@@ -187,3 +187,27 @@ describe('a run\'s device in the browser', () => {
     expect((await fetch(`http://127.0.0.1:${t.s.port}/device/..%2Fx?token=secret-token`)).status).toBe(404)
   })
 })
+
+describe('the screen\'s connection after the service restarts', () => {
+  test('it reconnects to the new service (another port), gets its state, and requests work again', async () => {
+    const t = start()
+    let target = { url: `ws://127.0.0.1:${t.s.port}`, token: 'secret-token' }
+    const c = await FlowClient.connect(target.url, target.token, async () => target)
+    clients.push(c)
+    const seen: string[] = []
+    c.listen(m => seen.push(m.type))
+    t.s.stop()
+    await Bun.sleep(100)
+    expect(c.connected).toBe(false)
+    const store = new EventStore(':memory:')
+    store.append('fso-9', 'human', { type: 'run.created', ticket: '#9', title: 'Nine', project: 'fso', base: 'origin/develop' })
+    const s2 = serve({ service: fakeService().svc, store, dataDir: t.data, port: 0, token: 'secret-token' })
+    servers.push(s2)
+    target = { url: `ws://127.0.0.1:${s2.port}`, token: 'secret-token' }
+    for (let i = 0; i < 40 && !c.connected; i++) await Bun.sleep(100)
+    expect(c.connected).toBe(true)
+    expect([...c.runs.keys()]).toEqual(['fso-9'])
+    expect(seen).toContain('snapshot')
+    expect(await c.send({ cmd: 'release', run: 'fso-9' })).toMatchObject({ ok: true })
+  })
+})

@@ -48,20 +48,35 @@ export const unlock = (data: string) => rmSync(join(data, 'serve.lock'), { force
 export const announce = (data: string, port: number) => writeFileSync(serviceFile(data), JSON.stringify({ port, pid: process.pid }) + '\n')
 export const withdraw = (data: string) => rmSync(serviceFile(data), { force: true })
 
-export async function connect(data: string): Promise<FlowClient | null> {
+/**
+ * cli: when the connection drops, where the service is now (it may have restarted on another port); with no
+ * service running at all, one is started again (the serve lock keeps it to one).
+ */
+export async function connect(data: string, cli?: string): Promise<FlowClient | null> {
   const s = running(data)
-  return s ? FlowClient.connect(`ws://127.0.0.1:${s.port}`, token(data)) : null
+  if (!s) return null
+  let startedAt = 0
+  const again = async () => {
+    const now = running(data)
+    if (now) return { url: `ws://127.0.0.1:${now.port}`, token: token(data) }
+    if (cli && Date.now() - startedAt > 15_000) { startedAt = Date.now(); spawnService(data, cli) }
+    return null
+  }
+  return FlowClient.connect(`ws://127.0.0.1:${s.port}`, token(data), again)
+}
+
+function spawnService(data: string, cli: string) {
+  mkdirSync(data, { recursive: true })
+  const log = openSync(join(data, 'service.log'), 'a')
+  Bun.spawn([process.execPath, cli, 'serve'], { stdio: ['ignore', log, log], env: process.env }).unref()
 }
 
 /** start `flow serve` in the background (its output in service.log) and wait until it answers */
 export async function startService(data: string, cli: string): Promise<FlowClient> {
-  mkdirSync(data, { recursive: true })
-  const log = openSync(join(data, 'service.log'), 'a')
-  const p = Bun.spawn([process.execPath, cli, 'serve'], { stdio: ['ignore', log, log], env: process.env })
-  p.unref()
+  spawnService(data, cli)
   for (let i = 0; i < 100; i++) {
     await Bun.sleep(100)
-    const c = await connect(data).catch(() => null)
+    const c = await connect(data, cli).catch(() => null)
     if (c) return c
   }
   throw new Error(`the flow service did not start; see ${join(data, 'service.log')}`)
