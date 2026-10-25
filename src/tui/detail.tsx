@@ -157,17 +157,22 @@ function shellFor(run: string, cwd: string, cols: number, rows: number, redraw: 
 
 export type Pane = 'agent' | 'metro' | 'devserver' | 'shell'
 
+/** a command of the palette: what it says, and what choosing it does */
+export interface PaletteAction { label: string; hint?: string; run: () => void }
+
 /** the keys the detail handles itself; the rest (esc, a, S, p, ^K, q) go back to the screen */
 export type DetailKeys = (key: KeyEvent, typed: string) => boolean
 
 function Click({ on, children }: { on: () => void; children: ReactNode }) { return <box onMouseDown={on}>{children}</box> }
 const Row = ({ l }: { l: Line; w?: number }) => <text>{l.length ? l.map(([t, c], i) => <span key={i} fg={c || undefined}>{t}</span>) : ' '}</text>
 
-export function RunDetail({ api, run, now, width, height, message, bind, onMessage, onBack, onKey }: {
+export function RunDetail({ api, run, now, width, height, message, bind, onMessage, onBack, onKey, bindCommands }: {
   api: DetailApi; run: RunState; now: number; width: number; height: number; message: string
   onBack: () => void
   /** a key the screen handles (a, S, p, ^K), pressed from the key line */
   onKey: (typed: string) => void
+  /** the detail's own commands, for the palette */
+  bindCommands?: (c: (() => PaletteAction[]) | null) => void
   /** the screen hands its keys here first */
   bind: (keys: DetailKeys | null) => void
   onMessage: (text: string) => void
@@ -274,6 +279,19 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     return false
   }
   useEffect(() => { bind(keys); return () => bind(null) })
+  // what the palette offers in the detail: its pop-ups and panes
+  const commands = (): PaletteAction[] => [
+    { label: 'Message the agent', hint: 'm', run: () => { setPane(p => (split ? p : 'agent')); setFocus('message') } },
+    { label: 'Open the change', hint: 'd · comment on its lines', run: () => setPopup({ kind: 'diff' }) },
+    { label: 'Open the plan', hint: 'P', run: () => setPopup({ kind: 'md', file: 'plan.md' }) },
+    { label: 'Open the ticket', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) },
+    { label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) },
+    { label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) },
+    ...panes.filter(x => x.key !== 'shell').map(x => ({ label: `Show ${x.label === 'Agent' ? "the agent's session" : x.label}`, hint: 'pane', run: () => { setPane(x.key); setFocus('none') } })),
+    { label: 'Type in the shell', hint: 'i · in the worktree', run: () => { if (!showsShell) setPane('shell'); setFocus('shell') } },
+    { label: split ? 'Unsplit' : 'Split with the shell', hint: 'v', run: () => setSplit(x => !x) },
+  ]
+  useEffect(() => { bindCommands?.(commands); return () => bindCommands?.(null) })
 
   const session = sessionLines(entries, right - 2)
   const working = run.status === 'running' && entries.length > 0 && entries[entries.length - 1]!.kind !== 'result'

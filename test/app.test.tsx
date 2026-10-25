@@ -42,7 +42,7 @@ async function screen(list = runs, size = { width: 130, height: 34 }, more: Part
   const frame = async () => { await act(async () => { await Bun.sleep(1) }); await s.renderOnce(); return s.captureCharFrame() }
   // a lone Escape is only known after a short pause (it could start a key sequence), so wait for it
   const press = async (...keys: string[]) => {
-    for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : k === 'ctrl+k' ? s.mockInput.pressKey('k', { ctrl: true }) : k === 'tab' ? s.mockInput.pressKey('\t') : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
+    for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : k === 'ctrl+k' ? s.mockInput.pressKey('k', { ctrl: true }) : k === 'down' ? s.mockInput.pressArrow('down') : k === 'tab' ? s.mockInput.pressKey('\t') : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
     return frame()
   }
   return { s, f, frame, press, quit: () => quit }
@@ -392,16 +392,46 @@ describe('the design: header, sort, group, filter, activity, message line', () =
 })
 
 describe('the command palette', () => {
-  test('ctrl+k opens it; typing narrows it; enter runs the chosen command', async () => {
-    const list = [base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
-    const t = await screen(list)
+  test('on the runs: the screen\'s commands and every run to open, typed to narrow', async () => {
+    const t = await screen()
     try {
-      expect(await t.press('ctrl+k')).toContain('Open #104')
-      const f = await t.press(...'port'.split(''))
-      expect(f).toContain('Port #104 to develop')
-      expect(f).not.toContain('Open #104')
-      await t.press('enter')
+      const f = await t.press('ctrl+k')
+      expect(f).toContain('New run')
+      expect(f).toContain('Open #103 Title fso-103')
+      expect(f).not.toContain('Message') // a run's own commands are in its detail
+      await t.press(...'103'.split(''))
+      const g = await t.frame()
+      expect(g).toContain('▸ Open #103 Title fso-103')
+      expect(g).not.toContain('Open #105')
+      expect(await t.press('enter')).toContain('← esc  #103')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('in a run\'s detail: that run\'s commands, and the detail stays open under it', async () => {
+    const list = [base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
+    const t = await screen(list, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nThe walk.\n' : '') })
+    try {
+      const f = await t.press('enter', 'ctrl+k')
+      expect(f).toContain('#104 commands')
+      for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Type in the shell', 'Port to develop', 'Back to the runs']) expect(f).toContain(c)
+      expect(f).not.toContain('Group by stage')
+      expect(await t.press('esc')).toContain('← esc  #104') // still the detail
+      await t.press('ctrl+k', ...'plan'.split(''), 'enter'); await act(async () => { await Bun.sleep(80) })
+      expect(await t.frame()).toContain('The walk.')
+      await t.press('esc', 'ctrl+k', ...'port'.split(''), 'enter')
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('it is centred, and its list follows the cursor past the first screenful', async () => {
+    const many = Array.from({ length: 30 }, (_, i) => base(`fso-${300 + i}`, { createdAt: NOW - i * 60_000 }))
+    const t = await screen(many)
+    try {
+      const f = (await t.press('ctrl+k')).split('\n')
+      const top = f.find(l => l.includes('›') && l.includes('commands'))!
+      const left = top.indexOf('›')
+      expect(Math.abs(left - (130 - 84) / 2)).toBeLessThan(5)
+      const g = await t.press(...Array(25).fill('down'))
+      expect(g).toMatch(/▸ Open #3\d\d/)
+      expect(g).toMatch(/↑ \d+ more/)
     } finally { t.s.renderer.destroy() }
   })
   test('keys typed faster than the screen redraws all arrive', async () => {
@@ -532,8 +562,8 @@ describe('the mouse', () => {
     const list = [base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
     const t = await screen(list)
     try {
-      await t.press('ctrl+k')
-      await click(t, 'Port #104 to develop')
+      await t.press('enter', 'ctrl+k')
+      await click(t, 'Port to develop')
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
     } finally { t.s.renderer.destroy() }
   })

@@ -225,6 +225,20 @@ export function lastMessage(events: RunEvent[], now: number): string {
   return `${text} · ${ago}`
 }
 
+/**
+ * How well a query fits a text, for ordering: the text containing it as written first (earlier is better), then
+ * its words starting with the query's letters, then its letters in order with gaps; -1 when they aren't in it at all.
+ */
+export function rank(q: string, text: string): number {
+  const query = q.toLowerCase().trim(), t = text.toLowerCase()
+  if (!query) return 0
+  const at = t.indexOf(query)
+  if (at >= 0) return at / 1000
+  const words = t.split(/[^a-z0-9#]+/)
+  if (query.split(/\s+/).every(w => words.some(x => x.startsWith(w)))) return 1
+  return match(query, t) ? 2 : -1
+}
+
 /** letters of the query in order, gaps allowed, any case (the palette) */
 export function match(q: string, text: string): boolean {
   let i = 0

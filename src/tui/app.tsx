@@ -1,7 +1,7 @@
 import { useKeyboard, useTerminalDimensions } from '@opentui/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { KeyEvent } from '@opentui/core'
-import { RunDetail, stopShells, type DetailApi, type DetailKeys } from './detail.tsx'
+import { RunDetail, stopShells, type DetailApi, type DetailKeys, type PaletteAction } from './detail.tsx'
 import { NewRunForm, type FormApi } from './form.tsx'
 import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
@@ -9,7 +9,7 @@ import type { Command, ProjectSummary, Reply } from '../service.ts'
 import type { Windows } from '../usage.ts'
 import { WAITS_FOR, type Snapshot } from '../resources.ts'
 import {
-  activity, attention, duration, filterRuns, footer, groupRows, header, hhmm, lastMessage, layout, match, resourceBars, rows, SORTS, tokens,
+  activity, attention, duration, filterRuns, footer, groupRows, header, hhmm, lastMessage, layout, match, resourceBars, rank, rows, SORTS, tokens,
   type AttentionItem, type Grouped, type Row, type Sort,
 } from './model.ts'
 
@@ -44,7 +44,6 @@ type Mode =
   | { kind: 'new' }
   | { kind: 'detail'; run: string }
   | { kind: 'filter'; text: string }
-  | { kind: 'palette'; text: string; index: number }
   | { kind: 'projects'; index: number }
 
 
@@ -59,6 +58,10 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const [notice, setNotice] = useState<string | null>(null)
   const detailKeys = useRef<DetailKeys | null>(null)
   const formKeys = useRef<DetailKeys | null>(null)
+  /** the run detail's own commands, for the palette while it is open */
+  const detailCmds = useRef<(() => PaletteAction[]) | null>(null)
+  /** the command palette: over whatever is open (the runs, a tab, a run's detail), which stays as it is */
+  const [pal, setPal] = useState<{ text: string; index: number } | null>(null)
   const [tab, setTab] = useState<Tab>('Runs')
   const [sort, setSort] = useState<Sort>('newest')
   const [grouped, setGrouped] = useState(false)
@@ -119,18 +122,24 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   }
   const goTab = (x: Tab) => { setTab(x); setMode({ kind: 'list' }) }
 
+  // the commands: in a run's detail that run's own; elsewhere the screen's, and every run to open by its ticket or title
   const actions = (): Action[] => {
     const a: Action[] = []
-    if (state) {
-      a.push({ label: `Open ${state.ticket}`, hint: state.title, run: () => ask.open(state) })
-      if (state.needs?.kind === 'plan') a.push({ label: `Approve plan of ${state.ticket}`, hint: 'with the defaults, or other answers', run: () => ask.approve(state) })
-      a.push({ label: `Message ${state.ticket}'s agent`, run: () => ask.message(state) })
-      if (state.needs?.kind === 'ship' || state.needs?.kind === 'patch') a.push({ label: state.patch ? (state.needs.kind === 'patch' ? `Write the patch back for ${state.ticket}` : `Check the write-back of ${state.ticket}`) : `Ship ${state.ticket}`, hint: state.patch ? undefined : 'commit, push, draft PR', run: () => ask.ship(state) })
-      if (state.pr) a.push({ label: `Port ${state.ticket} to develop`, run: () => ask.port(state) })
-      if (state.device) a.push({ label: `Stop ${state.ticket}'s device`, hint: `${state.device.platform} ${state.device.id}`, run: () => ask.release(state) })
+    const inDetail = mode.kind === 'detail' ? api.runs.get(mode.run) : undefined
+    if (inDetail) {
+      const r = inDetail
+      if (r.needs?.kind === 'plan') a.push({ label: 'Approve the plan', hint: 'a · with the defaults, or other answers', run: () => ask.approve(r) })
+      if (r.needs?.kind === 'ship' || r.needs?.kind === 'patch') a.push({ label: r.patch ? (r.needs.kind === 'patch' ? 'Write the patch back' : 'Check the write-back') : 'Ship', hint: r.patch ? 'S' : 'S · commit, push, draft PR', run: () => ask.ship(r) })
+      a.push(...(detailCmds.current?.() ?? []))
+      if (r.pr) a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
+      if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })
+      a.push({ label: 'Back to the runs', hint: 'esc', run: () => setMode({ kind: 'list' }) })
+      a.push({ label: 'Quit', hint: 'q', run: () => { stopShells(); onQuit() } })
+      return a
     }
     a.push({ label: 'New run', hint: 'n', run: () => setMode({ kind: 'new' }) })
     a.push({ label: 'Choose a project', hint: 'p', run: () => setMode({ kind: 'projects', index: 0 }) })
+    for (const r of all.filter(x => x.status !== 'done' || x.updatedAt > t - 86_400_000)) a.push({ label: `Open ${r.ticket} ${r.title}`, hint: `${r.project} · ${r.stage} · ${r.status}`, run: () => ask.open(r) })
     a.push({ label: 'Show runs that need you', hint: 'status:needs-you', run: () => { setFilter('status:needs-you'); goTab('Runs') } })
     a.push({ label: 'Show failed and blocked runs', hint: 'status:failed', run: () => { setFilter('status:failed'); goTab('Runs') } })
     for (const p of api.projects ?? []) a.push({ label: `Show ${p.name} runs`, hint: `project:${p.key}`, run: () => { setFilter(`project:${p.key}`); goTab('Runs') } })
@@ -138,32 +147,37 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     a.push({ label: grouped ? 'Stop grouping' : 'Group by stage', run: () => { setGrouped(g => !g); setMode({ kind: 'list' }) } })
     for (const x of SORTS) if (x !== sort) a.push({ label: `Sort by ${x}`, run: () => { setSort(x); setMode({ kind: 'list' }) } })
     for (const x of TABS) if (x !== tab) a.push({ label: `Go to ${x}`, hint: String(TABS.indexOf(x) + 1), run: () => goTab(x) })
-    a.push({ label: 'Quit', hint: 'q', run: onQuit })
+    a.push({ label: 'Quit', hint: 'q', run: () => { stopShells(); onQuit() } })
     return a
   }
-  const found = mode.kind === 'palette' ? actions().filter(x => match(mode.text, x.label)) : []
+  // the best fits first: what you typed as written in the label, then word starts, then letters in order
+  const found = pal ? actions().map((x, i) => ({ x, i, r: Math.min(...[rank(pal.text, x.label), rank(pal.text, `${x.label} ${x.hint ?? ''}`) + 0.5].filter(n => n >= 0), Infinity) }))
+    .filter(y => y.r !== Infinity).sort((a, b) => a.r - b.r || a.i - b.i).map(y => y.x) : []
 
   /** a key, from the keyboard or from a click on its hint: name for special keys (return, escape, …), typed for characters */
   const handle = (name: string, typed: string, ctrl = false, raw?: KeyEvent) => {
     const key = { ctrl }
+    // the palette, when open, takes every key; what is under it stays as it was
+    if (pal) {
+      if (name === 'down' || (ctrl && name === 'n')) return setPal(p => p && { ...p, index: Math.min(p.index + 1, Math.max(0, found.length - 1)) })
+      if (name === 'up' || (ctrl && name === 'p')) return setPal(p => p && { ...p, index: Math.max(p.index - 1, 0) })
+      if (name === 'pagedown') return setPal(p => p && { ...p, index: Math.min(p.index + 10, Math.max(0, found.length - 1)) })
+      if (name === 'pageup') return setPal(p => p && { ...p, index: Math.max(p.index - 10, 0) })
+      if (name === 'return') { const a = found[pal.index]; setPal(null); a?.run(); return }
+      if (name === 'backspace') return setPal(p => p && { text: p.text.slice(0, -1), index: 0 })
+      if (name === 'escape' || (ctrl && name === 'k')) return setPal(null)
+      if (typed) setPal(p => p && { text: p.text + typed, index: 0 })
+      return
+    }
     // in a run's detail its panes take the keys first (a shell or the message box being typed in takes them all)
     if (mode.kind === 'detail' && raw && detailKeys.current?.(raw, typed)) return
     if (mode.kind === 'new') { if (raw) formKeys.current?.(raw, typed); return }    // typing goes through the latest state: keys can arrive faster than the screen redraws
-    const edit = (f: (text: string) => string) => setMode(prev => ('text' in prev ? ({ ...prev, text: f(prev.text), ...(prev.kind === 'palette' ? { index: 0 } : {}) } as Mode) : prev))
+    const edit = (f: (text: string) => string) => setMode(prev => ('text' in prev ? ({ ...prev, text: f(prev.text) } as Mode) : prev))
     const input = (m: Extract<Mode, { text: string }>, enter: (text: string) => void) => {
       if (name === 'escape') return setMode({ kind: 'list' })
       if (name === 'backspace') return edit(x => x.slice(0, -1))
       if (name === 'return') return enter(m.text)
       if (typed) edit(x => x + typed)
-    }
-    if (mode.kind === 'palette') {
-      if (name === 'down' || (key.ctrl && name === 'n')) return setMode({ ...mode, index: Math.min(mode.index + 1, Math.max(0, found.length - 1)) })
-      if (name === 'up' || (key.ctrl && name === 'p')) return setMode({ ...mode, index: Math.max(mode.index - 1, 0) })
-      if (name === 'return') { const a = found[mode.index]; setMode({ kind: 'list' }); a?.run(); return }
-      if (name === 'backspace') return edit(x => x.slice(0, -1))
-      if (name === 'escape') return setMode({ kind: 'list' })
-      if (typed) edit(x => x + typed)
-      return
     }
     if (mode.kind === 'projects') {
       if (name === 'down' || typed === 'j') return setMode({ kind: 'projects', index: Math.min(mode.index + 1, choices.length - 1) })
@@ -194,7 +208,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (typed === 'n' || name === 'escape') return setMode({ kind: 'list' })
       return
     }
-    if ((key.ctrl && name === 'k') || typed === ':') return setMode({ kind: 'palette', text: '', index: 0 })
+    if ((key.ctrl && name === 'k') || typed === ':') return setPal({ text: '', index: 0 })
     if (name === 'escape' && mode.kind === 'detail') return setMode({ kind: 'list' })
     if (name === 'escape' && focus === 'attention') return setFocus('runs')
     if (name === 'escape' && filter) { setFilter(''); return }
@@ -252,8 +266,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
       <RunDetail api={api} run={detailRun} now={t} width={width} height={height} message={message} bind={k => { detailKeys.current = k }}
-        onMessage={text => void send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} />
-      {mode.kind === 'palette' ? <Palette text={mode.text} found={found} index={mode.index} onPick={a => { setMode({ kind: 'list' }); a.run() }} /> : null}
+        onMessage={text => void send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} />
+      {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title={`${detailRun.ticket} commands`} onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
     </box>
   )
   return (
@@ -292,7 +306,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} fixed={/project:(\S+)/.test(filter)} bind={k => { formKeys.current = k }}
         onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
       {mode.kind === 'projects' ? <ProjectPicker choices={choices} index={mode.index} current={/project:(\S+)/.exec(filter)?.[1] ?? ''} onPick={pickProject} /> : null}
-      {mode.kind === 'palette' ? <Palette text={mode.text} found={found} index={mode.index} onPick={a => { setMode({ kind: 'list' }); a.run() }} /> : null}
+      {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
       <Bar mode={mode} run={mode.kind === 'message' ? api.runs.get(mode.run) : undefined} message={message} compact={!L.tabNames} tab={tab} onKey={handle} />
     </box>
   )
@@ -472,15 +486,21 @@ function ProjectPicker({ choices, index, current, onPick }: { choices: { key: st
   )
 }
 
-function Palette({ text, found, index, onPick }: { text: string; found: Action[]; index: number; onPick: (a: Action) => void }) {
+/** the command palette: centred, the list following the cursor (and the wheel), typed to narrow */
+function Palette({ text, found, index, width, title, onPick, onIndex }: { text: string; found: Action[]; index: number; width: number; title: string; onPick: (a: Action) => void; onIndex: (i: number) => void }) {
+  const W = Math.min(84, width - 6), rows = 12
+  const first = Math.max(0, Math.min(index - Math.floor(rows / 2), found.length - rows))
   return (
-    <box position="absolute" top={5} left={10} width={70} flexDirection="column" border borderStyle="rounded" borderColor={C.accent} backgroundColor={C.panel} zIndex={10} paddingLeft={1} paddingRight={1}>
-      <text><span fg={C.accent}>› </span><span fg={C.text}>{text}▏</span><span fg={C.muted}>{`   ${found.length} result${found.length === 1 ? '' : 's'}`}</span></text>
-      {found.slice(0, 10).map((a, i) => (
-        <box key={a.label} backgroundColor={i === index ? C.selected : undefined} onMouseDown={() => onPick(a)}>
-          <text><span fg={i === index ? C.text : C.secondary}>{fit(a.label, 34)}</span><span fg={C.muted}>{a.hint ? fit(a.hint, 30) : ''}</span></text>
+    <box position="absolute" top={3} left={Math.max(1, Math.floor((width - W) / 2))} width={W} flexDirection="column" border borderStyle="rounded" borderColor={C.accent} backgroundColor={C.panel} zIndex={40} paddingLeft={1} paddingRight={1}
+      onMouseScroll={e => { const d = e.scroll?.direction; if (d === 'down') onIndex(Math.min(index + 1, found.length - 1)); if (d === 'up') onIndex(Math.max(index - 1, 0)) }}>
+      <text><span fg={C.accent}>› </span><span fg={C.text}>{text}▏</span><span fg={C.muted}>{`   ${title} · ${found.length} result${found.length === 1 ? '' : 's'}`}</span></text>
+      {first > 0 ? <text fg={C.faint}>{`  ↑ ${first} more`}</text> : null}
+      {found.slice(first, first + rows).map((a, i) => (
+        <box key={a.label} backgroundColor={first + i === index ? C.selected : undefined} onMouseDown={() => onPick(a)}>
+          <text><span fg={first + i === index ? C.accent : C.faint}>{first + i === index ? '▸ ' : '  '}</span><span fg={first + i === index ? C.text : C.secondary}>{fit(a.label, Math.floor(W * 0.55))}</span><span fg={C.muted}>{a.hint ? fit(a.hint, W - Math.floor(W * 0.55) - 6) : ''}</span></text>
         </box>
       ))}
+      {found.length > first + rows ? <text fg={C.faint}>{`  ↓ ${found.length - first - rows} more`}</text> : null}
       {found.length ? null : <text fg={C.muted}>nothing matches</text>}
       <text fg={C.faint}>↑↓ choose · ↵ run · esc close</text>
     </box>

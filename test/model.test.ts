@@ -206,3 +206,14 @@ describe('the patch\'s app from the ticket', () => {
     expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub', title: 'Login fails' }, pairs, apps)).toBeUndefined()
   })
 })
+
+import { rank } from '../src/tui/model.ts'
+describe('the palette\'s order', () => {
+  test('what you typed as written first, then word starts, then letters in order', () => {
+    const labels = ['Open the PR description', 'Port to develop', 'Open the plan']
+    const order = (q: string) => labels.map(l => [l, rank(q, l)] as const).filter(([, r]) => r >= 0).sort((a, b) => a[1] - b[1]).map(([l]) => l)
+    expect(order('port')).toEqual(['Port to develop'])
+    expect(order('op pl')).toEqual(['Open the plan'])
+    expect(rank('zz', 'Port')).toBe(-1)
+  })
+})
