@@ -171,6 +171,7 @@ export class Service {
       if (c.cmd === 'port') {
         if (!s.pr) throw new Error(`${c.run} is not shipped yet: port a run that has its draft PR`)
         const to = c.to ?? 'develop', run = `${c.run}-${to.split('/').pop()}`
+        if (s.base.replace(/^origin\//, '') === to) throw new Error(`${c.run} is on ${to} already: port the release run instead`)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         this.act(run, async () => { await p.port(c.run, to) })
         return { ok: true, run }

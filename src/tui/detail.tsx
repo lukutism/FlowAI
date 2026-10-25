@@ -166,13 +166,15 @@ export type DetailKeys = (key: KeyEvent, typed: string) => boolean
 function Click({ on, children }: { on: () => void; children: ReactNode }) { return <box onMouseDown={on}>{children}</box> }
 const Row = ({ l }: { l: Line; w?: number }) => <text>{l.length ? l.map(([t, c], i) => <span key={i} fg={c || undefined}>{t}</span>) : ' '}</text>
 
-export function RunDetail({ api, run, now, width, height, message, bind, onMessage, onBack, onKey, bindCommands }: {
+export function RunDetail({ api, run, now, width, height, message, bind, onMessage, onBack, onKey, bindCommands, bindPaste }: {
   api: DetailApi; run: RunState; now: number; width: number; height: number; message: string
   onBack: () => void
   /** a key the screen handles (a, S, p, ^K), pressed from the key line */
   onKey: (typed: string) => void
   /** the detail's own commands, for the palette */
   bindCommands?: (c: (() => PaletteAction[]) | null) => void
+  /** pasted text: into the shell (as a terminal paste) or the message box */
+  bindPaste?: (f: ((text: string, bytes: Uint8Array) => void) | null) => void
   /** the screen hands its keys here first */
   bind: (keys: DetailKeys | null) => void
   onMessage: (text: string) => void
@@ -294,6 +296,11 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     { label: split ? 'Unsplit' : 'Split with the shell', hint: 'v', run: () => setSplit(x => !x) },
   ]
   useEffect(() => { bindCommands?.(commands); return () => bindCommands?.(null) })
+  const paste = (text: string, bytes: Uint8Array) => {
+    if (focus === 'shell' && shell && !shell.ended && term) shell.proc.terminal?.write(term.encodePaste(bytes))
+    else if (focus === 'message') setDraft(d => d + text.replace(/\r?\n/g, ' '))
+  }
+  useEffect(() => { bindPaste?.(paste); return () => bindPaste?.(null) })
 
   const session = sessionLines(entries, right - 2)
   const working = run.status === 'running' && entries.length > 0 && entries[entries.length - 1]!.kind !== 'result'

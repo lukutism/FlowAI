@@ -21,9 +21,10 @@ type Edit = { kind: 'text'; value: string } | { kind: 'list'; items: string[]; i
  * ←→, text and numbers with ↵, lists in an editor (a add, x remove). S shows the changes against the file and saves
  * on y; the file is checked first, and new runs take the settings at once.
  */
-export function ProjectSettings({ api, project, width, height, bind, onBack, onSaved }: {
+export function ProjectSettings({ api, project, width, height, bind, bindPaste, onBack, onSaved }: {
   api: SettingsApi; project: string; width: number; height: number
   bind: (keys: ((key: KeyEvent, typed: string) => boolean) | null) => void
+  bindPaste?: (f: ((text: string) => void) | null) => void
   onBack: () => void; onSaved: (text: string) => void
 }) {
   const [file, setFile] = useState<{ path: string; json: Json } | null>(null)
@@ -146,6 +147,13 @@ export function ProjectSettings({ api, project, width, height, bind, onBack, onS
     return true
   }
   useEffect(() => { bind(keys); return () => bind(null) })
+  // pasted text: into a text being edited, or a list item being added (a field not being typed in takes none)
+  const paste = (text: string) => {
+    const one = text.replace(/\r?\n/g, ' ').trim()
+    if (edit?.kind === 'text') setEdit({ ...edit, value: edit.value + one })
+    else if (edit?.kind === 'list' && edit.adding !== null) setEdit({ ...edit, adding: edit.adding + one })
+  }
+  useEffect(() => { bindPaste?.(paste); return () => bindPaste?.(null) })
 
   const W = width - 2, side = 20, right = W - side - 3
   const rows = Math.max(5, height - 8)

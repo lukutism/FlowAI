@@ -1,4 +1,4 @@
-import { useKeyboard, useTerminalDimensions } from '@opentui/react'
+import { useKeyboard, usePaste, useTerminalDimensions } from '@opentui/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { KeyEvent } from '@opentui/core'
 import { RunDetail, stopShells, type DetailApi, type DetailKeys, type PaletteAction } from './detail.tsx'
@@ -10,7 +10,7 @@ import type { Command, ProjectSummary, Reply } from '../service.ts'
 import type { Windows } from '../usage.ts'
 import { WAITS_FOR, type Snapshot } from '../resources.ts'
 import {
-  activity, attention, duration, filterRuns, footer, groupRows, header, hhmm, lastMessage, layout, match, resourceBars, rank, rows, SORTS, tokens,
+  activity, attention, duration, filterRuns, line, footer, groupRows, header, hhmm, lastMessage, layout, match, resourceBars, rank, rows, SORTS, tokens,
   type AttentionItem, type Grouped, type Row, type Sort,
 } from './model.ts'
 
@@ -61,6 +61,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const detailKeys = useRef<DetailKeys | null>(null)
   const formKeys = useRef<DetailKeys | null>(null)
   const settingsKeys = useRef<DetailKeys | null>(null)
+  /** where pasted text goes in a form, the settings or a run's detail (each knows its field being typed in) */
+  const pasteTo = useRef<((text: string, bytes: Uint8Array) => void) | null>(null)
   const [projSel, setProjSel] = useState(0)
   /** the run detail's own commands, for the palette while it is open */
   const detailCmds = useRef<(() => PaletteAction[]) | null>(null)
@@ -143,7 +145,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     }
     a.push({ label: 'New run', hint: 'n', run: () => setMode({ kind: 'new' }) })
     a.push({ label: 'Choose a project', hint: 'p', run: () => setMode({ kind: 'projects', index: 0 }) })
-    for (const r of all.filter(x => x.status !== 'done' || x.updatedAt > t - 86_400_000)) a.push({ label: `Open ${r.ticket} ${r.title}`, hint: `${r.project} · ${r.stage} · ${r.status}`, run: () => ask.open(r) })
+    // runs of one ticket (a release fix and its port) are told apart by their line
+    for (const r of all.filter(x => x.status !== 'done' || x.updatedAt > t - 86_400_000)) a.push({ label: `Open ${r.ticket} ${line(r.base)} ${r.title}`, hint: `${r.project} · ${r.stage} · ${r.status}`, run: () => ask.open(r) })
     a.push({ label: 'Show runs that need you', hint: 'status:needs-you', run: () => { setFilter('status:needs-you'); goTab('Runs') } })
     a.push({ label: 'Show failed and blocked runs', hint: 'status:failed', run: () => { setFilter('status:failed'); goTab('Runs') } })
     for (const p of api.projects ?? []) a.push({ label: `Show ${p.name} runs`, hint: `project:${p.key}`, run: () => { setFilter(`project:${p.key}`); goTab('Runs') } })
@@ -252,6 +255,14 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (typed === 'p' && mode.kind === 'detail') return ask.port(state)
   }
   useKeyboard(key => handle(key.name, key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : '', key.ctrl, key))
+  // pasted text: into whatever is being typed in (one line where a field has one); never read as keys on the runs
+  usePaste(e => {
+    const bytes = e.bytes, text = new TextDecoder().decode(bytes)
+    const line = text.replace(/\r?\n/g, ' ').trim()
+    if (pal) return setPal(p => p && { text: p.text + line, index: 0 })
+    if (mode.kind === 'new' || mode.kind === 'settings' || mode.kind === 'detail') return pasteTo.current?.(text, bytes)
+    if (mode.kind === 'filter' || mode.kind === 'message' || (mode.kind === 'approve' && mode.editing)) setMode(m => ('text' in m ? ({ ...m, text: m.text + line } as Mode) : m))
+  })
 
   // the mouse: a click selects (a second click on the selected run opens it), the wheel moves the selection
   const clickItem = (i: number) => {
@@ -277,7 +288,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   if (mode.kind === 'settings') return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => {}} />
-      <ProjectSettings api={api} project={mode.project} width={width} height={height} bind={k => { settingsKeys.current = k }}
+      <ProjectSettings api={api} project={mode.project} width={width} height={height} bind={k => { settingsKeys.current = k }} bindPaste={f => { pasteTo.current = f }}
         onBack={() => setMode({ kind: 'list' })} onSaved={text => setNotice(text)} />
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
     </box>
@@ -287,7 +298,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
       <RunDetail api={api} run={detailRun} now={t} width={width} height={height} message={message} bind={k => { detailKeys.current = k }}
-        onMessage={text => void send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} />
+        onMessage={text => void send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} bindPaste={f => { pasteTo.current = f }} />
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title={`${detailRun.ticket} commands`} onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
     </box>
   )
@@ -324,7 +335,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         : tab === 'Metrics' ? <MetricsView runs={all} projects={api.projects ?? []} />
         : <ProjectsView projects={api.projects ?? []} runs={all} selected={projSel} onOpen={i => { if (i === projSel) { const p = (api.projects ?? [])[i]; if (p) setMode({ kind: 'settings', project: p.key }) } else setProjSel(i) }} />}
       <text> </text>
-      {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} fixed={/project:(\S+)/.test(filter)} bind={k => { formKeys.current = k }}
+      {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} fixed={/project:(\S+)/.test(filter)} bind={k => { formKeys.current = k }} bindPaste={f => { pasteTo.current = f }}
         onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
       {mode.kind === 'projects' ? <ProjectPicker choices={choices} index={mode.index} current={/project:(\S+)/.exec(filter)?.[1] ?? ''} onPick={pickProject} /> : null}
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
@@ -517,7 +528,7 @@ function Palette({ text, found, index, width, title, onPick, onIndex }: { text: 
       <text><span fg={C.accent}>› </span><span fg={C.text}>{text}▏</span><span fg={C.muted}>{`   ${title} · ${found.length} result${found.length === 1 ? '' : 's'}`}</span></text>
       {first > 0 ? <text fg={C.faint}>{`  ↑ ${first} more`}</text> : null}
       {found.slice(first, first + rows).map((a, i) => (
-        <box key={a.label} backgroundColor={first + i === index ? C.selected : undefined} onMouseDown={() => onPick(a)}>
+        <box key={first + i} backgroundColor={first + i === index ? C.selected : undefined} onMouseDown={() => onPick(a)}>
           <text><span fg={first + i === index ? C.accent : C.faint}>{first + i === index ? '▸ ' : '  '}</span><span fg={first + i === index ? C.text : C.secondary}>{fit(a.label, Math.floor(W * 0.55))}</span><span fg={C.muted}>{a.hint ? fit(a.hint, W - Math.floor(W * 0.55) - 6) : ''}</span></text>
         </box>
       ))}

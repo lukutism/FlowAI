@@ -865,3 +865,37 @@ describe('project settings', () => {
     } finally { t.s.renderer.destroy() }
   })
 })
+
+describe('fixes from use', () => {
+  test('runs of one ticket each appear once in the commands, told apart by line; scrolling adds none', async () => {
+    const same = ['fso-1', 'fso-1-develop', 'fso-1-develop-develop'].map((id, i) => base(id, { ticket: '#1', title: 'Picking quantity', base: i ? 'origin/develop' : 'origin/patch/3.18.41', createdAt: NOW - i * 60_000 }))
+    const t = await screen(same)
+    try {
+      await t.press('ctrl+k')
+      const before = (await t.frame()).split('\n').filter(l => l.includes('Open #1')).length
+      for (let i = 0; i < 8; i++) await act(async () => { t.s.mockInput.pressArrow('down') })
+      for (let i = 0; i < 8; i++) await act(async () => { t.s.mockInput.pressArrow('up') })
+      const after = (await t.frame()).split('\n').filter(l => l.includes('Open #1')).length
+      expect(before).toBe(3)
+      expect(after).toBe(3)
+      expect(await t.frame()).toContain('Open #1 3.18.41 Picking quantity')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a ticket pasted into the form (a link from the board too), a command filter pasted into the palette', async () => {
+    const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile'], devices: [], patches: [], deadlineMinutes: 30 }
+    const t = await screen(runs, undefined, { projects: [fso], query: (async (q: { q: string }) => (q.q === 'bases' ? { mobile: ['origin/develop'] } : q.q === 'lookup' ? { run: 'fso-9', exists: false, key: '#9', title: 'Nine', kind: 'bug', type: 'Bug', url: 'u', board: 'b', customer: '', tags: [], comments: 0 } : [])) as FlowApi['query'] })
+    try {
+      await t.press('n')
+      await act(async () => { await t.s.mockInput.pasteBracketedText('https://dev.azure.com/o/iwb-osapiens-hub/_workitems/edit/9/') })
+      expect(await t.frame()).toContain('https://dev.azure.com/o/iwb-osapiens-hub/_workitems/edit/9/')
+      await t.press('esc')
+      await t.press('ctrl+k')
+      await act(async () => { await t.s.mockInput.pasteBracketedText('new run') })
+      expect(await t.frame()).toContain('› new run▏')
+      await t.press('esc')
+      // on the runs, a paste is not read as keys (a pasted q must not quit)
+      await act(async () => { await t.s.mockInput.pasteBracketedText('q') })
+      expect(t.quit()).toBe(false)
+    } finally { t.s.renderer.destroy() }
+  })
+})

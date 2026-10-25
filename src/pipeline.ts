@@ -416,9 +416,11 @@ export class Pipeline {
     const src = this.d.store.state(source)
     if (!src?.pr) throw new Error(`${source} is not shipped yet: port a run that has its draft PR`)
     const m = this.meta(source), p = this.d.project, short = to.split('/').pop()!
+    if (m.base.replace(/^origin\//, '') === to) throw new Error(`${source} is on ${to} already: port the release run instead`)
     const run = `${source}-${short}`
     if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
-    const root = join(p.worktrees, `${m.id}-${short}`)
+    // the port's own folder, named after its run: a port of a port can't land in the first port's
+    const root = join(p.worktrees, run.slice(p.key.length + 1))
     const repos = m.repos.map(r => ({ key: r.key, worktree: join(root, r.key), base: `origin/${to}` }))
     const { device: _, devServer: __, ...src0 } = m // the source's device and dev server are its own; the port starts its own
     const pm: Meta = { ...src0, base: `origin/${to}`, branch: `${m.branch}-${short}`, repos, worktree: Pipeline.layout(root, repos) }

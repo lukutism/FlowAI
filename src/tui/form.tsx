@@ -64,11 +64,13 @@ export function pickItems(all: Item[], query: string): Item[] { return query.tri
  * base, repos, customer patch), checked before it starts (the ticket exists, no run has it yet, the customer patch
  * fits the base), with what will happen. Base and patch are chosen in a list you type into.
  */
-export function NewRunForm({ api, width, project: initial, fixed, bind, onStart, onCancel }: {
+export function NewRunForm({ api, width, project: initial, fixed, bind, bindPaste, onStart, onCancel }: {
   api: FormApi; width: number; project?: string
   /** the project is the screen's (its header): not asked */
   fixed?: boolean
   bind: (keys: ((key: KeyEvent, typed: string) => boolean) | null) => void
+  /** pasted text, into the field being typed in */
+  bindPaste?: (f: ((text: string) => void) | null) => void
   onStart: (c: Extract<Command, { cmd: 'start' }>) => void
   onCancel: () => void
 }) {
@@ -232,6 +234,14 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, onStart,
     return true
   }
   useEffect(() => { bind(keys); return () => bind(null) })
+  const paste = (text: string) => {
+    const one = text.replace(/\r?\n/g, ' ').trim()
+    if (picking) return setPicking(x => x && { ...x, query: x.query + one, index: 0 })
+    if (field === 'ticket') return setTicket(x => x + one.replace(/\s+/g, ''))
+    if (field === 'task') return setTask(x => x + text.trim())
+    if (field === 'base' || field === 'patch') return open(field, one)
+  }
+  useEffect(() => { bindPaste?.(paste); return () => bindPaste?.(null) })
 
   const W = Math.min(96, width - 8)
   const radio = (opts: { v: string; label: string }[], cur: string, set: (v: string) => void) => opts.map(o => (
