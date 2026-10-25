@@ -197,3 +197,12 @@ describe('the new-run form\'s suggestions', () => {
     expect(suggestBase(['Picking'], ['origin/develop'])).toBeUndefined()
   })
 })
+
+describe('the patch\'s app from the ticket', () => {
+  test('a board naming the customer and a title naming the area: picking → product', () => {
+    const pairs = ['iwb/cmms', 'iwb/metering', 'iwb/product']
+    const apps = { cmms: 'cmms|maintenance', product: 'product|picking|material', metering: 'meter' }
+    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub', title: 'Picking – Remaining Required Quantity' }, pairs, apps)).toBe('iwb/product')
+    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub', title: 'Login fails' }, pairs, apps)).toBeUndefined()
+  })
+})

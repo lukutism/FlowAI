@@ -127,7 +127,7 @@ export class Pipeline {
   async lookup(ticket: number | string) {
     const run = this.runId(ticket)
     const t = await this.tracker.read(this.tracker.parseKey(String(ticket))!.id)
-    return { run, exists: !!this.d.store.state(run), key: t.key, title: t.title, kind: t.kind, type: t.type ?? '', url: t.url, board: t.board ?? '', customer: t.customer ?? '', tags: t.tags ?? [], comments: t.comments ?? 0, area: t.area ?? '' }
+    return { run, exists: !!this.d.store.state(run), key: t.key, title: t.title, kind: t.kind, type: t.type ?? '', url: t.url, board: t.board ?? '', customer: t.customer ?? '', tags: t.tags ?? [], comments: t.comments ?? 0, area: t.area ?? '', platform: t.platform ?? '' }
   }
 
   /** a repo's bases to start from: its default, then the branches its release patterns match, newest version first */
@@ -137,6 +137,13 @@ export class Pipeline {
     const ver = (r: string) => (/(\d+)\.(\d+)\.(\d+)/.exec(r) ?? []).slice(1).map(Number)
     const newer = (a: string, b: string) => { const [x, y] = [ver(a), ver(b)]; for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0); return a.localeCompare(b) }
     return [c.defaultBase, ...refs.filter(r => r !== c.defaultBase).sort(newer)]
+  }
+
+  /** every remote branch and tag of a repo, the most recently changed first (the base picker's search) */
+  refs(repo: string): string[] {
+    const c = this.repoConfig(repo)
+    return new TextDecoder().decode(Bun.spawnSync(['git', 'for-each-ref', '--sort=-committerdate', '--count=500', '--format=%(refname:short)', 'refs/remotes/origin', 'refs/tags'], { cwd: c.path }).stdout)
+      .split('\n').filter(r => r && r !== 'origin/HEAD' && r !== 'origin')
   }
 
   private patchRepo() { return this.d.project.repos.find(r => r.patches) }

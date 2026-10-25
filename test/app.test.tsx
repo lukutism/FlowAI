@@ -572,12 +572,14 @@ describe('projects and the attention list from the keyboard', () => {
 })
 
 describe('the new-run form', () => {
-  const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const, 'ios' as const], patches: ['mobile'], deadlineMinutes: 30, defaults: ['mobile'], devServers: ['portal'] }
+  const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const, 'ios' as const], patches: ['mobile'], deadlineMinutes: 30, defaults: ['mobile'], devServers: ['portal'],
+    repoMatch: { mobile: '\\bmobile\\b|\\bapp\\b', portal: '\\bportal\\b|\\bweb\\b' }, patchApps: { cmms: 'cmms|maintenance', product: 'product|picking|material' } }
   const spk = { ...fso, key: 'spk', name: 'SPK', tracker: 'jira' as const, patches: [], devServers: [] }
   const found = { run: 'fso-204598', exists: false, key: '#204598', title: 'Picking – Remaining Required Quantity', kind: 'feature' as const, type: 'Task', url: 'u', board: 'iwb-hub', customer: 'IWB', tags: ['3.18'], comments: 3 }
   const query = (o: { lookup?: unknown; fail?: string } = {}) => async (q: { q: string; base?: string }) => {
     if (q.q === 'bases') return { mobile: ['origin/develop', 'origin/patch/3.20.7', 'origin/patch/3.18.41'], portal: ['origin/develop'] }
-    if (q.q === 'patches') return ['iwb/product', 'nordex/cmms']
+    if (q.q === 'patches') return ['iwb/cmms', 'iwb/product', 'nordex/cmms']
+    if (q.q === 'refs') return ['origin/develop', 'origin/feature/picking', 'origin/patch/3.20.7', 'origin/patch/3.18.41', 'v3.18.41']
     if (q.q === 'checkPatch') return q.base === 'origin/patch/3.18.41' ? { ok: false, text: 'no iwb/product patch for 3.18.41 (newest 3.18.39)' } : { ok: true, text: 'iwb/product 3.20.7' }
     if (o.fail) throw new Error(o.fail)
     return o.lookup ?? found
@@ -594,9 +596,9 @@ describe('the new-run form', () => {
       expect(f).toContain('✓ Task · iwb-hub')
       expect(f).toContain('Picking – Remaining Required Quantity')
       expect(f).toContain('customer IWB · 3 comments · tags 3.18')
-      expect(f).toMatch(/Base +origin\/patch\/3\.18\.41 ▾ +the ticket's release line/)
+      expect(f).toMatch(/Base +patch\/3\.18\.41 ▾ +the ticket's release line/)
       expect(f).toMatch(/\(•\) feature/)
-      expect(f).toMatch(/Patch +\( \) none +\(•\) iwb\/product/)
+      expect(f).toMatch(/Patch +iwb\/product ▾ +the ticket points at it \(IWB\)/) // IWB, and picking → product
       expect(f).toContain('⚠ no iwb/product patch for 3.18.41 (newest 3.18.39)')
       expect(f).toContain('apply the iwb/product')
     } finally { t.s.renderer.destroy() }
@@ -609,8 +611,12 @@ describe('the new-run form', () => {
       expect(refused).toContain('the customer patch does not fit this base')
       expect(refused).toMatch(/▌ Patch/) // the focus goes to what is wrong
       expect(t.f.sent).toEqual([])
-      // up to the base: ← to 3.20.7, where the patch fits
-      await keys(t, 'up', 'up', 'up', 'up', 'left')
+      // up to the base: type to search, ↵ picks 3.20.7, where the patch fits
+      await keys(t, 'up', 'up', 'up', 'up', '3', '.', '2')
+      const list = await t.frame()
+      expect(list).toMatch(/› 3\.2▏ +1 of 5/)
+      expect(list).toContain('▸ patch/3.20.7')
+      await keys(t, 'enter')
       expect(await t.frame()).toContain('✓ iwb/product 3.20.7')
       // a device: down to Device, → android
       await keys(t, 'down', 'down', 'down', 'right')
@@ -628,6 +634,33 @@ describe('the new-run form', () => {
       expect(f).toMatch(/Dev server +\(•\) none +\( \) portal/)
       await keys(t, 'tab', 'tab', 'right', 'tab', 'tab', 'right', 'enter')
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/develop', kind: 'feature', repos: ['mobile', 'portal'], devServer: true, model: 'opus' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('the ticket picks the repos it targets and the patch\'s app; you can still change them', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query({ lookup: { ...found, customer: '', platform: 'Mobile; Portal', tags: [] } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      const f = await t.frame()
+      expect(f).toMatch(/\[x\] mobile +\[x\] portal +from the ticket/)
+      expect(f).toMatch(/Patch +iwb\/product ▾/) // the board names IWB, the title says picking
+      // the patch picker (portal brings a Dev server field): none is there to choose, the ticket's first
+      expect(f).toMatch(/Dev server +\(•\) none/)
+      await keys(t, 'tab', 'tab', 'tab', 'tab', 'tab', 'tab', ' ')
+      const p = await t.frame()
+      expect(p).toMatch(/none +the fix goes on the release line only/)
+      expect(p).toMatch(/iwb\/product +the ticket points at it/)
+      await keys(t, 'n', 'o', 'n', 'enter')
+      expect(await t.frame()).toMatch(/Patch +none ▾/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a base typed that no branch matches is used as written', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query({ lookup: { ...found, tags: [], customer: '', board: 'fso' } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      await keys(t, 'tab', ...'a1b2c3'.split(''))
+      expect(await t.frame()).toContain('nothing matches: ↵ uses "a1b2c3" as written')
+      await keys(t, 'enter')
+      expect(await t.frame()).toMatch(/Base +a1b2c3 ▾/)
     } finally { t.s.renderer.destroy() }
   })
   test('a ticket that can\'t be read, or that has a run already, is not started', async () => {
@@ -651,7 +684,9 @@ describe('the new-run form', () => {
     try {
       expect(await t.press('n')).toMatch(/\(•\) spk/)
       await t.press('esc', '/', ...'project:fso'.split(''), 'enter')
-      expect(await t.press('n')).toMatch(/\(•\) fso/)
+      const f = await t.press('n')
+      expect(f).toContain('New run · FSO') // the screen's project: not asked
+      expect(f).not.toMatch(/Project +\(/)
     } finally { t.s.renderer.destroy() }
   })
   test('esc closes it; the Start button can be clicked', async () => {

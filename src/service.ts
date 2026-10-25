@@ -24,12 +24,15 @@ export interface ProjectSummary {
   key: string; name: string; tracker: 'azure' | 'jira'; forge: 'azure' | 'github'; repos: string[]; devices: ('android' | 'ios')[]; patches: string[]; deadlineMinutes: number
   /** the repos a run gets when it names none; the repos with a dev server */
   defaults?: string[]; devServers?: string[]
+  /** for the form's suggestions: each repo's pattern on a ticket's platform and tags; patch apps by pattern */
+  repoMatch?: Record<string, string>; patchApps?: Record<string, string>
 }
 
 /** what the new-run form asks before a run exists */
 export type Query =
   | { q: 'lookup'; project: string; ticket: number | string }
   | { q: 'bases'; project: string }
+  | { q: 'refs'; project: string; repo: string }
   | { q: 'patches'; project: string }
   | { q: 'checkPatch'; project: string; patch: string; base: string }
 
@@ -88,7 +91,8 @@ export class Service {
   projects(): ProjectSummary[] {
     return Object.values(this.d.projects).map(p => ({ key: p.key, name: p.name, tracker: p.tracker.kind, forge: p.forge.kind, repos: p.repos.map(r => r.key),
       devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes,
-      defaults: (p.repos.some(r => r.default) ? p.repos.filter(r => r.default) : p.repos.slice(0, 1)).map(r => r.key), devServers: p.repos.filter(r => r.devServer).map(r => r.key) }))
+      defaults: (p.repos.some(r => r.default) ? p.repos.filter(r => r.default) : p.repos.slice(0, 1)).map(r => r.key), devServers: p.repos.filter(r => r.devServer).map(r => r.key),
+      repoMatch: Object.fromEntries(p.repos.filter(r => r.match).map(r => [r.key, r.match!])), patchApps: p.patchApps }))
   }
 
   /** the new-run form's questions: a ticket, each repo's bases, the customer patches, whether one fits a base */
@@ -97,6 +101,7 @@ export class Service {
     if (q.q === 'lookup') return p.lookup(q.ticket)
     if (q.q === 'bases') return Object.fromEntries(this.d.projects[q.project]!.repos.map(r => [r.key, p.bases(r.key)]))
     if (q.q === 'patches') return p.patchChoices()
+    if (q.q === 'refs') return p.refs(q.repo)
     return p.checkPatch(q.patch, q.base)
   }
   onResources(fn: (s: Snapshot) => void) { return this.slots.onChange(fn) }

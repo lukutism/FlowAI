@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import type { Snapshot } from '../resources.ts'
 import type { Command, ProjectSummary, Query } from '../service.ts'
 import { C, wrap } from './detail.tsx'
+import { match } from './model.ts'
 
 /** what the form needs from the service connection */
 export interface FormApi {
@@ -11,7 +12,10 @@ export interface FormApi {
   query?<T>(q: Query): Promise<T>
 }
 
-export interface Lookup { run: string; exists: boolean; key: string; title: string; kind: 'bug' | 'feature'; type: string; url: string; board: string; customer: string; tags: string[]; comments: number; area?: string }
+export interface Lookup {
+  run: string; exists: boolean; key: string; title: string; kind: 'bug' | 'feature'; type: string; url: string; board: string; customer: string; tags: string[]; comments: number
+  area?: string; platform?: string
+}
 
 type Field = 'project' | 'ticket' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model'
 const MODELS = ['default', 'opus', 'sonnet']
@@ -22,26 +26,44 @@ export function suggestBase(tags: string[], bases: string[]): string | undefined
   return line ? bases.find(b => b.includes(`/${line}.`)) : undefined
 }
 
+/** the repos a ticket targets: each repo whose pattern matches its platform or a tag; none when nothing matches */
+export function suggestRepos(t: { platform?: string; tags: string[] }, patterns: Record<string, string>, order: string[]): string[] {
+  const words = [t.platform ?? '', ...t.tags].filter(Boolean)
+  return order.filter(r => patterns[r] && words.some(w => new RegExp(patterns[r]!, 'i').test(w)))
+}
+
 /**
- * The customer patch a ticket points at: its customer (named on it, else in its board's name), and of that customer's
- * apps the one its area names, or the only one; none when it can't tell which app.
+ * The customer patch a ticket points at: its customer (named on it, else in its board's name); of that customer's
+ * apps the one its area names, else the one whose pattern matches its area or title (picking → product), else the
+ * only one; none when it can't tell.
  */
-export function suggestPatch(t: { customer: string; board: string; area?: string }, choices: string[]): string | undefined {
+export function suggestPatch(t: { customer: string; board: string; area?: string; title?: string }, choices: string[], apps: Record<string, string> = {}): string | undefined {
   const who = t.customer.toLowerCase()
   const mine = choices.filter(c => (who ? c.split('/')[0] === who : t.board.toLowerCase().includes(c.split('/')[0]!)))
   const area = (t.area ?? '').toLowerCase()
-  return mine.find(c => area && area.includes(c.split('/')[1]!)) ?? (mine.length === 1 ? mine[0] : undefined)
+  const text = `${t.area ?? ''} ${t.title ?? ''}`
+  return mine.find(c => area && area.includes(c.split('/')[1]!))
+    ?? mine.find(c => apps[c.split('/')[1]!] && new RegExp(apps[c.split('/')[1]!]!, 'i').test(text))
+    ?? (mine.length === 1 ? mine[0] : undefined)
 }
 
 const fit = (s: string, n: number) => (s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s.padEnd(n))
 function Click({ on, children }: { on: () => void; children: ReactNode }) { return <box onMouseDown={on}>{children}</box> }
 
+/** a list to choose from by typing: what matches the query, the suggestions first */
+interface Picking { field: 'base' | 'patch'; query: string; index: number }
+export interface Item { value: string; label: string; hint?: string }
+export function pickItems(all: Item[], query: string): Item[] { return query.trim() ? all.filter(i => match(query, i.label)) : all }
+
 /**
- * The new-run form: everything a run is started with on one panel, filled in from the ticket where it can be, checked
- * before it starts (the ticket exists, no run has it yet, the customer patch fits the base), with what will happen.
+ * The new-run form: everything a run is started with on one panel, filled in from the ticket where it can be (kind,
+ * base, repos, customer patch), checked before it starts (the ticket exists, no run has it yet, the customer patch
+ * fits the base), with what will happen. Base and patch are chosen in a list you type into.
  */
-export function NewRunForm({ api, width, project: initial, bind, onStart, onCancel }: {
+export function NewRunForm({ api, width, project: initial, fixed, bind, onStart, onCancel }: {
   api: FormApi; width: number; project?: string
+  /** the project is the screen's (its header): not asked */
+  fixed?: boolean
   bind: (keys: ((key: KeyEvent, typed: string) => boolean) | null) => void
   onStart: (c: Extract<Command, { cmd: 'start' }>) => void
   onCancel: () => void
@@ -52,6 +74,7 @@ export function NewRunForm({ api, width, project: initial, bind, onStart, onCanc
   const [ticket, setTicket] = useState('')
   const [look, setLook] = useState<{ state: 'idle' | 'loading' | 'ok' | 'error'; data?: Lookup; error?: string }>({ state: 'idle' })
   const [bases, setBases] = useState<Record<string, string[]>>({})
+  const [refs, setRefs] = useState<string[]>([])
   const [base, setBase] = useState('')
   const [kind, setKind] = useState<'bug' | 'feature'>('bug')
   const [repos, setRepos] = useState<string[]>(p?.defaults ?? p?.repos.slice(0, 1) ?? [])
@@ -63,18 +86,23 @@ export function NewRunForm({ api, width, project: initial, bind, onStart, onCanc
   const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null)
   const [model, setModel] = useState('default')
   const [field, setField] = useState<Field>('ticket')
+  const [picking, setPicking] = useState<Picking | null>(null)
   const [problem, setProblem] = useState('')
   /** what you chose yourself since the last lookup: suggestions never overwrite it */
-  const [touched, setTouched] = useState<Set<'base' | 'patch' | 'kind'>>(new Set())
-  const touch = (f: 'base' | 'patch' | 'kind') => setTouched(t => new Set(t).add(f))
+  const [touched, setTouched] = useState<Set<'base' | 'patch' | 'kind' | 'repos'>>(new Set())
+  const touch = (f: 'base' | 'patch' | 'kind' | 'repos') => setTouched(t => new Set(t).add(f))
 
-  // a project's own answers: its repos, bases and customer patches
+  // a project's own answers: its repos, bases, branches and customer patches
   useEffect(() => {
     if (!p) return
     setRepos(p.defaults ?? p.repos.slice(0, 1)); setDevice('none'); setDev(false); setPatch(''); setRepoAt(0)
     void api.query?.<Record<string, string[]>>({ q: 'bases', project }).then(b => { setBases(b); setBase(b[(p.defaults ?? p.repos)[0]!]?.[0] ?? '') }).catch(() => setBases({}))
     void (p.patches.length ? api.query?.<string[]>({ q: 'patches', project }).then(setChoices).catch(() => setChoices([])) : setChoices([]))
   }, [project])
+  useEffect(() => {
+    if (!p || !repos[0]) return
+    void api.query?.<string[]>({ q: 'refs', project, repo: repos[0] }).then(setRefs).catch(() => setRefs([]))
+  }, [project, repos[0]])
 
   // the ticket, looked up once typing pauses
   useEffect(() => {
@@ -92,10 +120,12 @@ export function NewRunForm({ api, width, project: initial, bind, onStart, onCanc
   // what the ticket points at, once it and the lists are known (never over what you chose)
   useEffect(() => {
     const d = look.data
-    if (look.state !== 'ok' || !d) return
+    if (look.state !== 'ok' || !d || !p) return
     if (!touched.has('kind')) setKind(d.kind)
-    const b = suggestBase(d.tags, bases[repos[0] ?? ''] ?? []); if (b && !touched.has('base')) setBase(b)
-    const s = suggestPatch(d, choices); if (s && !touched.has('patch')) setPatch(s)
+    const r = suggestRepos(d, p.repoMatch ?? {}, p.repos)
+    if (r.length && !touched.has('repos')) setRepos(r)
+    const b = suggestBase(d.tags, bases[(r.length && !touched.has('repos') ? r : repos)[0] ?? ''] ?? []); if (b && !touched.has('base')) setBase(b)
+    const s = suggestPatch(d, choices, p.patchApps); if (s && !touched.has('patch')) setPatch(s)
   }, [look, bases, choices])
 
   // whether the chosen patch fits the base
@@ -106,9 +136,20 @@ export function NewRunForm({ api, width, project: initial, bind, onStart, onCanc
     return () => { live = false }
   }, [patch, base, project])
 
-  const baseChoices = bases[repos[0] ?? ''] ?? (base ? [base] : [])
+  const suggested = bases[repos[0] ?? ''] ?? []
+  const t = look.data
+  const ticketBase = t ? suggestBase(t.tags, suggested) : undefined
+  const ticketPatch = t && p ? suggestPatch(t, choices, p.patchApps) : undefined
+  // the picker's lists: the suggestions first (the default, the ticket's, the newest release lines), then the rest
+  const baseItems: Item[] = [...new Set([...suggested, ...refs])].map(r => ({ value: r, label: r.replace(/^origin\//, ''),
+    hint: r === suggested[0] ? 'the default' : r === ticketBase ? "the ticket's release line" : suggested.includes(r) ? 'release line' : r.startsWith('origin/') ? '' : 'tag' }))
+  const patchItems: Item[] = [{ value: '', label: 'none', hint: 'the fix goes on the release line only' },
+    ...[...choices].sort((a, b) => Number(b === ticketPatch) - Number(a === ticketPatch)).map(c => ({ value: c, label: c, hint: c === ticketPatch ? `the ticket points at it` : '' }))]
+  const shown = picking ? pickItems(picking.field === 'base' ? baseItems : patchItems, picking.query) : []
+
   const devRepos = (p?.devServers ?? []).filter(r => repos.includes(r))
-  const fields: Field[] = ['project', 'ticket', 'base', 'kind', 'repos', ...(p?.devices.length ? ['device' as const] : []), ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
+  const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
+    ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
   const move = (d: number) => setField(f => fields[(fields.indexOf(f) + d + fields.length) % fields.length]!)
   const cycle = <T,>(list: T[], cur: T, d: number): T => list[(list.indexOf(cur) + d + list.length) % list.length] ?? cur
 
@@ -123,32 +164,52 @@ export function NewRunForm({ api, width, project: initial, bind, onStart, onCanc
     onStart({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), kind, repos,
       ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}) })
   }
+  const choose = (f: 'base' | 'patch', v: string) => { touch(f); if (f === 'base') setBase(v); else setPatch(v); setPicking(null) }
+  const open = (f: 'base' | 'patch', query = '') => {
+    setField(f)
+    const all = f === 'base' ? baseItems : patchItems
+    setPicking({ field: f, query, index: Math.max(0, pickItems(all, query).findIndex(i => i.value === (f === 'base' ? base : patch))) })
+  }
 
   const keys = (key: KeyEvent, typed: string): boolean => {
     setProblem('')
     const n = key.name
+    if (picking) {
+      if (n === 'escape') { setPicking(null); return true }
+      if (n === 'down') { setPicking(x => x && { ...x, index: Math.min(x.index + 1, shown.length - 1) }); return true }
+      if (n === 'up') { setPicking(x => x && { ...x, index: Math.max(x.index - 1, 0) }); return true }
+      if (n === 'return') {
+        const it = shown[picking.index] ?? (picking.field === 'base' && picking.query.trim() ? { value: picking.query.trim() } : undefined)
+        if (it) choose(picking.field, it.value)
+        return true
+      }
+      if (n === 'backspace') { setPicking(x => x && { ...x, query: x.query.slice(0, -1), index: 0 }); return true }
+      if (n === 'tab') { setPicking(null); move(key.shift ? -1 : 1); return true }
+      if (typed) setPicking(x => x && { ...x, query: x.query + typed, index: 0 })
+      return true
+    }
     if (n === 'escape') { onCancel(); return true }
     if (n === 'return') { start(); return true }
     if ((n === 'tab' && !key.shift) || n === 'down') { move(1); return true }
     if ((n === 'tab' && key.shift) || n === 'up') { move(-1); return true }
     const d = n === 'right' ? 1 : n === 'left' ? -1 : 0
     if (field === 'ticket') {
-      if (n === 'backspace') setTicket(t => t.slice(0, -1))
-      else if (typed && typed !== ' ') setTicket(t => t + typed)
+      if (n === 'backspace') setTicket(x => x.slice(0, -1))
+      else if (typed && typed !== ' ') setTicket(x => x + typed)
       return true
     }
+    // base and patch: any key opens the list (a letter starts the search)
+    if (field === 'base' || field === 'patch') { open(field, typed && typed !== ' ' ? typed : ''); return true }
     if (field === 'repos' && p) {
       if (d) setRepoAt(i => (i + d + p.repos.length) % p.repos.length)
-      if (typed === ' ') { const r = p.repos[repoAt]!; setRepos(rs => (rs.includes(r) ? rs.filter(x => x !== r) : p.repos.filter(x => x === r || rs.includes(x)))) }
+      if (typed === ' ') { touch('repos'); const r = p.repos[repoAt]!; setRepos(rs => (rs.includes(r) ? rs.filter(x => x !== r) : p.repos.filter(x => x === r || rs.includes(x)))) }
       return true
     }
     if (field === 'dev' && (d || typed === ' ')) { setDev(x => !x); return true }
     if (!d) return true
     if (field === 'project') setProject(cycle(projects.map(x => x.key), project, d))
-    if (field === 'base') { touch('base'); setBase(cycle(baseChoices, base, d)) }
     if (field === 'kind') { touch('kind'); setKind(k => (k === 'bug' ? 'feature' : 'bug')) }
     if (field === 'device') setDevice(cycle(['none', ...(p?.devices ?? [])] as ('none' | 'android' | 'ios')[], device, d))
-    if (field === 'patch') { touch('patch'); setPatch(cycle(['', ...choices], patch, d)) }
     if (field === 'model') setModel(cycle(MODELS, model, d))
     return true
   }
@@ -168,10 +229,24 @@ export function NewRunForm({ api, width, project: initial, bind, onStart, onCanc
       </box>
     )
   }
+  // a field chosen from a list: its value, and when focused how to open the list
+  const pickRow = (f: 'base' | 'patch', label: string, value: string, hint: string) => row(f, label,
+    <Click on={() => open(f)}><text><strong fg={value ? C.text : C.secondary}>{value || 'none'}</strong><span fg={C.muted}>{' ▾'}</span></text></Click>,
+    field === f && !picking ? 'type to search · ↵ start' : hint)
+  const picker = (f: 'base' | 'patch') => picking?.field === f ? (
+    <box flexDirection="column" backgroundColor={C.selected} paddingLeft={13}>
+      <text><span fg={C.accent}>{'› '}</span><span fg={C.text}>{picking.query}</span><span fg={C.accent}>▏</span><span fg={C.faint}>{`   ${shown.length} of ${(f === 'base' ? baseItems : patchItems).length} · ↑↓ choose · ↵ pick · esc close`}</span></text>
+      {shown.slice(Math.max(0, picking.index - 6), Math.max(0, picking.index - 6) + 7).map(i => {
+        const on = shown.indexOf(i) === picking.index
+        return <Click key={i.value || 'none'} on={() => choose(f, i.value)}><text><span fg={on ? C.accent : C.faint}>{on ? '▸ ' : '  '}</span><span fg={on ? C.text : C.secondary}>{fit(i.label, 34)}</span><span fg={C.faint}>{i.hint ?? ''}</span></text></Click>
+      })}
+      {shown.length ? null : <text fg={C.muted}>{f === 'base' && picking.query.trim() ? `  nothing matches: ↵ uses "${picking.query.trim()}" as written` : '  nothing matches'}</text>}
+    </box>
+  ) : null
+
   const used = api.resources ? { agents: api.resources.holders.agents.length, builds: api.resources.holders.builds.length, devices: api.resources.holders.devices.length } : undefined
   const limits = api.resources?.limits
   const buildsFull = used && limits ? used.builds >= limits.builds : false
-  const t = look.data
   const will = [
     `create a worktree${repos.length > 1 ? ' each' : ''} from ${base || 'the default base'} in ${repos.join(', ') || '…'}`,
     device !== 'none' ? `boot ${device === 'android' ? 'an android emulator' : 'an iOS simulator'} with its Metro` : '',
@@ -179,33 +254,32 @@ export function NewRunForm({ api, width, project: initial, bind, onStart, onCanc
     patch ? `apply the ${patch} patch` : '',
     'then write the plan',
   ].filter(Boolean).join(', ')
+  const fromTicket = (f: 'kind' | 'repos') => (t && !touched.has(f) ? 'from the ticket' : '')
   const blank = <text> </text>
   return (
     <box position="absolute" top={3} left={Math.max(2, Math.floor((width - W) / 2))} width={W} zIndex={20} flexDirection="column" border borderStyle="rounded" borderColor={C.faint} backgroundColor={C.panel} paddingTop={1} paddingBottom={1}>
-      <text><strong>{'  New run'}</strong><span fg={C.faint}>{'   a ticket to a draft PR'}</span></text>
+      <text><strong>{'  New run'}</strong>{fixed && p ? <span fg={C.accent}>{` · ${p.name}`}</span> : null}<span fg={C.faint}>{'   a ticket to a draft PR'}</span></text>
       {blank}
-      {row('project', 'Project', <>{radio(projects.map(x => ({ v: x.key, label: x.key })), project, setProject)}</>, p ? `${p.name} · ${p.tracker === 'jira' ? 'Jira' : 'Azure DevOps'} · ${p.repos.length} repos` : 'no projects configured')}
+      {fixed ? null : row('project', 'Project', <>{radio(projects.map(x => ({ v: x.key, label: x.key })), project, setProject)}</>, p ? `${p.name} · ${p.tracker === 'jira' ? 'Jira' : 'Azure DevOps'} · ${p.repos.length} repos` : 'no projects configured')}
       {row('ticket', 'Ticket', <text fg={C.text}><strong>{ticket}</strong>{field === 'ticket' ? <span fg={C.accent}>▏</span> : ''}{ticket ? '' : <span fg={C.faint}>{p?.tracker === 'jira' ? 'a key, e.g. SGL-692' : 'a work item number'}</span>}</text>,
-        look.state === 'loading' ? 'looking it up…' : look.state === 'ok' && t ? `✓ ${t.type || t.kind}${t.board ? ` · ${t.board}` : ''}` : look.state === 'error' ? '' : '')}
+        look.state === 'loading' ? 'looking it up…' : look.state === 'ok' && t ? `✓ ${t.type || t.kind}${t.board ? ` · ${t.board}` : ''}` : '')}
       {look.state === 'ok' && t ? <text>{'             '}<span fg={C.text}>{fit(t.title, W - 16)}</span></text> : null}
-      {look.state === 'ok' && t ? <text fg={t.exists ? C.warning : C.muted}>{`             ${t.exists ? `${t.run} exists already` : [t.customer ? `customer ${t.customer}` : '', `${t.comments} comment${t.comments === 1 ? '' : 's'}`, t.tags.length ? `tags ${t.tags.join(', ')}` : ''].filter(Boolean).join(' · ')}`}</text> : null}
+      {look.state === 'ok' && t ? <text fg={t.exists ? C.warning : C.muted}>{`             ${t.exists ? `${t.run} exists already` : [t.customer ? `customer ${t.customer}` : '', t.area ? `area ${t.area}` : '', t.platform ? t.platform : '', `${t.comments} comment${t.comments === 1 ? '' : 's'}`, t.tags.length ? `tags ${t.tags.join(', ')}` : ''].filter(Boolean).join(' · ')}`}</text> : null}
       {look.state === 'error' ? <text fg={C.danger}>{`             ✕ ${fit(look.error ?? '', W - 18)}`}</text> : null}
       {blank}
-      {row('base', 'Base', <text><strong fg={C.text}>{base || '–'}</strong><span fg={C.muted}>{baseChoices.length > 1 ? ' ▾' : ''}</span></text>, t && suggestBase(t.tags, baseChoices) === base ? 'the ticket\'s release line' : base === baseChoices[0] ? 'the default' : '')}
-      {field === 'base' && baseChoices.length > 1 ? (
-        <box flexDirection="row" backgroundColor={C.selected}><text>{'             '}</text>{baseChoices.slice(0, 6).map(b => <Click key={b} on={() => { touch('base'); setBase(b) }}><text fg={b === base ? C.text : C.muted}>{`${b.replace(/^origin\//, '')}${b === base ? '◂' : ''}  `}</text></Click>)}</box>
-      ) : null}
-      {row('kind', 'Kind', <>{radio([{ v: 'bug', label: 'bug' }, { v: 'feature', label: 'feature' }], kind, v => { touch('kind'); setKind(v as 'bug' | 'feature') })}</>, t ? `the ticket is a ${t.type || t.kind}` : '')}
+      {pickRow('base', 'Base', base.replace(/^origin\//, ''), base === ticketBase && !touched.has('base') ? "the ticket's release line" : base === suggested[0] ? 'the default' : '')}
+      {picker('base')}
+      {row('kind', 'Kind', <>{radio([{ v: 'bug', label: 'bug' }, { v: 'feature', label: 'feature' }], kind, v => { touch('kind'); setKind(v as 'bug' | 'feature') })}</>, fromTicket('kind') && `the ticket is a ${t!.type || t!.kind}`)}
       {row('repos', 'Repos', <>{(p?.repos ?? []).map((r, i) => (
-        <Click key={r} on={() => { setField('repos'); setRepoAt(i); setRepos(rs => (rs.includes(r) ? rs.filter(x => x !== r) : (p?.repos ?? []).filter(x => x === r || rs.includes(x)))) }}>
+        <Click key={r} on={() => { setField('repos'); setRepoAt(i); touch('repos'); setRepos(rs => (rs.includes(r) ? rs.filter(x => x !== r) : (p?.repos ?? []).filter(x => x === r || rs.includes(x)))) }}>
           <text fg={repos.includes(r) ? C.text : C.secondary} bg={field === 'repos' && i === repoAt ? C.faint : undefined}>{`[${repos.includes(r) ? 'x' : ' '}] ${r}   `}</text>
         </Click>
-      ))}</>)}
+      ))}</>, t && p && suggestRepos(t, p.repoMatch ?? {}, p.repos).length && !touched.has('repos') ? 'from the ticket' : '')}
       {fields.includes('device') ? row('device', 'Device', <>{radio([{ v: 'none', label: 'none' }, ...(p?.devices ?? []).map(d => ({ v: d, label: d }))], device, v => setDevice(v as 'none'))}</>,
         device !== 'none' && used && limits ? `emulator + Metro, ${used.devices} of ${limits.devices} in use` : '') : null}
       {fields.includes('dev') ? row('dev', 'Dev server', <>{radio([{ v: '', label: 'none' }, { v: 'on', label: devRepos[0]! }], dev ? 'on' : '', v => setDev(!!v))}</>, dev ? 'its own port' : '') : null}
-      {fields.includes('patch') ? row('patch', 'Patch', <>{radio([...new Set(['', patch, t ? suggestPatch(t, choices) ?? '' : ''])].filter((v, i) => i === 0 || v).map(v => ({ v, label: v || 'none' })), patch, v => { touch('patch'); setPatch(v) })}</>,
-        `${t && suggestPatch(t, choices) ? `the ticket names ${t.customer || t.board} · ` : ''}←→ all ${choices.length}`) : null}
+      {fields.includes('patch') ? pickRow('patch', 'Patch', patch, patch && patch === ticketPatch && !touched.has('patch') ? `the ticket points at it (${t?.customer || t?.board})` : `${choices.length} customer patches`) : null}
+      {fields.includes('patch') ? picker('patch') : null}
       {patch && check && !check.ok ? <text fg={C.warning} bg="#2A2416">{`             ⚠ ${fit(check.text || 'no patch for this base', W - 18)}`}</text> : null}
       {patch && check?.ok ? <text fg={C.success}>{`             ✓ ${fit(check.text, W - 18)}`}</text> : null}
       {row('model', 'Model', <>{radio(MODELS.map(m => ({ v: m, label: m })), model, setModel)}</>)}

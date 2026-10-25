@@ -289,7 +289,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         : tab === 'Metrics' ? <MetricsView runs={all} projects={api.projects ?? []} />
         : <ProjectsView projects={api.projects ?? []} runs={all} />}
       <text> </text>
-      {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} bind={k => { formKeys.current = k }}
+      {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} fixed={/project:(\S+)/.test(filter)} bind={k => { formKeys.current = k }}
         onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
       {mode.kind === 'projects' ? <ProjectPicker choices={choices} index={mode.index} current={/project:(\S+)/.exec(filter)?.[1] ?? ''} onPick={pickProject} /> : null}
       {mode.kind === 'palette' ? <Palette text={mode.text} found={found} index={mode.index} onPick={a => { setMode({ kind: 'list' }); a.run() }} /> : null}

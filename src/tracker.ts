@@ -7,8 +7,8 @@ export interface Ticket {
   id: number | string; key: string; title: string; kind: 'bug' | 'feature'; url: string; text: string
   /** for the new-run form's suggestions: the tracker's own type, the board it is on, the customer named on it, tags */
   type?: string; board?: string; customer?: string; tags?: string[]; comments?: number
-  /** the product area it belongs to (which app of a customer's) */
-  area?: string
+  /** the product area it belongs to (which app of a customer's); the platform it targets */
+  area?: string; platform?: string
 }
 
 /** Where tickets come from: it recognises its keys and reads a ticket. */

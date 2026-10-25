@@ -39,7 +39,7 @@ describe('what the new-run form asks', () => {
   test('a ticket: its title and type, its board, the customer named on it, its release tags, how many comments; whether a run exists', async () => {
     const t = setup()
     expect(await t.pipe.lookup(204598)).toEqual({ run: 'ex-204598', exists: false, key: '#204598', title: 'Picking quantity', kind: 'feature', type: 'Task', url: 'https://dev.azure.com/x/iwb-hub/_workitems/edit/204598',
-      board: 'iwb-hub', customer: 'IWB', tags: ['3.18', 'Picking'], comments: 2, area: '' })
+      board: 'iwb-hub', customer: 'IWB', tags: ['3.18', 'Picking'], comments: 2, area: '', platform: '' })
   })
   test('bases: the default, then the release lines, newest first', () => {
     expect(setup().pipe.bases('mobile')).toEqual(['origin/develop', 'origin/release/3.21.0', 'origin/patch/3.20.7', 'origin/patch/3.18.41', 'origin/patch/3.18.39'])

@@ -35,6 +35,8 @@ const repo = z.object({
   verify: z.array(verifyStep),
   /** taken when a run names no repos (if none is marked, the first) */
   default: z.boolean().default(false),
+  /** a pattern (case-insensitive) on a ticket's target platform and tags: the new-run form picks the repos that match */
+  match: z.string().optional(),
   /** a web app's dev server, started for a run that asks for one: cmd with {port}; url where it answers */
   devServer: z.object({ cmd: z.string(), portStart: z.number().int().default(5300), url: z.string().default('http://localhost:{port}') }).optional(),
   /**
@@ -91,6 +93,8 @@ const project = z.object({
   sandbox: z.record(z.unknown()).optional(),
   /** an independent reviewer (a fresh, read-only claude session) before ship */
   review: z.object({ enabled: z.boolean().default(true) }).default({}),
+  /** customer patch apps by pattern on a ticket's area and title (picking → product): the form picks the patch's app */
+  patchApps: z.record(z.string()).default({}),
   /** a run started with a device gets its own, booted in the first repo's worktree */
   devices: devices.optional(),
 })
