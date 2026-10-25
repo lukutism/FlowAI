@@ -177,3 +177,7 @@ describe('the palette\'s matching', () => {
     expect(match('xz', 'Ship')).toBe(false)
   })
 })
+
+describe('durations past ten hours', () => {
+  test('keep their minutes', () => { expect(duration(12 * 3_600_000 + 30 * 60_000)).toBe('12h 30m') })
+})

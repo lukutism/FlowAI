@@ -37,7 +37,7 @@ async function screen(list = runs, size = { width: 130, height: 34 }, more: Part
   const frame = async () => { await act(async () => { await Bun.sleep(1) }); await s.renderOnce(); return s.captureCharFrame() }
   // a lone Escape is only known after a short pause (it could start a key sequence), so wait for it
   const press = async (...keys: string[]) => {
-    for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : k === 'ctrl+k' ? s.mockInput.pressKey('k', { ctrl: true }) : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
+    for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : k === 'ctrl+k' ? s.mockInput.pressKey('k', { ctrl: true }) : k === 'tab' ? s.mockInput.pressKey('\t') : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
     return frame()
   }
   return { s, f, frame, press, quit: () => quit }
@@ -90,12 +90,12 @@ describe('Runs screen', () => {
       expect(t.f.sent).toEqual([])
     } finally { t.s.renderer.destroy() }
   })
-  test('p ports a run that has its draft PR; on others it says why not', async () => {
+  test('in a run\'s detail p ports it once it has its draft PR; otherwise it says why not', async () => {
     const t = await screen([base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } }), base('fso-103', {})])
     try {
-      await t.press('p')
+      await t.press('enter', 'p')
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
-      expect(await t.press('j', 'p')).toContain('#103 has no draft PR to port yet')
+      expect(await t.press('esc', 'j', 'enter', 'p')).toContain('#103 has no draft PR to port yet')
     } finally { t.s.renderer.destroy() }
   })
   test('n starts a run: project, ticket number and an optional base, typed in place', async () => {
@@ -166,11 +166,11 @@ describe('Runs screen', () => {
     try {
       await act(async () => { await Bun.sleep(1) }); await s.renderOnce()
       const fr = s.captureCharFrame()
-      expect(fr).toMatch(/Agents +━━━━ ━━━━ 2\/2 full/)
-      expect(fr).toMatch(/Builds +━━━━ 1\/1 full/)
-      expect(fr).toMatch(/Devices +━━━━ ━━━━ ━━━━ ━━━━ 0\/4 in use/)
-      expect(fr).toContain('fso-105 agent · fso-103 agent · fso-103 building')
-      expect(fr).toContain('Waiting  fso-104 for a build slot')
+      expect(fr).toMatch(/Agents +━━━━ ━━━━ 2\/2 full +#105 plan 1m · #103 verify 1m/)
+      expect(fr).toMatch(/Builds +━━━━ 1\/1 full +#103 verify 1m/)
+      expect(fr).toMatch(/Devices +━━━━ ━━━━ ━━━━ ━━━━ 0\/4 +free/)
+      expect(fr).toMatch(/Waiting +1\. #104 for a build slot · 1m/)
+      expect(fr).toMatch(/Plan +5h +━+ 7% +week +━+ 55%/)
       expect(fr).toMatch(/builds 1\/1 +devices 0\/4/)
     } finally { s.renderer.destroy() }
   })
@@ -219,7 +219,8 @@ describe('the design: header, sort, group, filter, activity, message line', () =
     const t = await screen(runs, undefined, { recent })
     try {
       const f = await t.frame()
-      expect(f).toMatch(/∿ flow +all projects +1 Runs +2 Queue +3 Resources +4 Activity +5 Metrics +6 Projects +● connected/)
+      expect(f).toMatch(/∿ flow +all projects ▾ +1 Runs +2 Queue +3 Metrics +4 Projects +● connected/)
+      expect(f).not.toMatch(/\d Activity|\d Resources/)
       expect(f).toContain('✓ fso-104 shipped: draft PR #77 · 4m ago')
     } finally { t.s.renderer.destroy() }
   })
@@ -313,7 +314,7 @@ describe('the responsive rules', () => {
     const t = await screen(runs, { width: 90, height: 30 }, { resources: { limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: ['fso-103'], builds: [], devices: [] }, waiting: [] } })
     try {
       const f = await t.frame()
-      expect(f).toMatch(/1 Runs +2 +3 +4 +5 +6 /)
+      expect(f).toMatch(/1 Runs +2 +3 +4 /)
       expect(f).toMatch(/#103 +Title fso-103 +develop +verify +running +14m +verifying/)
       expect(f).not.toContain('Guard the walk.')
       expect(f).toMatch(/Agents \d\/2 +Builds/)
@@ -346,24 +347,16 @@ describe('the other tabs', () => {
       expect(f).toMatch(/#105 +Title fso-105 +defaults at \d\d:12 \(in 12m\)/)
     } finally { t.s.renderer.destroy() }
   })
-  test('3 Resources: slots with who holds them, and the plan windows', async () => {
-    const t = await screen(runs, undefined, { resources: { limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: ['fso-103'], builds: [], devices: [] }, waiting: [] } })
-    try {
-      const f = await t.press('3')
-      expect(f).toContain('#103 verify')
-      expect(f).toMatch(/5 hours +7%/)
-      expect(f).toMatch(/Week +55%/)
-    } finally { t.s.renderer.destroy() }
+  test('a device in use names its run and device', async () => {
+    const list = [...runs, base('fso-106', { device: { platform: 'android', id: 'emulator-5700', metroPort: 8300 } })]
+    const t = await screen(list, undefined, { resources: { limits: { agents: 2, builds: 2, devices: 4 }, holders: { agents: [], builds: [], devices: ['fso-106'] }, waiting: [] } })
+    try { expect(await t.frame()).toMatch(/Devices +(━━━━ ){4}1\/4 +#106 android emulator-5700/) } finally { t.s.renderer.destroy() }
   })
-  test('4 Activity: every run, newest first', async () => {
-    const t = await screen(runs, undefined, { recent })
-    try { expect(await t.press('4')).toMatch(/11:56 +fso-104 +human +ship +draft PR #77 opened[\s\S]*11:51 +fso-103 +agent +build +change made/) } finally { t.s.renderer.destroy() }
-  })
-  test('5 Metrics and 6 Projects', async () => {
+  test('3 Metrics and 4 Projects', async () => {
     const t = await screen([...runs, base('fso-100', { stage: 'done', status: 'done', pr: { number: 1, url: 'u' }, tokens: 1_000_000, updatedAt: NOW - 60_000 })], undefined, { projects })
     try {
-      expect(await t.press('5')).toMatch(/fso +4 +1 +3 +2 +1\.8M +1\.8M/)
-      const p = await t.press('6')
+      expect(await t.press('3')).toMatch(/fso +4 +1 +3 +2 +1\.8M +1\.8M/)
+      const p = await t.press('4')
       expect(p).toMatch(/fso +FSO +tickets Azure DevOps · PRs Azure DevOps · 4 runs/)
       expect(p).toContain('repos mobile, portal · devices android · customer patches in mobile · plan defaults after 30 min')
     } finally { t.s.renderer.destroy() }
@@ -386,7 +379,7 @@ describe('the mouse', () => {
   }
   test('a tab is clicked to open it', async () => {
     const t = await screen(runs, undefined, { projects })
-    try { expect(await click(t, '6 Projects')).toContain('from ~/.config/flow/projects/<key>.json') } finally { t.s.renderer.destroy() }
+    try { expect(await click(t, '4 Projects')).toContain('from ~/.config/flow/projects/<key>.json') } finally { t.s.renderer.destroy() }
   })
   test('a click selects a run; a click on the selected run opens it', async () => {
     const t = await screen()
@@ -427,6 +420,57 @@ describe('the mouse', () => {
       await t.press('ctrl+k')
       await click(t, 'Port #104 to develop')
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe('projects and the attention list from the keyboard', () => {
+  const mixed = [...runs, base('spk-7', { project: 'spk', title: 'Order text' })]
+  test('p opens the project picker with each project\'s runs; choosing one filters the screen to it', async () => {
+    const t = await screen(mixed, undefined, { projects: [...projects, { ...projects[0]!, key: 'spk', name: 'SPK' }] })
+    try {
+      const f = await t.press('p')
+      expect(f).toMatch(/✓ all projects +4 runs/)
+      expect(f).toMatch(/fso +FSO +3 runs/)
+      expect(f).toMatch(/spk +SPK +1 run/)
+      const g = await t.press('j', 'j', 'enter')
+      expect(g).toContain('∿ flow  spk ▾')
+      expect(g).toContain('filter project:spk')
+      expect(g).toMatch(/#7 +Order text/)
+      expect(g).not.toMatch(/#103 +Title fso-103/)
+      expect(await t.press('p', 'k', 'k', 'enter')).toContain('∿ flow  all projects ▾') // the picker opens on the current project
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a click on the project name opens the picker', async () => {
+    const t = await screen(mixed)
+    try {
+      const p = at(await t.frame(), 'all projects ▾')
+      await act(async () => { await t.s.mockMouse.click(p.x, p.y) })
+      expect(await t.frame()).toMatch(/✓ all projects +4 runs/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('tab moves the focus to Needs attention: j/k move through it, the keys act on the focused item, enter opens it', async () => {
+    const t = await screen()
+    try {
+      const f = await t.press('tab')
+      expect(f).toMatch(/▌Needs attention/)
+      expect(f).toMatch(/▌#105 /)
+      const g = await t.press('j')
+      expect(g).toMatch(/▌#104 /)
+      expect(g).not.toMatch(/▌#105 /)
+      expect(await t.press('S')).toContain('Ship #104?')
+      await t.press('n')
+      expect(await t.press('enter')).toMatch(/Needs you: verified/)
+      await t.press('esc')
+      expect(await t.press('tab')).not.toMatch(/▌Needs attention/)
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a click on an attention item focuses it', async () => {
+    const t = await screen()
+    try {
+      const p = at(await t.frame(), 'Ready to ship')
+      await act(async () => { await t.s.mockMouse.click(p.x, p.y) })
+      expect(await t.frame()).toMatch(/▌#104 /)
     } finally { t.s.renderer.destroy() }
   })
 })

@@ -27,13 +27,15 @@ weekly windows, which flow reads from the CLI after every turn.
 
 | | |
 |---|---|
-| `flow` | The screen: what needs you, every run, the slots, the selected run's activity, your plan windows. Starts the background service if needed. |
-| `1`–`6` | Tabs: Runs, Queue (who waits for which slot, paused runs, plan deadlines), Resources (slots and plan windows), Activity (every run's events), Metrics (per project), Projects |
+| `flow` | The screen: what needs you, every run, the slots (who holds each, for how long; who waits), the selected run's activity, your plan windows. Starts the background service if needed. |
+| `1`–`4` | Tabs: Runs, Queue (who waits for which slot, paused runs, plan deadlines), Metrics (per project), Projects |
+| `p` | The project picker: all projects, or one (`fso`, `spk`, …) with its runs; the header shows which |
+| `⇥` | Move the focus between the runs table and Needs attention; `j`/`k`, `↵` and the action keys work on the focused item |
 | `n` | Start a run: `<project> <ticket> [base] [repos=a,b] [device=android\|ios] [patch=customer/app]` (the ticket: a number or a Jira key) |
 | `a` | Approve a plan: the confirm opens under its item with the defaults (and says if the build will wait for a slot); `y`, or `e` to type other answers |
 | `m` | Message a run's agent |
 | `S` | Ship a verified run: commit, push, draft PR (a patch run: the write-back) |
-| `p` | Port a shipped run to develop |
+| `p` in a run's detail | Port a shipped run to develop (also in the commands) |
 | `s` / `g` / `/` | Sort (newest, oldest, latest activity, tokens) / group by stage (`↵` on a group folds it) / filter: `project:fso status:needs-you stage:build` or any text; `esc` clears it |
 | `ctrl+k` or `:` | Commands: every action for the selected run, filters, sorts, tabs, typed to narrow |
 | `↵` / `esc` | A run's detail (plan, answers, findings, review, PR, timeline) / back |
