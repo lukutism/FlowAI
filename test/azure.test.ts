@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { azureDraftPr, azureTicket, htmlToText, type Az } from '../src/azure.ts'
+import { azureDraftPr, azurePrState, azureTicket, htmlToText, type Az } from '../src/azure.ts'
 
 // flow reaches Azure DevOps through the `az` CLI the user is already signed in to; these pass a stand-in.
 const tracker = { kind: 'azure' as const, org: 'https://dev.azure.com/example', project: 'example' }
@@ -53,6 +53,26 @@ describe('azureDraftPr', () => {
     const pr = azureDraftPr(az, tracker, 'mobile-app', { head: 'fix/186278', base: 'develop', title: 'fix(cmms): #186278 x', body: 'body', workItem: 186278 })
     expect(pr).toEqual({ number: 4711, url: 'https://dev.azure.com/example/example/_git/mobile-app/pullrequest/4711' })
     expect(calls[0]).toEqual(expect.arrayContaining(['--draft', 'true', '--work-items', '186278', '--source-branch', 'fix/186278', '--target-branch', 'develop', '--repository', 'mobile-app']))
+  })
+  test('a task without a ticket links no work item (it used to pass --work-items 0)', () => {
+    const { az, calls } = fakeAz({ 'pr create': { pullRequestId: 1 } })
+    azureDraftPr(az, tracker, 'm', { head: 'feat/x', base: 'develop', title: 't', body: 'b', workItem: 0 })
+    expect(calls[0]).not.toContain('--work-items')
+  })
+  test('a description over Azure\'s 4000 characters is cut, saying so (the PR was refused before)', () => {
+    const { az, calls } = fakeAz({ 'pr create': { pullRequestId: 1 } })
+    azureDraftPr(az, tracker, 'm', { head: 'h', base: 'b', title: 't', body: 'x'.repeat(5000), workItem: 1 })
+    const d = calls[0]![calls[0]!.indexOf('--description') + 1]!
+    expect(d.length).toBeLessThanOrEqual(4000)
+    expect(d).toMatch(/cut at 4000 characters/)
+  })
+  test('the state of a PR: active is open, completed is merged, abandoned is closed', () => {
+    for (const [status, want] of [['active', 'open'], ['completed', 'merged'], ['abandoned', 'closed']] as const) {
+      const { az, calls } = fakeAz({ 'pr show': { status } })
+      expect(azurePrState(az, tracker, 4711)).toBe(want)
+      expect(calls[0]).toEqual(expect.arrayContaining(['repos', 'pr', 'show', '--id', '4711']))
+    }
+    expect(azurePrState(fakeAz({}).az, tracker, 1)).toBe('unknown')
   })
 })
 

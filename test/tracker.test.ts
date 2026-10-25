@@ -63,6 +63,14 @@ describe('githubForge', () => {
     expect(calls[0]).toEqual(expect.arrayContaining(['pr', 'create', '-R', 'OWNER/spk-web-app', '--draft', '--base', 'main', '--head', 'SGL-692', '--title', 'SGL-692']))
     expect(body).toBe('https://example.atlassian.net/browse/SGL-692')
   })
+  test('the state of a PR from gh: OPEN, MERGED, CLOSED', () => {
+    for (const [state, want] of [['OPEN', 'open'], ['MERGED', 'merged'], ['CLOSED', 'closed']] as const) {
+      const calls: string[][] = []
+      const gh: Gh = args => { calls.push(args); return { code: 0, out: JSON.stringify({ state }), err: '' } }
+      expect(githubForge({ kind: 'github', owner: 'OWNER' }, gh).prState({ number: 57, url: 'https://github.com/OWNER/spk-web-app/pull/57' })).toBe(want)
+      expect(calls[0]).toEqual(['pr', 'view', '57', '-R', 'OWNER/spk-web-app', '--json', 'state'])
+    }
+  })
   test('gh not logged in says so', () => {
     const gh: Gh = () => ({ code: 1, out: '', err: 'To get started with GitHub CLI, please run:  gh auth login' })
     expect(() => githubForge({ kind: 'github', owner: 'O' }, gh).draftPr({ repository: 'r', head: 'h', base: 'b', title: 't', body: 'b' })).toThrow(/gh auth login/)

@@ -69,9 +69,13 @@ export interface ServiceDeps {
  * The background process (flow serve): runs every action off the caller's back, one at a time per run, and applies
  * plan deadlines. Screens and the CLI send it commands and watch the event log.
  */
+/** how often a draft PR's state is asked of the code host */
+const PR_CHECK_MS = 10 * 60_000
+
 export class Service {
   private pipes = new Map<string, Pipeline>()
   private busy = new Map<string, Promise<void>>()
+  private prChecked = new Map<string, number>()
   private notices = new Set<(n: Notice) => void>()
   private windowsListeners = new Set<(w: Windows) => void>()
   private lastWindows: Windows = {}
@@ -212,9 +216,22 @@ export class Service {
     } catch (e) { return { ok: false, error: (e as Error).message } }
   }
 
-  /** plans past their deadline get their defaults (held ones never) */
+  /** plans past their deadline get their defaults (held ones never); draft PRs are looked at now and then */
   tick() {
     const now = (this.d.now ?? Date.now)()
+    for (const s of this.d.store.runs()) {
+      if (s.needs?.kind === 'pr' && !this.busy.has(s.id) && now - (this.prChecked.get(s.id) ?? 0) >= PR_CHECK_MS) {
+        this.prChecked.set(s.id, now)
+        // merged: done and removed (refused if something was left unshipped: then only done); closed: done, kept
+        this.act(s.id, async () => {
+          const p = this.pipeline(s.project), state = p.prsState(s.id)
+          if (state === 'open') return
+          p.done(s.id, state === 'merged' ? 'its draft PR was merged' : 'its draft PR was closed')
+          if (state === 'merged') await p.remove(s.id)
+        })
+        continue
+      }
+    }
     for (const s of this.d.store.runs()) {
       const n = s.needs
       if (n?.kind !== 'plan' || n.held || !n.deadline || n.deadline > now || this.busy.has(s.id)) continue

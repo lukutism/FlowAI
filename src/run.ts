@@ -33,7 +33,8 @@ export type EventBody =
   | { type: 'run.waiting'; resource: string }
   | { type: 'run.paused'; window: string; until: number }
   | { type: 'run.resumed' }
-  | { type: 'run.done' }
+  /** reason: when the engine saw it finish (its PR merged or closed on the host) */
+  | { type: 'run.done'; reason?: string }
   /** the run's worktrees and branch removed, its folder archived: gone from the lists; its id can start again */
   | { type: 'run.removed' }
   | { type: 'session.started'; session: string }

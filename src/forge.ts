@@ -1,12 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { azureDraftPr, type Az } from './azure.ts'
+import { azureDraftPr, azurePrState, type Az } from './azure.ts'
 import type { Project } from './config.ts'
 
 /** Where pull requests go. repository: the repo's name on the host (from its origin URL). */
 export interface Forge {
   draftPr(o: { repository: string; head: string; base: string; title: string; body: string; workItem?: number }): { number: number; url: string }
+  /** whether a PR flow opened is still open, merged or closed (unknown: the host could not be asked) */
+  prState(pr: { number: number; url: string }): 'open' | 'merged' | 'closed' | 'unknown'
 }
 
 export type Gh = (args: string[]) => { code: number; out: string; err: string }
@@ -17,6 +19,7 @@ export const realGh: Gh = args => {
 
 export const azureForge = (az: Az, f: { org: string; project: string }): Forge => ({
   draftPr: o => azureDraftPr(az, f, o.repository, { ...o, workItem: o.workItem ?? 0 }),
+  prState: pr => azurePrState(az, f, pr.number),
 })
 
 /** GitHub through gh; the body goes through a temp file (no argv length or quoting limits) */
@@ -35,6 +38,16 @@ export function githubForge(f: { kind: 'github'; owner: string }, gh: Gh = realG
         if (!url) throw new Error(`gh pr create printed no PR link: ${r.out.trim().split('\n')[0]}`)
         return { number: Number(url[1]), url: url[0] }
       } finally { rmSync(dir, { recursive: true, force: true }) }
+    },
+    prState(pr) {
+      const repo = /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(pr.url)?.[1]
+      if (!repo) return 'unknown'
+      const r = gh(['pr', 'view', String(pr.number), '-R', repo, '--json', 'state'])
+      if (r.code !== 0) return 'unknown'
+      try {
+        const state = (JSON.parse(r.out) as { state?: string }).state
+        return state === 'OPEN' ? 'open' : state === 'MERGED' ? 'merged' : state === 'CLOSED' ? 'closed' : 'unknown'
+      } catch { return 'unknown' }
     },
   }
 }

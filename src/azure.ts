@@ -51,10 +51,23 @@ export function azureTicket(az: Az, t: AzureRef, id: number): Ticket {
 }
 
 export function azureDraftPr(az: Az, t: AzureRef, repository: string, o: { head: string; base: string; title: string; body: string; workItem: number }): { number: number; url: string } {
+  // Azure refuses a description over 4000 characters
+  const note = '\n\n… (cut at 4000 characters: the full description is the run\'s pr.md)'
+  const body = o.body.length > 4000 ? o.body.slice(0, 4000 - note.length) + note : o.body
   const r = az(['repos', 'pr', 'create', '--org', t.org, '--project', t.project, '--repository', repository,
-    '--source-branch', o.head, '--target-branch', o.base, '--title', o.title, '--description', o.body, '--draft', 'true',
-    '--work-items', String(o.workItem), '-o', 'json'])
+    '--source-branch', o.head, '--target-branch', o.base, '--title', o.title, '--description', body, '--draft', 'true',
+    ...(o.workItem > 0 ? ['--work-items', String(o.workItem)] : []), '-o', 'json'])
   if (r.code !== 0) throw new Error(`az repos pr create failed: ${firstError(r.err)}`)
   const number = JSON.parse(r.out).pullRequestId as number
   return { number, url: `${t.org}/${t.project}/_git/${repository}/pullrequest/${number}` }
+}
+
+/** a PR's state: active is open, completed is merged, abandoned is closed */
+export function azurePrState(az: Az, t: AzureRef, number: number): 'open' | 'merged' | 'closed' | 'unknown' {
+  const r = az(['repos', 'pr', 'show', '--id', String(number), '--org', t.org, '-o', 'json'])
+  if (r.code !== 0) return 'unknown'
+  try {
+    const status = (JSON.parse(r.out) as { status?: string }).status
+    return status === 'active' ? 'open' : status === 'completed' ? 'merged' : status === 'abandoned' ? 'closed' : 'unknown'
+  } catch { return 'unknown' }
 }

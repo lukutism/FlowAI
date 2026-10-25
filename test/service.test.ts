@@ -8,6 +8,7 @@ import { parseProject } from '../src/config.ts'
 import { Service } from '../src/service.ts'
 import { readTranscript } from '../src/transcript.ts'
 import { EventStore } from '../src/store.ts'
+import type { EventBody } from '../src/run.ts'
 
 const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }
 const git = (cwd: string, ...a: string[]) => Bun.spawnSync(['git', ...a], { cwd, env })
@@ -15,16 +16,16 @@ const result = JSON.stringify({ type: 'result', subtype: 'success', is_error: fa
 const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', apiKeySource: 'none' })
 const turn = (effect?: () => void): FakeTurn => ({ stream: `${init}\n${result}`, effect })
 
-function setup(turns: (d: { root: string; data: string }) => FakeTurn[]) {
+function setup(turns: (d: { root: string; data: string }) => FakeTurn[], azMore?: (args: string[]) => ReturnType<Az> | undefined) {
   const root = mkdtempSync(join(tmpdir(), 'flow-svc-'))
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', join(root, 'origin.git')])
   Bun.spawnSync(['git', 'clone', '-q', join(root, 'origin.git'), join(root, 'main')], { env })
   writeFileSync(join(root, 'main', 'a.txt'), 'a\n'); git(join(root, 'main'), 'add', '.'); git(join(root, 'main'), 'commit', '-qm', 'base'); git(join(root, 'main'), 'push', '-q', 'origin', 'HEAD:develop')
   const project = parseProject({ key: 'ex', name: 'Ex', worktrees: join(root, 'wt'), tracker: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' }, forge: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' },
     repos: [{ key: 'mobile', path: join(root, 'main'), defaultBase: 'origin/develop', verify: [] }] }, 't')
-  const az: Az = args => args.includes('work-item')
+  const az: Az = args => azMore?.(args) ?? (args.includes('work-item')
     ? { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'T', 'System.WorkItemType': 'Bug' } }), err: '' }
-    : { code: 0, out: '{"comments":[]}', err: '' }
+    : { code: 0, out: '{"comments":[]}', err: '' })
   const data = join(root, 'data')
   let now = Date.parse('2026-10-25T10:00:00Z')
   const store = new EventStore(':memory:', () => now)
@@ -175,5 +176,37 @@ describe('Service: commands it does not know', () => {
     const t = setup(() => [])
     t.store.append('ex-5', 'human', { type: 'run.created', ticket: '#5', title: 'x', project: 'ex', base: 'origin/develop' })
     expect(t.svc.dispatch({ cmd: 'nope', run: 'ex-5' } as never)).toMatchObject({ ok: false, error: expect.stringMatching(/unknown command nope/) })
+  })
+})
+
+describe('Service: draft PRs merged or closed on the host', () => {
+  const shipped = (t: ReturnType<typeof setup>, id: string) => {
+    t.store.append(id, 'human', { type: 'run.created', ticket: '#1', title: 'x', project: 'ex', base: 'origin/develop' })
+    const steps: EventBody[] = [{ type: 'setup.done' }, { type: 'plan.submitted', summary: 'p', questions: [] }, { type: 'build.done' }, { type: 'verify.result', ok: true, newFindings: [] }, { type: 'review.skipped', reason: 'off' }]
+    for (const e of steps) t.store.append(id, 'engine', e)
+    t.store.append(id, 'human', { type: 'pr.opened', url: 'https://dev.azure.com/x/x/_git/m/pullrequest/7', number: 7 })
+  }
+  test('merged: the run is done and removed (its folder archived); checked again only after a while', async () => {
+    const calls: string[][] = []
+    const t = setup(() => [], args => { calls.push(args); return args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"completed"}', err: '' } : undefined })
+    shipped(t, 'ex-1')
+    t.svc.tick(); await t.svc.idle()
+    expect(t.store.state('ex-1')).toBeUndefined()
+    expect(t.store.events('ex-1').map(e => e.type).slice(-2)).toEqual(['run.done', 'run.removed'])
+    expect(calls.filter(c => c.includes('show'))).toHaveLength(1)
+  })
+  test('still open: nothing changes, and the host is not asked again at the next tick', async () => {
+    const calls: string[][] = []
+    const t = setup(() => [], args => { calls.push(args); return args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"active"}', err: '' } : undefined })
+    shipped(t, 'ex-1')
+    t.svc.tick(); await t.svc.idle(); t.svc.tick(); await t.svc.idle()
+    expect(t.store.state('ex-1')).toMatchObject({ needs: { kind: 'pr' } })
+    expect(calls.filter(c => c.includes('show'))).toHaveLength(1)
+  })
+  test('abandoned: done, the worktree kept (you may want the work)', async () => {
+    const t = setup(() => [], args => (args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"abandoned"}', err: '' } : undefined))
+    shipped(t, 'ex-1')
+    t.svc.tick(); await t.svc.idle()
+    expect(t.store.state('ex-1')).toMatchObject({ status: 'done' })
   })
 })
