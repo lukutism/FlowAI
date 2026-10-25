@@ -11,6 +11,7 @@ describe('sanitize-recording', () => {
     expect(out).toMatchObject({ tools: { count: 2 }, mcp_servers: { count: 1 }, memory_paths: { count: 1 }, cwd: '/home/user/projects/x' })
   })
   test('a fixture that would still name something private is refused, not written', () => {
-    expect(() => sanitize(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'the Nordex patch' }] } }))).toThrow(/nordex/i)
+    // the private names come from a local file; here a stand-in
+    expect(() => sanitize(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'the Globex patch' }] } }), [/globex/i])).toThrow(/globex/i)
   })
 })

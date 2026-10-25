@@ -641,12 +641,12 @@ describe('the new-run form', () => {
   const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: ['android' as const, 'ios' as const], patches: ['mobile'], deadlineMinutes: 30, defaults: ['mobile'], devServers: ['portal'],
     repoMatch: { mobile: '\\bmobile\\b|\\bapp\\b', portal: '\\bportal\\b|\\bweb\\b' }, patchApps: { cmms: 'cmms|maintenance', product: 'product|picking|material' } }
   const spk = { ...fso, key: 'spk', name: 'SPK', tracker: 'jira' as const, patches: [], devServers: [] }
-  const found = { run: 'fso-204598', exists: false, key: '#204598', title: 'Picking – Remaining Required Quantity', kind: 'feature' as const, type: 'Task', url: 'u', board: 'iwb-hub', customer: 'IWB', tags: ['3.18'], comments: 3 }
+  const found = { run: 'fso-204598', exists: false, key: '#204598', title: 'Picking – Remaining Required Quantity', kind: 'feature' as const, type: 'Task', url: 'u', board: 'acme-hub', customer: 'ACME', tags: ['3.18'], comments: 3 }
   const query = (o: { lookup?: unknown; fail?: string } = {}) => async (q: { q: string; base?: string }) => {
     if (q.q === 'bases') return { mobile: ['origin/develop', 'origin/patch/3.20.7', 'origin/patch/3.18.41'], portal: ['origin/develop'] }
-    if (q.q === 'patches') return ['iwb/cmms', 'iwb/product', 'nordex/cmms']
+    if (q.q === 'patches') return ['acme/cmms', 'acme/product', 'globex/cmms']
     if (q.q === 'refs') return ['origin/develop', 'origin/feature/picking', 'origin/patch/3.20.7', 'origin/patch/3.18.41', 'v3.18.41']
-    if (q.q === 'checkPatch') return q.base === 'origin/patch/3.18.41' ? { ok: false, text: 'no iwb/product patch for 3.18.41 (newest 3.18.39)' } : { ok: true, text: 'iwb/product 3.20.7' }
+    if (q.q === 'checkPatch') return q.base === 'origin/patch/3.18.41' ? { ok: false, text: 'no acme/product patch for 3.18.41 (newest 3.18.39)' } : { ok: true, text: 'acme/product 3.20.7' }
     if (o.fail) throw new Error(o.fail)
     return o.lookup ?? found
   }
@@ -659,14 +659,14 @@ describe('the new-run form', () => {
       await typeIn(t, '204598')
       const f = await t.frame()
       expect(f).toContain('204598')
-      expect(f).toContain('✓ Task · iwb-hub')
+      expect(f).toContain('✓ Task · acme-hub')
       expect(f).toContain('Picking – Remaining Required Quantity')
-      expect(f).toContain('customer IWB · 3 comments · tags 3.18')
+      expect(f).toContain('customer ACME · 3 comments · tags 3.18')
       expect(f).toMatch(/Base +patch\/3\.18\.41 ▾ +the ticket's release line/)
       expect(f).toMatch(/\(•\) feature/)
-      expect(f).toMatch(/Patch +iwb\/product ▾ +the ticket points at it \(IWB\)/) // IWB, and picking → product
-      expect(f).toContain('⚠ no iwb/product patch for 3.18.41 (newest 3.18.39)')
-      expect(f).toContain('apply the iwb/product')
+      expect(f).toMatch(/Patch +acme\/product ▾ +the ticket points at it \(ACME\)/) // ACME, and picking → product
+      expect(f).toContain('⚠ no acme/product patch for 3.18.41 (newest 3.18.39)')
+      expect(f).toContain('apply the acme/product')
     } finally { t.s.renderer.destroy() }
   })
   test('it refuses to start what would fail, and says why; with the fields fixed it starts the run', async () => {
@@ -683,11 +683,11 @@ describe('the new-run form', () => {
       expect(list).toMatch(/› 3\.2▏ +1 of 5/)
       expect(list).toContain('▸ patch/3.20.7')
       await keys(t, 'enter')
-      expect(await t.frame()).toContain('✓ iwb/product 3.20.7')
+      expect(await t.frame()).toContain('✓ acme/product 3.20.7')
       // a device: down to Device, → android
       await keys(t, 'down', 'down', 'down', 'right')
       await keys(t, 'enter')
-      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.20.7', kind: 'feature', repos: ['mobile'], device: 'android', patch: 'iwb/product' }])
+      expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.20.7', kind: 'feature', repos: ['mobile'], device: 'android', patch: 'acme/product' }])
     } finally { t.s.renderer.destroy() }
   })
   test('repos are toggled with space; a repo with a dev server offers one; the model can be chosen', async () => {
@@ -708,13 +708,13 @@ describe('the new-run form', () => {
       await t.press('n'); await typeIn(t, '204598')
       const f = await t.frame()
       expect(f).toMatch(/\[x\] mobile +\[x\] portal +from the ticket/)
-      expect(f).toMatch(/Patch +iwb\/product ▾/) // the board names IWB, the title says picking
+      expect(f).toMatch(/Patch +acme\/product ▾/) // the board names ACME, the title says picking
       // the patch picker (portal brings a Dev server field): none is there to choose, the ticket's first
       expect(f).toMatch(/Dev server +\(•\) none/)
       await keys(t, 'tab', 'tab', 'tab', 'tab', 'tab', 'tab', ' ')
       const p = await t.frame()
       expect(p).toMatch(/none +the fix goes on the release line only/)
-      expect(p).toMatch(/iwb\/product +the ticket points at it/)
+      expect(p).toMatch(/acme\/product +the ticket points at it/)
       await keys(t, 'n', 'o', 'n', 'enter')
       expect(await t.frame()).toMatch(/Patch +none ▾/)
     } finally { t.s.renderer.destroy() }
@@ -798,7 +798,7 @@ describe('the overlays sit in the middle of the screen', () => {
 describe('project settings', () => {
   const raw = {
     key: 'fso', name: 'FSO', worktrees: '~/fso/.flow/worktrees',
-    tracker: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'field-service-os' }, forge: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'field-service-os' },
+    tracker: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'product-app' }, forge: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'product-app' },
     repos: [{ key: 'mobile', path: '~/fso/m', defaultBase: 'origin/develop', verify: [] }, { key: 'portal', path: '~/fso/p', defaultBase: 'origin/develop', verify: [] }],
     sandbox: { enabled: true, filesystem: { allowWrite: ['~/.npm'] } },
   }
@@ -886,8 +886,8 @@ describe('fixes from use', () => {
     const t = await screen(runs, undefined, { projects: [fso], query: (async (q: { q: string }) => (q.q === 'bases' ? { mobile: ['origin/develop'] } : q.q === 'lookup' ? { run: 'fso-9', exists: false, key: '#9', title: 'Nine', kind: 'bug', type: 'Bug', url: 'u', board: 'b', customer: '', tags: [], comments: 0 } : [])) as FlowApi['query'] })
     try {
       await t.press('n')
-      await act(async () => { await t.s.mockInput.pasteBracketedText('https://dev.azure.com/o/iwb-osapiens-hub/_workitems/edit/9/') })
-      expect(await t.frame()).toContain('https://dev.azure.com/o/iwb-osapiens-hub/_workitems/edit/9/')
+      await act(async () => { await t.s.mockInput.pasteBracketedText('https://dev.azure.com/o/acme-hub/_workitems/edit/9/') })
+      expect(await t.frame()).toContain('https://dev.azure.com/o/acme-hub/_workitems/edit/9/')
       await t.press('esc')
       await t.press('ctrl+k')
       await act(async () => { await t.s.mockInput.pasteBracketedText('new run') })

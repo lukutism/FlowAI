@@ -4,10 +4,17 @@
  *
  *   bun scripts/sanitize-recording.ts <raw.jsonl> <fixture.jsonl>
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
-/** words that must never reach a fixture; extend when a new private name shows up */
-export const PRIVATE = [/osapiens/i, /\bbkw\b/i, /nordex/i, /lukas/i, /malinauskas/i, /\/Users\/[^/"]+/, /field-service/i]
+/**
+ * Words that must never reach a fixture: local paths here, and the names private to the user (customers, the
+ * employer, their own) from a file outside the repo, one pattern a line (~/.config/flow/private-patterns.txt), so
+ * the list itself is never published.
+ */
+const LOCAL = join(homedir(), '.config', 'flow', 'private-patterns.txt')
+export const PRIVATE: RegExp[] = [/\/Users\/[^/"]+/, ...(existsSync(LOCAL) ? readFileSync(LOCAL, 'utf8').split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => new RegExp(l, 'i')) : [])]
 
 /** the user's setup as init and commands_changed describe it: names and descriptions of their plugins, skills, MCP servers */
 const SETUP_LISTS = ['tools', 'mcp_servers', 'plugins', 'agents', 'skills', 'slash_commands', 'commands', 'memory_paths', 'output_style']
@@ -32,10 +39,10 @@ export function sanitizeLine(line: string): string | null {
   return text
 }
 
-export function sanitize(raw: string): string {
+export function sanitize(raw: string, patterns: RegExp[] = PRIVATE): string {
   const out = raw.split('\n').map(sanitizeLine).filter((l): l is string => l !== null)
   const joined = out.join('\n') + '\n'
-  const leak = PRIVATE.find(p => p.test(joined))
+  const leak = patterns.find(p => p.test(joined))
   if (leak) throw new Error(`fixture still matches ${leak}: extend sanitizeLine before publishing`)
   return joined
 }

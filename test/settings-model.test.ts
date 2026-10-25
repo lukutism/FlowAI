@@ -4,7 +4,7 @@ import { changes, fields, get, itemsMap, mapItems, set, shown } from '../src/tui
 // A project's settings as the screen edits them: fields over the file, set by path, the changes for the save.
 const json = {
   key: 'fso', name: 'FSO', worktrees: '~/fso/.flow/worktrees',
-  tracker: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'field-service-os' }, forge: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'field-service-os' },
+  tracker: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'product-app' }, forge: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'product-app' },
   repos: [{ key: 'mobile', path: '~/fso/m', defaultBase: 'origin/develop', releaseBases: ['origin/patch/*'], verify: [{ name: 'tsc', kind: 'tsc', cmd: 'tsc' }], patches: { apply: 'a', writeBack: 'w' } },
     { key: 'portal', path: '~/fso/p', defaultBase: 'origin/develop', verify: [] }],
   sandbox: { enabled: true, allowUnsandboxedCommands: false, filesystem: { allowWrite: ['~/.npm', '~/.crit'] } },

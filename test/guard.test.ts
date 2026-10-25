@@ -70,7 +70,7 @@ describe('guard: file edits stay inside the worktree', () => {
     for (const t of ['Edit', 'Write', 'MultiEdit', 'NotebookEdit']) expect(edit(`${wt}/src/a.ts`, t)).toBeNull()
   })
   test('outside, or escaping with ..: refused', () => {
-    expect(edit('/work/fso/field-service-os/src/a.ts')).toMatchObject({ deny: true })
+    expect(edit('/work/fso/product-app/src/a.ts')).toMatchObject({ deny: true })
     expect(edit(`${wt}/../../other/src/a.ts`)).toMatchObject({ deny: true })
     expect(edit(`${wt}-evil/src/a.ts`)).toMatchObject({ deny: true })
   })

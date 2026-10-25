@@ -23,11 +23,11 @@ function setup() {
   const project = parseProject({
     key: 'ex', name: 'Ex', worktrees: join(root, 'wt'), tracker: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' }, forge: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' },
     repos: [{ key: 'mobile', path: main, defaultBase: 'origin/develop', releaseBases: ['origin/patch/*', 'origin/release/*'], verify: [], default: true,
-      patches: { apply: 'true', writeBack: 'true', choices: 'printf "iwb/product\\nnordex/cmms\\n"', check: 'case "{base}" in *3.18.39) echo "{customer}/{app} 3.18.39";; *) echo "no {customer}/{app} patch for this version (newest 3.18.39)"; exit 1;; esac' } },
+      patches: { apply: 'true', writeBack: 'true', choices: 'printf "acme/product\\nglobex/cmms\\n"', check: 'case "{base}" in *3.18.39) echo "{customer}/{app} 3.18.39";; *) echo "no {customer}/{app} patch for this version (newest 3.18.39)"; exit 1;; esac' } },
       { key: 'portal', path: main, defaultBase: 'origin/develop', verify: [] }],
   }, 't')
   const az: Az = args => args.includes('work-item')
-    ? { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'Picking quantity', 'System.WorkItemType': 'Task', 'System.TeamProject': 'iwb-hub', 'Custom.CustomerName': 'IWB', 'System.Tags': '3.18; Picking' } }), err: '' }
+    ? { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'Picking quantity', 'System.WorkItemType': 'Task', 'System.TeamProject': 'acme-hub', 'Custom.CustomerName': 'ACME', 'System.Tags': '3.18; Picking' } }), err: '' }
     : { code: 0, out: JSON.stringify({ comments: [{ createdDate: '2026-10-20', text: 'a' }, { createdDate: '2026-10-21', text: 'b' }] }), err: '' }
   const store = new EventStore(':memory:')
   const made: { model?: string }[] = []
@@ -38,8 +38,8 @@ function setup() {
 describe('what the new-run form asks', () => {
   test('a ticket: its title and type, its board, the customer named on it, its release tags, how many comments; whether a run exists', async () => {
     const t = setup()
-    expect(await t.pipe.lookup(204598)).toEqual({ run: 'ex-204598', exists: false, key: '#204598', title: 'Picking quantity', kind: 'feature', type: 'Task', url: 'https://dev.azure.com/x/iwb-hub/_workitems/edit/204598',
-      board: 'iwb-hub', customer: 'IWB', tags: ['3.18', 'Picking'], comments: 2, area: '', platform: '' })
+    expect(await t.pipe.lookup(204598)).toEqual({ run: 'ex-204598', exists: false, key: '#204598', title: 'Picking quantity', kind: 'feature', type: 'Task', url: 'https://dev.azure.com/x/acme-hub/_workitems/edit/204598',
+      board: 'acme-hub', customer: 'ACME', tags: ['3.18', 'Picking'], comments: 2, area: '', platform: '' })
   })
   test('bases: the default, then the release lines, newest first', () => {
     expect(setup().pipe.bases('mobile')).toEqual(['origin/develop', 'origin/release/3.21.0', 'origin/patch/3.20.7', 'origin/patch/3.18.41', 'origin/patch/3.18.39'])
@@ -47,9 +47,9 @@ describe('what the new-run form asks', () => {
   })
   test('the customer patches of the repo that has them, and whether one fits a base', async () => {
     const t = setup()
-    expect(await t.pipe.patchChoices()).toEqual(['iwb/product', 'nordex/cmms'])
-    expect(await t.pipe.checkPatch('iwb/product', 'origin/patch/3.18.39')).toEqual({ ok: true, text: 'iwb/product 3.18.39' })
-    expect(await t.pipe.checkPatch('iwb/product', 'origin/patch/3.18.41')).toEqual({ ok: false, text: 'no iwb/product patch for this version (newest 3.18.39)' })
+    expect(await t.pipe.patchChoices()).toEqual(['acme/product', 'globex/cmms'])
+    expect(await t.pipe.checkPatch('acme/product', 'origin/patch/3.18.39')).toEqual({ ok: true, text: 'acme/product 3.18.39' })
+    expect(await t.pipe.checkPatch('acme/product', 'origin/patch/3.18.41')).toEqual({ ok: false, text: 'no acme/product patch for this version (newest 3.18.39)' })
   })
   test('a run started with a model has its agent on that model', async () => {
     const t = setup()
@@ -86,10 +86,10 @@ describe('a run without a ticket', () => {
 describe('the project\'s brief', () => {
   test('its lines reach the agent in the plan prompt', async () => {
     const t = setup()
-    ;(t.pipe as unknown as { d: { project: { brief: string[] } } }).d.project.brief = ['the osapiens-qa MCP reads QA data: call customer_list first', 'mock data: the mobile-probe skill']
+    ;(t.pipe as unknown as { d: { project: { brief: string[] } } }).d.project.brief = ['the example-qa MCP reads QA data: call customer_list first', 'mock data: the mobile-probe skill']
     const prompts: string[] = []
     ;(t.pipe as unknown as { d: { makeAgent: unknown } }).d.makeAgent = () => ({ async *turn(p: string) { prompts.push(p); throw new Error('stop') } })
     await t.pipe.start(204598)
-    expect(prompts[0]).toContain('About this project (from the human who runs flow):\n- the osapiens-qa MCP reads QA data: call customer_list first\n- mock data: the mobile-probe skill')
+    expect(prompts[0]).toContain('About this project (from the human who runs flow):\n- the example-qa MCP reads QA data: call customer_list first\n- mock data: the mobile-probe skill')
   })
 })

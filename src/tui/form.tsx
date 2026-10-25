@@ -39,7 +39,7 @@ export function suggestRepos(t: { platform?: string; tags: string[] }, patterns:
  * only one; none when it can't tell.
  */
 export function suggestPatch(t: { customer: string; board: string; area?: string; title?: string; tags?: string[] }, choices: string[], apps: Record<string, string> = {}): string | undefined {
-  // names as written in tickets: Thüga, thuega-qa, THUEGA — umlauts as their two letters, no case, no punctuation
+  // names as written in tickets: Müller, mueller-qa, MUELLER — umlauts as their two letters, no case, no punctuation
   const plain = (s: string) => s.toLowerCase().replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss').normalize('NFKD').replace(/[^a-z0-9]/g, '')
   const who = plain(t.customer), tags = (t.tags ?? []).map(plain), board = plain(t.board)
   const named = (c: string) => { const n = plain(c.split('/')[0]!); return !!n && ((who && who.includes(n)) || tags.includes(n) || board.includes(n)) }

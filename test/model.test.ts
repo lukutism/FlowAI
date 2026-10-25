@@ -184,13 +184,13 @@ describe('durations past ten hours', () => {
 
 import { suggestBase, suggestPatch } from '../src/tui/form.tsx'
 describe('the new-run form\'s suggestions', () => {
-  const pairs = ['iwb/cmms', 'iwb/metering', 'iwb/product', 'nordex/cmms']
+  const pairs = ['acme/cmms', 'acme/metering', 'acme/product', 'globex/cmms']
   test('the patch: the customer named on the ticket, else in its board; the app its area names, or the only one', () => {
-    expect(suggestPatch({ customer: 'IWB', board: 'x', area: 'Product App' }, pairs)).toBe('iwb/product')
-    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub', area: 'CMMS' }, pairs)).toBe('iwb/cmms')
-    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub' }, pairs)).toBeUndefined() // three apps: you choose
-    expect(suggestPatch({ customer: 'Nordex', board: 'x' }, pairs)).toBe('nordex/cmms')
-    expect(suggestPatch({ customer: '', board: 'field-service-os' }, pairs)).toBeUndefined()
+    expect(suggestPatch({ customer: 'ACME', board: 'x', area: 'Product App' }, pairs)).toBe('acme/product')
+    expect(suggestPatch({ customer: '', board: 'acme-hub', area: 'CMMS' }, pairs)).toBe('acme/cmms')
+    expect(suggestPatch({ customer: '', board: 'acme-hub' }, pairs)).toBeUndefined() // three apps: you choose
+    expect(suggestPatch({ customer: 'Globex', board: 'x' }, pairs)).toBe('globex/cmms')
+    expect(suggestPatch({ customer: '', board: 'product-app' }, pairs)).toBeUndefined()
   })
   test('the base: the newest branch of the ticket\'s release tag', () => {
     expect(suggestBase(['3.18', 'Picking'], ['origin/develop', 'origin/patch/3.20.7', 'origin/patch/3.18.41', 'origin/patch/3.18.39'])).toBe('origin/patch/3.18.41')
@@ -200,10 +200,10 @@ describe('the new-run form\'s suggestions', () => {
 
 describe('the patch\'s app from the ticket', () => {
   test('a board naming the customer and a title naming the area: picking → product', () => {
-    const pairs = ['iwb/cmms', 'iwb/metering', 'iwb/product']
+    const pairs = ['acme/cmms', 'acme/metering', 'acme/product']
     const apps = { cmms: 'cmms|maintenance', product: 'product|picking|material', metering: 'meter' }
-    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub', title: 'Picking – Remaining Required Quantity' }, pairs, apps)).toBe('iwb/product')
-    expect(suggestPatch({ customer: '', board: 'iwb-osapiens-hub', title: 'Login fails' }, pairs, apps)).toBeUndefined()
+    expect(suggestPatch({ customer: '', board: 'acme-hub', title: 'Picking – Remaining Required Quantity' }, pairs, apps)).toBe('acme/product')
+    expect(suggestPatch({ customer: '', board: 'acme-hub', title: 'Login fails' }, pairs, apps)).toBeUndefined()
   })
 })
 
@@ -219,12 +219,12 @@ describe('the palette\'s order', () => {
 })
 
 describe('the customer patch from how tickets name the customer', () => {
-  test('thuega-qa, Thüga in the tags: the thuega patch; the work-order title: its cmms app', () => {
-    const pairs = ['iwb/cmms', 'iwb/product', 'thuega/cmms', 'nordex/cmms']
+  test('mueller-qa, Müller in the tags: the mueller patch; the work-order title: its cmms app', () => {
+    const pairs = ['acme/cmms', 'acme/product', 'mueller/cmms', 'globex/cmms']
     const apps = { cmms: 'cmms|maintenance|work ?order', product: 'product|picking|material' }
-    const t = { customer: 'thuega-qa', board: 'field-service-os', title: 'Mobile: Order history of a work order does not show recently completed orders', tags: ['3.18', 'Mobile', 'Thüga'] }
-    expect(suggestPatch(t, pairs, apps)).toBe('thuega/cmms')
-    expect(suggestPatch({ ...t, customer: '' }, pairs, apps)).toBe('thuega/cmms') // the tag alone
+    const t = { customer: 'mueller-qa', board: 'product-app', title: 'Mobile: Order history of a work order does not show recently completed orders', tags: ['3.18', 'Mobile', 'Müller'] }
+    expect(suggestPatch(t, pairs, apps)).toBe('mueller/cmms')
+    expect(suggestPatch({ ...t, customer: '' }, pairs, apps)).toBe('mueller/cmms') // the tag alone
     expect(suggestPatch({ ...t, customer: '', tags: [] }, pairs, apps)).toBeUndefined()
   })
 })
