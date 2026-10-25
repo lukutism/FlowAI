@@ -7,7 +7,7 @@ import { fill, fillSh, livePids, sh, tail } from './sh.ts'
  * A run's own device (emulator or simulator) and its Metro, from the project's commands. flow owns the lifecycle:
  * free ports, background processes (each in its own process group, so stopping takes their children too),
  * readiness, the state file, and cleanup on failure and at the end. Placeholders in the commands: {run}, {id},
- * {consolePort}, {metroPort}, {worktree}, {runDir}, {template}.
+ * {consolePort}, {metroPort}, {worktree}, {runDir}, {template}, {headless} (the emulator's no-window flags when headless).
  */
 export interface DeviceCommands {
   template?: string
@@ -26,7 +26,8 @@ export interface DeviceCommands {
   stop?: string
   remove?: string
 }
-export interface DeviceSpec { metro: string; consolePortStart: number; metroPortStart: number; android?: DeviceCommands; ios?: DeviceCommands }
+/** headless: the emulator runs without its window ({headless} in the boot command); it is seen in the browser instead */
+export interface DeviceSpec { metro: string; consolePortStart: number; metroPortStart: number; headless?: boolean; android?: DeviceCommands; ios?: DeviceCommands }
 export interface DeviceState { run: string; platform: 'android' | 'ios'; id: string; consolePort: number; metroPort: number; pids: number[] }
 
 async function must(what: string, cmd: string, cwd: string) {
@@ -62,27 +63,31 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
   if (!cmds) throw new Error(`the project has no ${o.platform} device commands`)
   const consolePort = await freePort(o.spec.consolePortStart, 2, o.taken)
   const metroPort = await freePort(o.spec.metroPortStart, 1, o.taken)
+  // a simulator has no window unless Simulator.app is opened; the emulator needs its flags
+  const headless = o.spec.headless && o.platform === 'android' ? '-no-window -no-audio' : ''
   const vars: Record<string, string | number | undefined> = { run: o.run, consolePort, metroPort, worktree: o.worktree, runDir: o.runDir, template: cmds.template }
+  // flow's own flags, several words: put in as they are (other values are quoted as one word each)
+  const filled = (c: string) => fillSh(c.replaceAll('{headless}', headless), vars)
   const state: DeviceState = { run: o.run, platform: o.platform, id: cmds.id ? fill(cmds.id, vars) : '', consolePort, metroPort, pids: [] }
   const timeout = o.readyTimeoutMs ?? 180_000
   const deviceLog = join(o.runDir, 'device.log'), metroLog = join(o.runDir, 'metro.log')
   try {
-    if (cmds.prepare) await must('prepare', fillSh(cmds.prepare, vars), o.worktree)
+    if (cmds.prepare) await must('prepare', filled(cmds.prepare), o.worktree)
     if (cmds.create) {
-      const out = await must('creating the device', fillSh(cmds.create, vars), o.runDir)
+      const out = await must('creating the device', filled(cmds.create), o.runDir)
       if (!state.id) state.id = out.trim().split('\n').filter(Boolean).pop() ?? ''
     }
     if (!state.id) throw new Error('the device has no id: give "id" or a "create" that prints it')
     vars.id = state.id
-    if (cmds.bootStays) state.pids.push(background(fillSh(cmds.boot, vars), o.runDir, deviceLog))
-    else await must('booting the device', fillSh(cmds.boot, vars), o.runDir)
-    if (!(await until(async () => (await sh(fillSh(cmds.ready, vars), o.runDir)).code === 0, timeout)))
+    if (cmds.bootStays) state.pids.push(background(filled(cmds.boot), o.runDir, deviceLog))
+    else await must('booting the device', filled(cmds.boot), o.runDir)
+    if (!(await until(async () => (await sh(filled(cmds.ready), o.runDir)).code === 0, timeout)))
       throw new Error(`device ${state.id} not ready after ${Math.round(timeout / 1000)} s:\n${existsSync(deviceLog) ? tail(readFileSync(deviceLog, 'utf8')) : '(no device log)'}`)
-    state.pids.push(background(fillSh(o.spec.metro, vars), o.worktree, metroLog))
+    state.pids.push(background(filled(o.spec.metro), o.worktree, metroLog))
     const metroUp = () => fetch(`http://127.0.0.1:${metroPort}/status`).then(r => r.text()).then(t => t.includes('packager-status:running'), () => false)
     if (!(await until(metroUp, Math.max(timeout, 60_000))))
       throw new Error(`Metro did not answer on :${metroPort}:\n${existsSync(metroLog) ? tail(readFileSync(metroLog, 'utf8')) : '(no Metro log)'}`)
-    if (cmds.install) await must('installing the app', fillSh(cmds.install, vars), o.worktree)
+    if (cmds.install) await must('installing the app', filled(cmds.install), o.worktree)
     writeFileSync(join(o.runDir, 'device.json'), JSON.stringify(state, null, 2) + '\n')
     return state
   } catch (e) {

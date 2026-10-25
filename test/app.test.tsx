@@ -1021,3 +1021,14 @@ describe('removing a run and marking it done', () => {
     } finally { t.s.renderer.destroy() }
   })
 })
+
+describe('the device in the browser', () => {
+  test('a run with a device: its commands open the device\'s page', async () => {
+    const opened: string[] = []
+    const t = await screen([base('fso-105', { device: { platform: 'android', id: 'emulator-5580', metroPort: 8090 } })], undefined, { pageUrl: (p: string) => `http://127.0.0.1:1${p}?token=t`, openUrl: (u: string) => { opened.push(u) } })
+    try {
+      await t.press('enter', 'ctrl+k', ...'browser'.split(''), 'enter')
+      expect(opened).toEqual(['http://127.0.0.1:1/device/fso-105?token=t'])
+    } finally { t.s.renderer.destroy() }
+  })
+})

@@ -130,6 +130,7 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
         { kind: 'text', label: 'Metro', path: ['devices', 'metro'], hint: '{metroPort}: its own' },
         { kind: 'number', label: 'First console', path: ['devices', 'consolePortStart'], fallback: 5700 },
         { kind: 'number', label: 'First Metro', path: ['devices', 'metroPortStart'], fallback: 8300 },
+        { kind: 'toggle', label: 'Headless', path: ['devices', 'headless'], fallback: false, hint: 'no emulator window ({headless} in its boot): see it in the browser' },
         ...platform('android'), ...platform('ios'),
       ]
     }

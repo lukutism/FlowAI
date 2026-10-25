@@ -25,11 +25,16 @@ export interface FlowApi extends DetailApi, FormApi {
   connected?: boolean
   listen(fn: (m: { type: string; notice?: { run: string; text: string }; run?: string; entry?: import('../transcript.ts').Entry }) => void): () => void
   send(c: Command): Promise<Reply>
+  /** a service page for the browser; opened with the system's opener */
+  pageUrl?(path: string): string
+  openUrl?(url: string): void
 }
 
 // colour only for state (the design's tokens); the terminal's own background shows through
 const C = { text: '#DDE2E8', secondary: '#A3ABB5', muted: '#6D7681', faint: '#434A54', accent: '#78A6EC', success: '#72C08A', warning: '#E2B35F', danger: '#EC7A70', selected: '#1B2533', inactive: '#171B21', panel: '#161A20' }
 const TONE = { accent: C.accent, warning: C.warning, danger: C.danger, success: C.success, muted: C.muted }
+
+const openUrl = (url: string) => { try { Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url], { stdout: 'ignore', stderr: 'ignore' }) } catch {} }
 
 const fit = (s: string, n: number) => (n <= 0 ? '' : s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s.padEnd(n))
 const fitL = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s.padStart(n))
@@ -147,6 +152,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (r.needs?.kind === 'ship' || r.needs?.kind === 'patch') a.push({ label: r.patch ? (r.needs.kind === 'patch' ? 'Write the patch back' : 'Check the write-back') : 'Ship', hint: r.patch ? 'S' : 'S · commit, push, draft PR', run: () => ask.ship(r) })
       a.push(...(detailCmds.current?.() ?? []))
       if (r.pr) a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
+      if (r.device && api.pageUrl) a.push({ label: 'See the device in the browser', hint: `${r.device.platform === 'android' ? 'see it and use it' : 'see it'} · ${r.device.id}`, run: () => { (api.openUrl ?? openUrl)(api.pageUrl!(`/device/${r.id}`)); setNotice(`${r.ticket}: the device opened in the browser`) } })
       if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })
       if (r.status !== 'done') a.push({ label: 'Mark done', hint: r.pr ? 'merged, or given up: off the attention list' : 'given up: off the attention list', run: () => ask.done(r) })
       a.push({ label: 'Remove the run', hint: 'device, worktrees, local branch; folder archived', run: () => ask.remove(r) })

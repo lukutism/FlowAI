@@ -16,6 +16,8 @@ export class FlowClient {
   recent: RunEvent[] = []
   projects: ProjectSummary[] = []
   connected = true
+  /** a page of the service for the browser (a run's device), with the token */
+  pageUrl(path: string): string { const u = new URL(this.ws.url); return `http://${u.host}${path}?token=${u.searchParams.get('token') ?? ''}` }
   private listeners = new Set<(m: Message) => void>()
   private pending = new Map<number, Pending>()
   private nextId = 1

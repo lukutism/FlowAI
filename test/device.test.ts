@@ -45,6 +45,14 @@ describe('a run\'s device', () => {
       expect(JSON.parse(readFileSync(join(d.runDir, 'device.json'), 'utf8'))).toMatchObject({ id: 'emulator-5700', metroPort: 8700 })
     } finally { await stopDevice(s, spec(d.dir), d.runDir) }
   })
+  test('headless: {headless} in the boot command is the platform\'s no-window flags; shown, it is nothing', async () => {
+    for (const headless of [true, false]) {
+      const d = dirs()
+      const sp = { ...spec(d.dir, { boot: `sh -c 'echo "[{headless}]" > ${d.dir}/flags; touch ${d.dir}/booted-{consolePort}; exec sleep 300'` }), headless }
+      const s = await startDevice({ spec: sp, platform: 'android', run: 'fso-1', runDir: d.runDir, worktree: d.wt, readyTimeoutMs: 5000 })
+      try { expect(readFileSync(join(d.dir, 'flags'), 'utf8')).toBe(headless ? '[-no-window -no-audio]\n' : '[]\n') } finally { await stopDevice(s, sp, d.runDir) }
+    }
+  })
   test('stop: the device stopped and removed, the background processes gone, Metro no longer answering', async () => {
     const d = dirs()
     const s = await startDevice({ spec: spec(d.dir), platform: 'android', run: 'fso-2', runDir: d.runDir, worktree: d.wt, readyTimeoutMs: 5000 })

@@ -1,3 +1,6 @@
+import { deviceSize, frame, parseInput, send, video } from './screen.ts'
+import { screenPage } from './screen-page.ts'
+import type { DeviceState } from './device.ts'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { RunEvent, RunState } from './run.ts'
@@ -93,20 +96,40 @@ export const RECENT = 300
  * could otherwise reach ws://localhost and send commands.
  */
 export function serve(o: { service: ServiceApi; store: EventStore; dataDir: string; port: number; token: string }) {
-  const server = Bun.serve({
+  const server = Bun.serve<WsData>({
     hostname: '127.0.0.1',
     port: o.port,
-    fetch(req, srv) {
-      if (new URL(req.url).searchParams.get('token') !== o.token) return new Response('refused: wrong token', { status: 401 })
-      if (srv.upgrade(req)) return undefined
+    async fetch(req, srv) {
+      const url = new URL(req.url)
+      if (url.searchParams.get('token') !== o.token) return new Response('refused: wrong token', { status: 401 })
+      // a device's video goes over a WebSocket of its own
+      const vid = /^\/device\/([\w-][\w.-]*)\/video$/.exec(url.pathname)
+      if (vid) {
+        const f = join(o.dataDir, 'runs', vid[1]!, 'device.json')
+        if (!existsSync(f)) return new Response('this run has no device', { status: 404 })
+        const device = JSON.parse(readFileSync(f, 'utf8')) as DeviceState
+        return srv.upgrade(req, { data: { device } }) ? undefined : new Response('a WebSocket, please', { status: 400 })
+      }
+      if (url.pathname.startsWith('/device/')) return deviceRoute(o.dataDir, url.pathname, req)
+      if (srv.upgrade(req, { data: {} })) return undefined
       return new Response('flow service: connect with a WebSocket', { status: 400 })
     },
     websocket: {
-      open(ws) {
+      async open(ws) {
+        const data = ws.data
+        if (data.device) {
+          const size = await deviceSize(data.device)
+          if (!size) { ws.close(1011, 'this device has no video'); return }
+          ws.send(JSON.stringify({ type: 'size', ...size }))
+          data.stop = video(data.device, size, c => ws.send(c))
+          return
+        }
         ws.subscribe('all')
         ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows(), resources: o.service.resources(), recent: o.store.recent(RECENT), projects: o.service.projects() } satisfies Message))
       },
+      close(ws) { ws.data.stop?.() },
       async message(ws, raw) {
+        if (ws.data.device) return
         let r: Request
         try { r = JSON.parse(String(raw)) } catch { return }
         const reply = (x: Extract<Message, { type: 'reply' }>['reply']) => ws.send(JSON.stringify({ type: 'reply', id: r.id, reply: x } satisfies Message))
@@ -145,4 +168,26 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
     o.service.onProjects(projects => publish({ type: 'projects', projects })),
   ]
   return { port: server.port!, stop: () => { offs.forEach(f => f()); server.stop(true) } }
+}
+
+/** a socket's own data: a device's video, or the screen's protocol (none) */
+interface WsData { device?: DeviceState; stop?: () => void }
+
+/** a run's device in the browser: /device/<run> the page, …/frame its screen now, …/input (POST) a tap, swipe, key or text */
+async function deviceRoute(dataDir: string, path: string, req: globalThis.Request): Promise<Response> {
+  const [, , run = '', what = ''] = path.split('/')
+  const f = join(dataDir, 'runs', run, 'device.json')
+  if (!/^[\w.-]+$/.test(run) || run.startsWith('.') || !existsSync(f)) return new Response('this run has no device', { status: 404 })
+  const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState
+  try {
+    if (!what) return new Response(screenPage({ run, device: d.id, platform: d.platform }), { headers: { 'content-type': 'text/html; charset=utf-8' } })
+    if (what === 'frame') { const fr = await frame(d); return new Response(new Blob([fr.bytes as BlobPart]), { headers: { 'content-type': fr.type, 'cache-control': 'no-store' } }) }
+    if (what === 'input' && req.method === 'POST') {
+      const i = parseInput(await req.json().catch(() => null))
+      if (!i) return new Response('not an input', { status: 400 })
+      await send(d, i)
+      return new Response(null, { status: 204 })
+    }
+  } catch (e) { return new Response((e as Error).message, { status: 502 }) }
+  return new Response('not found', { status: 404 })
 }

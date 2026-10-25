@@ -157,3 +157,33 @@ describe('the service socket', () => {
     await expect(c.file('fso-1', '../../token' as 'plan.md')).rejects.toThrow(/not a run file/)
   })
 })
+
+describe('a run\'s device in the browser', () => {
+  const withDevice = () => {
+    const t = start()
+    const log = join(t.data, 'adb.log')
+    writeFileSync(join(t.data, 'runs', 'fso-1', 'device.json'), JSON.stringify({ run: 'fso-1', platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 8300, pids: [] }))
+    process.env.FLOW_ADB = join(import.meta.dir, 'fake-adb.ts'); process.env.FAKE_ADB_LOG = log
+    const url = (p: string, token = 'secret-token') => `http://127.0.0.1:${t.s.port}/device/fso-1${p}?token=${token}`
+    return { ...t, url, log }
+  }
+  test('the page, a frame and an input, each only with the token', async () => {
+    const t = withDevice()
+    expect((await fetch(t.url('', 'wrong'))).status).toBe(401)
+    const page = await fetch(t.url(''))
+    expect(page.headers.get('content-type')).toContain('text/html')
+    expect(await page.text()).toContain('emulator-5700')
+    const f = await fetch(t.url('/frame'))
+    expect(f.headers.get('content-type')).toBe('image/png')
+    expect(new Uint8Array(await f.arrayBuffer())[1]).toBe(0x50)
+    const r = await fetch(t.url('/input'), { method: 'POST', body: JSON.stringify({ type: 'tap', x: 10, y: 20 }) })
+    expect(r.status).toBe(204)
+    expect(require('node:fs').readFileSync(t.log, 'utf8')).toContain('["-s","emulator-5700","shell","input","tap","10","20"]')
+  })
+  test('an input that is not one is refused; a run without a device says so', async () => {
+    const t = withDevice()
+    expect((await fetch(t.url('/input'), { method: 'POST', body: JSON.stringify({ type: 'exec', cmd: 'reboot' }) })).status).toBe(400)
+    expect((await fetch(`http://127.0.0.1:${t.s.port}/device/fso-2?token=secret-token`)).status).toBe(404)
+    expect((await fetch(`http://127.0.0.1:${t.s.port}/device/..%2Fx?token=secret-token`)).status).toBe(404)
+  })
+})

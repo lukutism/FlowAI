@@ -11,6 +11,7 @@
  *   flow ship <run>                                                 commit, push, draft PR (after verify); stops the run's device;
  *                                                                   a patch run: the write-back's dry run, then (again) the write-back
  *   flow release <run>                                              stop the run's device now and free its slot
+ *   flow device <run>                                               the run's device in the browser: see it, tap, swipe, type
  *   flow done <run>                                                 the run is finished (merged, or given up): off the attention list
  *   flow rm <run> [--force]                                         remove it: device, worktrees, local branch; its folder archived
  *   flow status [<run>]                                             runs and what they need; your plan windows
@@ -218,6 +219,18 @@ async function main(argv: string[]) {
       if (!run) throw new Error('flow release <run>')
       if (service) return viaService(service, { cmd: 'release', run }).finally(() => service.close())
       return withRun(run, f.model, p => p.releaseDevice(run))
+    }
+    case 'device': {
+      const [run] = args
+      if (!run) throw new Error('flow device <run>')
+      const c = (await connect(DATA).catch(() => null)) ?? (await startService(DATA, import.meta.path))
+      try {
+        if (!c.runs.get(run)?.device) throw new Error(`${run} has no device running`)
+        const url = c.pageUrl(`/device/${run}`)
+        console.log(url.replace(/token=.*/, 'token=…'))
+        Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url])
+      } finally { c.close() }
+      return
     }
     case 'done': {
       const [run] = args
