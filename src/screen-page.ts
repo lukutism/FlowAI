@@ -104,7 +104,7 @@ async function pull() {
       if (key === shown) return // unchanged: the folds you opened stay open
       shown = key
       const atEnd = con.scrollHeight - con.scrollTop - con.clientHeight < 40
-      con.replaceChildren(...entries.map(e => { const r = el('div', 'row ' + e.level); const m = el('div', 'm'); if (e.values) m.append(...e.values.map(v => node(v, true))); else m.textContent = e.text; r.append(el('span', 't', e.time), m); return r }))
+      con.replaceChildren(...entries.map(e => { const r = el('div', 'row ' + e.level); const m = el('div', 'm'); if (e.values) m.append(...e.values.map(v => node(v, true))); else m.textContent = (e.startCut ? '… (began earlier than the log kept) ' : '') + e.text; r.append(el('span', 't', e.time), m); return r }))
       lineCount.textContent = entries.length + ' entries'
       if (atEnd) con.scrollTop = con.scrollHeight
     } else {

@@ -70,3 +70,11 @@ describe('consoleEntries: the device log of the app, as console entries and the 
     expect(r.native).toEqual(['10-26 18:20:02.500 D/OkHttp  ( 812): --> GET https://api.example/faq'])
   })
 })
+
+describe('an entry that began before the lines read', () => {
+  test('is marked so, and left as text', () => {
+    const r = consoleEntries("10-26 18:20:01.100 I/ReactNativeJS( 812):    required: 'x' } }\n10-26 18:20:02.100 I/ReactNativeJS( 812): 'ok', { a: 1 }")
+    expect(r.console[0]).toMatchObject({ startCut: true, values: null })
+    expect(r.console[1]!.values).not.toBeNull()
+  })
+})

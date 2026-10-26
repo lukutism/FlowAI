@@ -9,7 +9,7 @@ export type Value =
   | { kind: 'array'; items: Value[] }
   | { kind: 'string' | 'number' | 'boolean' | 'null' | 'undefined' | 'special'; text: string }
 
-export interface ConsoleEntry { time: string; level: 'log' | 'debug' | 'warn' | 'error'; text: string; values: Value[] | null }
+export interface ConsoleEntry { time: string; level: 'log' | 'debug' | 'warn' | 'error'; text: string; values: Value[] | null; startCut?: boolean }
 
 /** the values of a console line, or null when it is plain text */
 export function parseConsole(text: string): Value[] | null {
@@ -114,10 +114,12 @@ export function consoleEntries(log: string): { console: ConsoleEntry[]; native: 
     // a line of the same entry (one timestamp): an object's next line is indented or closes it, or one is still open;
     // another console call in the same millisecond starts afresh
     if (last?.key === key && (/^[\s\]}]/.test(m[3]!) || open(last.entry.text))) { last.entry.text += `\n${m[3]}`; continue }
-    const entry: ConsoleEntry = { time: m[1]!, level: LEVEL[m[2]!] ?? 'log', text: m[3]!, values: null }
+    // an object's later line with nothing before it: the entry began before the lines read
+    const startCut = !out.length && /^[\s\]}]/.test(m[3]!)
+    const entry: ConsoleEntry = { time: m[1]!, level: LEVEL[m[2]!] ?? 'log', text: m[3]!, values: null, ...(startCut ? { startCut } : {}) }
     out.push(entry)
     last = { key, entry }
   }
-  for (const e of out) e.values = parseConsole(e.text)
+  for (const e of out) e.values = e.startCut ? null : parseConsole(e.text)
   return { console: out, native }
 }

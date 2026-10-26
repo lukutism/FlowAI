@@ -205,7 +205,8 @@ async function deviceRoute(dataDir: string, path: string, req: globalThis.Reques
     if (what === 'log') {
       // view=console: the app's JS console as entries (objects parsed); view=native: the rest of its log (all: the device's)
       const q = new URL(req.url).searchParams, all = q.get('all') === '1'
-      const lines = await appLog(d, all)
+      // the console reads further back: one big object can take hundreds of lines
+      const lines = await appLog(d, all, q.get('view') === 'console' ? 3000 : 300)
       if (q.get('view') === 'console') return Response.json(consoleEntries(lines.join('\n')).console, { headers: { 'cache-control': 'no-store' } })
       const text = q.get('view') === 'native' && d.platform === 'android' ? consoleEntries(lines.join('\n')).native : lines
       return new Response(text.join('\n'), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } })
