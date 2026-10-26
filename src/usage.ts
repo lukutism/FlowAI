@@ -16,7 +16,8 @@ export function canStartTurn(windows: Windows, now: number, limits: UsageLimits 
     if (!w) continue
     const until = w.resetsAt * 1000
     if (now >= until) continue // rolled over since it was reported
-    if (w.status !== 'allowed' || w.utilization >= limits[name]) return { ok: false, window: name, until }
+    // allowed_warning (the CLI's notice from about 85%) still allows turns; only a refusal or our own limit waits
+    if (!w.status.startsWith('allowed') || w.utilization >= limits[name]) return { ok: false, window: name, until }
   }
   return { ok: true }
 }

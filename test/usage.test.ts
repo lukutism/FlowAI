@@ -21,4 +21,8 @@ describe('canStartTurn: the plan windows decide', () => {
     expect(canStartTurn(w(0.99, 0.5), at('2026-10-24T17:00:01Z'))).toEqual({ ok: true }))
   test('limits are settings: a stricter weekly limit keeps headroom for the developer\'s own sessions', () =>
     expect(canStartTurn(w(0.1, 0.81), now, { fiveHour: 0.9, week: 0.8 })).toMatchObject({ ok: false, window: 'week' }))
+  test("the CLI's warning (allowed_warning, from about 85%) is still allowed: only our own limit stops turns", () => {
+    expect(canStartTurn(w(0.2, 0.85, 'allowed', 'allowed_warning'), now)).toEqual({ ok: true })
+    expect(canStartTurn(w(0.2, 0.96, 'allowed', 'allowed_warning'), now)).toMatchObject({ ok: false, window: 'week' })
+  })
 })
