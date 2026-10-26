@@ -41,7 +41,7 @@ describe('Service: the background process that drives runs', () => {
   test('a command is accepted at once and runs in the background; the run is busy until it ends', async () => {
     const t = setup(d => [turn(planWith(d.data, '- Q1: x? — default: y'))])
     expect(t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 })).toEqual({ ok: true, run: 'ex-1' })
-    expect(t.svc.dispatch({ cmd: 'message', run: 'ex-1', text: 'hi' })).toMatchObject({ ok: false, error: expect.stringMatching(/busy/) })
+    expect(t.svc.dispatch({ cmd: 'approve', run: 'ex-1' })).toMatchObject({ ok: false, error: expect.stringMatching(/busy/) })
     await t.svc.idle()
     expect(t.store.state('ex-1')).toMatchObject({ stage: 'plan', status: 'needs-you' })
   })
@@ -208,5 +208,16 @@ describe('Service: draft PRs merged or closed on the host', () => {
     shipped(t, 'ex-1')
     t.svc.tick(); await t.svc.idle()
     expect(t.store.state('ex-1')).toMatchObject({ status: 'done' })
+  })
+})
+
+describe('Service: a message while the run is busy', () => {
+  test('is queued, not refused; left over when the step ends, it is sent then', async () => {
+    const t = setup(d => [turn(planWith(d.data, '- Q1: x? — default: y')), turn()])
+    t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 })
+    const r = t.svc.dispatch({ cmd: 'message', run: 'ex-1', text: 'use order 42' })
+    expect(r).toMatchObject({ ok: true, note: expect.stringMatching(/queued/) })
+    await t.svc.idle()
+    expect(t.agent.prompts.some(p => p.includes('use order 42'))).toBe(true)
   })
 })

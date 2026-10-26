@@ -124,7 +124,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   /** true when the service took it; a refused new run keeps its form open with what was typed */
   const send = async (c: Command, done: string): Promise<boolean> => {
     const r = await api.send(c)
-    setNotice(r.ok ? done : r.error)
+    setNotice(r.ok ? r.note ?? done : r.error)
     setMode(m => (m.kind === 'detail' || (m.kind === 'new' && !r.ok) ? m : after(m)))
     return r.ok
   }

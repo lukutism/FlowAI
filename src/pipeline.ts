@@ -92,7 +92,7 @@ export class Pipeline {
     this.forge = d.forge ?? forgeFor(d.project, { az: d.az, gh: d.gh })
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
-      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap, onPrompt: d.onPrompt,
+      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
       ...(d.resources ? { agentSlot: (run: string) => d.resources!.acquire(run, 'agents') } : {}),
       windows: existsSync(usage) ? JSON.parse(readFileSync(usage, 'utf8')) : undefined,
       onWindows: w => { mkdirSync(d.dataDir, { recursive: true }); writeFileSync(usage, JSON.stringify(w) + '\n'); d.onWindows?.(w) },
@@ -624,6 +624,11 @@ export class Pipeline {
     this.d.store.append(run, 'human', { type: 'run.removed' })
     return { removed }
   }
+
+  /** a message for the agent while it works: sent first with its next turn (a message written mid-turn can be lost) */
+  queueMessage(run: string, text: string) { this.queue.set(run, [...(this.queue.get(run) ?? []), text]) }
+  takeQueued(run: string): string[] { const q = this.queue.get(run) ?? []; this.queue.delete(run); return q }
+  private queue = new Map<string, string[]>()
 
   /** the tools of the run's agent (its flow MCP server) */
   tools(run: string): ToolDef[] { return toolList(this.d.project.tools, !!this.must(run).device) }

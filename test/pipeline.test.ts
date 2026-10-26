@@ -556,3 +556,14 @@ describe('pipeline: the agent\'s flow tools', () => {
     expect(r.text).toContain(require('node:fs').realpathSync(t.wt))
   })
 })
+
+describe('pipeline: a message while the agent works', () => {
+  test('is queued and goes with the agent\'s next turn, first, recorded as yours', async () => {
+    let t: ReturnType<typeof setup>
+    t = setup(d => [turn(() => { writeFileSync(join(d.run, 'plan.md'), plan()); t.pipe.queueMessage('example-186278', 'the tablet layout too') }), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const run = await t.pipe.start(186278)
+    expect(t.agent.prompts[1]).toMatch(/^The human wrote while you worked:\n- the tablet layout too\n\n/)
+    expect(t.store.events(run).some(e => e.type === 'human.message' && e.text === 'the tablet layout too')).toBe(true)
+    expect(t.pipe.takeQueued(run)).toEqual([])
+  })
+})

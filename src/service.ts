@@ -51,7 +51,8 @@ export type Query =
   | { q: 'checkPatch'; project: string; patch: string; base: string }
   | { q: 'projectFile'; project: string }
 
-export type Reply = { ok: true; run: string } | { ok: false; error: string }
+/** note: what happened when it isn't what you asked for (a message queued) */
+export type Reply = { ok: true; run: string; note?: string } | { ok: false; error: string }
 export interface Notice { run: string; text: string }
 
 export interface ServiceDeps {
@@ -81,6 +82,8 @@ export class Service {
   private pipes = new Map<string, Pipeline>()
   private busy = new Map<string, Promise<void>>()
   private prChecked = new Map<string, number>()
+  /** runs being started (not recorded yet while their ticket is read), by project */
+  private starting = new Map<string, string>()
   private notices = new Set<(n: Notice) => void>()
   private windowsListeners = new Set<(w: Windows) => void>()
   private lastWindows: Windows = {}
@@ -202,6 +205,7 @@ export class Service {
         const run = c.task?.trim() && !String(c.ticket).trim() ? p.taskRunId(c.task) : p.runId(c.ticket)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
+        this.starting.set(run, c.project)
         this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, task: c.task, note: c.note, logins: c.logins }) })
         return { ok: true, run }
       }
@@ -210,6 +214,12 @@ export class Service {
         if (!st || !this.busy.has(c.run)) throw new Error(`${c.run} has no turn running`)
         void this.pipeline(st.project).stopTurn(c.run)
         return { ok: true, run: c.run }
+      }
+      // a message while the agent works waits for its next turn (or for the step to end), as in Claude Code
+      const owner = this.d.store.state(c.run)?.project ?? this.starting.get(c.run)
+      if (c.cmd === 'message' && this.busy.has(c.run) && owner) {
+        this.pipeline(owner).queueMessage(c.run, c.text)
+        return { ok: true, run: c.run, note: `queued for ${c.run}: the agent gets it with its next turn` }
       }
       // a run just started may not be recorded yet (its ticket is still being read): it is busy, not missing
       if (this.busy.has(c.run)) throw new Error(`${c.run} is busy: wait for its current step to end`)
@@ -275,6 +285,10 @@ export class Service {
     })()
       .finally(() => {
         this.busy.delete(run)
+        // messages queued during the step that no turn took: sent now
+        const st = this.d.store.state(run)
+        const left = st ? this.pipeline(st.project).takeQueued(run) : []
+        if (left.length) { this.act(run, () => this.pipeline(st!.project).message(run, left.join('\n\n'))); return }
         // a run that stopped for the human (or ended) gives its agent process back; the next turn resumes the session
         const s = this.d.store.state(run)
         if (s && s.status !== 'running' && s.status !== 'waiting' && s.status !== 'paused') void this.pipeline(s.project).closeAgent(run)
