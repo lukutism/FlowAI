@@ -640,6 +640,9 @@ describe('projects and the attention list from the keyboard', () => {
       expect(g).toContain('filter project:shop')
       expect(g).toMatch(/#7 +Order text/)
       expect(g).not.toMatch(/#103 +Title fso-103/)
+      // what needs you, and the counts, are the chosen project's too
+      expect(g).not.toContain('#105'); expect(g).not.toContain('#104')
+      expect(g).toMatch(/1 active +▲ 0 need you/)
       expect(await t.press('p', 'k', 'k', 'enter')).toContain('∿ flow  all projects ▾') // the picker opens on the current project
     } finally { t.s.renderer.destroy() }
   })

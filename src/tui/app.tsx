@@ -101,8 +101,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const shown = filterRuns(all, filter, t)
   const list = rows(shown, t, sort).map(r => (removing.has(r.run) ? { ...r, status: 'removing…', tone: 'muted' as const, next: 'removing', mine: false } : r))
   const items: Grouped[] = grouped ? groupRows(list, shown, collapsed) : list.map(row => ({ kind: 'row', row }))
-  const att = attention(all, t)
-  const h = header(all, api.windows, t)
+  // the chosen project (project: in the filter) scopes what needs you and the counts too; slots and plan windows are the machine's
+  const chosen = /(?:^|\s)project:(\S+)/.exec(filter)?.[1]?.toLowerCase()
+  const scoped = chosen ? all.filter(r => r.project.toLowerCase() === chosen) : all
+  const att = attention(scoped, t)
+  const h = header(scoped, api.windows, t)
   const L = layout(width, height, att.length)
   const sel = Math.min(selected, Math.max(0, items.length - 1))
   const item = items[sel]
