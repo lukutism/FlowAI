@@ -123,6 +123,43 @@ describe('a ticket to a draft PR', () => {
     expect(t.store.state(run)).toMatchObject({ stage: 'ship', plan: { decidedBy: 'deadline', answers: { Q1: 'no' } } })
     expect(t.store.events(run).find(e => e.type === 'plan.decided')).toMatchObject({ actor: 'engine', by: 'deadline' })
   })
+  test('at the deadline with a reviewer: the advisor decides, the build is told its answer, the PR lists the decision for you to confirm', async () => {
+    const advice = reviewText('Checked the list.\n```json\n[{"id":"Q1","answer":"yes","reason":"the order list walks the same assets"}]\n```')
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Guard the order list? — default: no'))),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+    ], { review: [advice, review([])] })
+    const run = await t.pipe.start(186278)
+    await t.pipe.decideByDeadline(run)
+    expect(t.reviewer.prompts[0]).toContain('Q1: Guard the order list? (default: no)')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', plan: { decidedBy: 'advisor', answers: { Q1: 'yes' }, reasons: { Q1: 'the order list walks the same assets' } } })
+    expect(t.agent.prompts[1]).toContain('Q1 Guard the order list? → yes')
+    await t.pipe.ship(run)
+    const body = t.azCalls.find(a => a.includes('create'))!
+    expect(body[body.indexOf('--description') + 1]).toMatch(/Decisions taken without the developer's confirmation \(please confirm\):\n- Guard the order list\? → yes \(the order list walks the same assets\)/)
+  })
+  test('the advisor finds a question the agent can look up: it goes back to the agent once, then the plan goes on', async () => {
+    const advice = reviewText('```json\n[{"id":"Q1","lookup":"the order list code is in src/orders.ts"}]\n```')
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Guard the order list? — default: no'))),
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+    ], { review: [advice, review([])] })
+    const run = await t.pipe.start(186278)
+    await t.pipe.decideByDeadline(run)
+    expect(t.agent.prompts[1]).toContain('Q1: the order list code is in src/orders.ts')
+    expect(t.store.events(run).map(e => e.type)).toContain('plan.returned')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship' })
+  })
+  test('an advisor answer that can\'t be read: the defaults, as without one', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Guard the order list? — default: no'))),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+    ], { review: [reviewText('Probably yes.'), review([])] })
+    const run = await t.pipe.start(186278)
+    await t.pipe.decideByDeadline(run)
+    expect(t.store.state(run)).toMatchObject({ plan: { decidedBy: 'deadline', answers: { Q1: 'no' } } })
+  })
   test('a held plan is never decided by the deadline', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1 (held): Change the behaviour? — default: no')))])
     const run = await t.pipe.start(186278)

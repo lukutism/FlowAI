@@ -14,6 +14,7 @@ import { parseLogins, writeAppEnv } from './appenv.ts'
 import { slug } from './slug.ts'
 import { commitMessage, parsePlan, planFacts, planGaps, prSummary } from './plan.ts'
 import { drift, prProblems } from './drift.ts'
+import { advisorPrompt, lookupPrompt, parseAdvice, type Advice } from './advisor.ts'
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
 import { memoryDir, saveLearnings } from './learnings.ts'
@@ -399,13 +400,43 @@ export class Pipeline {
     await this.buildStep(run)
   }
 
-  /** the plan's deadline passed with no answer: the engine takes the defaults (never for a held question) */
+  /**
+   * The plan's deadline passed with no answer (never for a held question): the advisor decides; a question the agent
+   * can look up itself goes back to it, once; without an advisor (or one that can't be read) the defaults.
+   */
   async decideByDeadline(run: string) {
     const s = this.must(run)
     if (s.needs?.kind !== 'plan' || !s.plan) throw new Error(`${run}: no plan is waiting for a decision`)
     if (s.needs.held) throw new Error(`${run}: the plan has a held question; only you can answer it`)
-    this.d.store.append(run, 'engine', { type: 'plan.decided', by: 'deadline', answers: Object.fromEntries(s.plan.questions.map(q => [q.id, q.default])) })
+    const advice = await this.advise(run)
+    if (advice?.lookups.length && !s.plan.returned) {
+      this.d.store.append(run, 'engine', { type: 'plan.returned', lookups: advice.lookups.map(l => l.id) })
+      const r = await this.say(run, lookupPrompt(advice.lookups, this.planFile(run)))
+      if (!r.ok || this.ended(run, r.text)) return
+      const p = this.readPlan(run)
+      if ('plan' in p) await this.submitPlan(run, p.plan)
+      else this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the plan ${this.planFile(run)} ${p.problem}; message the agent, or write the plan yourself` })
+      return
+    }
+    const answered = Object.fromEntries(Object.entries(advice?.answers ?? {}))
+    const answers = Object.fromEntries(s.plan.questions.map(q => [q.id, answered[q.id]?.answer ?? q.default]))
+    const reasons = Object.fromEntries(Object.entries(answered).map(([k, v]) => [k, v.reason]))
+    this.d.store.append(run, 'engine', advice && Object.keys(answered).length ? { type: 'plan.decided', by: 'advisor', answers, reasons } : { type: 'plan.decided', by: 'deadline', answers })
     await this.buildStep(run)
+  }
+
+  /** the advisor's answers to the plan's open questions: a fresh read-only session (the reviewer's); null without one */
+  private async advise(run: string): Promise<Advice | null> {
+    const s = this.must(run), m = this.meta(run)
+    if (!this.d.makeReviewer || !s.plan?.questions.length) return null
+    const settings = writeRunSettings({ dir: join(this.runDir(run), 'advisor'), worktree: m.worktree, allow: m.repos.map(r => r.worktree).filter(w => w !== m.worktree), deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
+    const advisor = this.d.makeReviewer({ cwd: m.worktree, settings, ...(m.model ? { model: m.model } : {}) })
+    try {
+      const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
+      const r = await this.runner.turnWith(run, advisor, advisorPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), questions: s.plan.questions }), { ownSession: false })
+      if (!r.ok) return null
+      try { return parseAdvice(r.text, s.plan.questions) } catch { return null }
+    } finally { await advisor.close?.() }
   }
 
   /** a message from the human: goes to the run's session; afterwards the run carries on from where it is */
@@ -486,7 +517,10 @@ export class Pipeline {
     this.noLogins(run, pr, changed)
     const summary = prSummary(pr, m.title)
     // a task has no ticket to link to or name: its PR is the description, its title and commits the summary alone
-    const body = n.prBody === 'ticket-link' && m.url ? m.url : pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`.trim()
+    // what the plan's deadline decided (the advisor, or the defaults) is listed for the human to confirm
+    const p = s.plan, unconfirmed = p && p.decidedBy && p.decidedBy !== 'human' ? p.questions.map(q => `- ${q.text} → ${p.answers?.[q.id] ?? q.default}${p.reasons?.[q.id] ? ` (${p.reasons[q.id]})` : ''}`) : []
+    const decisions = unconfirmed.length ? `\n\nDecisions taken without the developer's confirmation (please confirm):\n${unconfirmed.join('\n')}` : ''
+    const body = n.prBody === 'ticket-link' && m.url ? m.url : (pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`.trim()) + decisions
     // checked before anything is pushed: the PR's description is the agent's, whole
     if (!pr.trim() && n.prBody !== 'ticket-link') throw new Error(`${run}: the agent wrote no PR description (${this.prFile(run)}): message it to write one, then ship again`)
     const max = this.d.project.forge.kind === 'azure' ? 4000 : 65_536

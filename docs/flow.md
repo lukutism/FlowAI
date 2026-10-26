@@ -103,7 +103,11 @@ words). A turn that ends with a question to you stops the run as "Agent question
    part: one that is missing is named back to the agent once, then the run stops for you. A question marked
    `(held)` decides whether behaviour changes; only you answer it.
 3. **Plan gate.** No questions: the build starts at once. Questions: the run waits for you; at the deadline
-   (30 minutes by default) the service takes the defaults, never for a held question.
+   (30 minutes by default), never for a held question, an advisor decides them: a fresh read-only session (the
+   reviewer's kind) given the ticket, the plan and the questions. A question the agent can find out itself (data
+   on a test tenant, the code) goes back to it once, to answer in its plan; the rest get the advisor's answers and
+   reasons (the defaults when there is no reviewer or its answer can't be read). The PR then lists every decision
+   taken without you, "please confirm".
 4. **Build.** The agent changes code in its worktree and leaves the changes uncommitted. A message to the agent at any
    stop (a question, a block, a cap, the ship gate, an open PR) carries the run on; afterwards flow puts the gate back,
    verifying again first if the code changed.

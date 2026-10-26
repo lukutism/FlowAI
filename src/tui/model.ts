@@ -185,7 +185,8 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'devserver.stopped': return { stage: '', text: 'dev server stopped' }
     case 'patch.applied': return { stage: 'setup', text: `customer patch ${e.customer}/${e.app}: ${e.summary}` }
     case 'plan.submitted': return { stage: 'plan', text: e.questions.length ? `plan ready, ${e.questions.length} question${e.questions.length > 1 ? 's' : ''}` : 'plan ready, no questions' }
-    case 'plan.decided': return { stage: 'plan', text: e.by === 'human' ? 'approved by you' : 'defaults taken at the deadline' }
+    case 'plan.decided': return { stage: 'plan', text: e.by === 'human' ? 'approved by you' : e.by === 'advisor' ? 'decided by the advisor at the deadline' : 'defaults taken at the deadline' }
+    case 'plan.returned': return { stage: 'plan', text: `back to the agent to look up ${e.lookups.join(', ')}` }
     case 'agent.asked': return { stage: '', text: `asks: ${e.question}` }
     case 'run.resolved': return { stage: '', text: `no change needed: ${e.summary}` }
     case 'human.message': return { stage: '', text: `you: ${e.text}` }
@@ -227,7 +228,7 @@ export function lastMessage(events: RunEvent[], now: number): string {
   const ago = `${duration(now - e.at)} ago`
   const text = e.type === 'pr.opened' ? `✓ ${e.run} shipped: draft PR #${e.number}` : e.type === 'patch.written' ? `✓ ${e.run}: patch written back`
     : e.type === 'setup.failed' ? `✕ ${e.run} setup failed: ${e.reason}` : e.type === 'run.blocked' ? `✕ ${e.run} blocked: ${e.reason}`
-    : e.type === 'plan.decided' ? `✓ ${e.run}: plan ${e.by === 'human' ? 'approved by you' : 'took the defaults'}` : `${e.run}: ${describeEvent(e).text}`
+    : e.type === 'plan.decided' ? `✓ ${e.run}: plan ${e.by === 'human' ? 'approved by you' : e.by === 'advisor' ? 'decided by the advisor' : 'took the defaults'}` : `${e.run}: ${describeEvent(e).text}`
   return `${text} · ${ago}`
 }
 

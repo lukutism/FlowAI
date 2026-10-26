@@ -14,7 +14,9 @@ export type EventBody =
   | { type: 'setup.done' }
   | { type: 'setup.failed'; reason: string }
   | { type: 'plan.submitted'; summary: string; questions: Question[]; deadline?: number }
-  | { type: 'plan.decided'; by: 'human' | 'deadline'; answers: Record<string, string> }
+  | { type: 'plan.decided'; by: 'human' | 'deadline' | 'advisor'; answers: Record<string, string>; reasons?: Record<string, string> }
+  /** at the deadline: questions the agent can look up itself, sent back to it (once) */
+  | { type: 'plan.returned'; lookups: string[] }
   | { type: 'agent.asked'; question: string }
   /** the agent found no change is needed (resolution.md): you confirm with done, or a message carries it on */
   | { type: 'run.resolved'; summary: string; text: string }
@@ -67,7 +69,7 @@ export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'rev
 export interface RunState {
   id: string; ticket: string; title: string; project: string; base: string
   stage: Stage; status: Status; needs?: Needs
-  plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' }
+  plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' | 'advisor'; reasons?: Record<string, string>; returned?: boolean }
   /** verify: red runs in a row; verifyRuns: all runs; review: review runs that found something */
   loops: { verify: number; verifyRuns: number; review: number }
   /** the new work in tokens, and (apart) what was read back from the cache: far cheaper, but counted once per call */
@@ -118,7 +120,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'setup.failed': need(s, 'setup', e); return go(s, e, { status: 'failed', needs: { kind: 'setup', ask: e.reason } })
     case 'plan.submitted': {
       need(s, 'plan', e)
-      const plan = { summary: e.summary, questions: e.questions }
+      const plan = { summary: e.summary, questions: e.questions, ...(s.plan?.returned ? { returned: true } : {}) }
       if (!e.questions.length) return go(s, e, { stage: 'build', plan, ...running })
       const held = e.questions.some(q => q.held)
       const ask = `${e.questions.length} open question${e.questions.length > 1 ? 's' : ''}`
@@ -126,9 +128,12 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     }
     case 'plan.decided': {
       if (s.needs?.kind !== 'plan' || !s.plan) throw new TransitionError('no plan is waiting for a decision')
-      if (e.by === 'deadline' && s.needs.held) throw new TransitionError('a held question is decided by the human only')
-      return go(s, e, { stage: 'build', plan: { ...s.plan, answers: e.answers, decidedBy: e.by }, ...running })
+      if (e.by !== 'human' && s.needs.held) throw new TransitionError('a held question is decided by the human only')
+      return go(s, e, { stage: 'build', plan: { ...s.plan, answers: e.answers, decidedBy: e.by, ...(e.reasons ? { reasons: e.reasons } : {}) }, ...running })
     }
+    case 'plan.returned':
+      if (s.needs?.kind !== 'plan' || !s.plan) throw new TransitionError('no plan is waiting for a decision')
+      return go(s, e, { plan: { ...s.plan, returned: true }, ...running })
     case 'build.done':
       // from build; or from a later stage when a message changed the code after it was verified
       if (!['build', 'verify', 'review', 'ship'].includes(s.stage)) need(s, 'build', e)

@@ -48,7 +48,7 @@ export function runLines(r: RunState, o: { plan: string; review: string; changes
   for (const q of r.plan?.questions ?? []) {
     const a = r.plan?.answers?.[q.id]
     wrap(`${q.id}${q.held ? ' (held)' : ''} ${q.text}`, w - 1).slice(0, 2).forEach(l => out.push([[` ${l}`, C.muted]]))
-    out.push(a ? [['    → ', C.muted], [fit(a, w - 16), C.text], [r.plan?.decidedBy ? ` · ${r.plan.decidedBy === 'human' ? 'you' : 'deadline'}` : '', C.muted]] : [[`    default: ${fit(q.default, w - 14)}`, C.muted]])
+    out.push(a ? [['    → ', C.muted], [fit(a, w - 16), C.text], [r.plan?.decidedBy ? ` · ${r.plan.decidedBy === 'human' ? 'you' : r.plan.decidedBy === 'advisor' ? 'advisor' : 'deadline'}` : '', C.muted]] : [[`    default: ${fit(q.default, w - 14)}`, C.muted]])
   }
   blank()
   head('Checks')
