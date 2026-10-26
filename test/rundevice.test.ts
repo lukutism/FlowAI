@@ -131,6 +131,29 @@ describe('an emulator that stops on its own', () => {
   })
 })
 
+describe('a setup cut off by a restart', () => {
+  test('redone from the start: what it had made goes, the worktree and device are made again, and the run goes on to its plan', async () => {
+    const t = setup({ consoleStart: 25860, metroStart: 28860 })
+    const run = 'ex-5', root = join(t.run, '..', '..', '..', 'wt', '5'), wt = join(root, 'mobile')
+    mkdirSync(t.run, { recursive: true })
+    writeFileSync(join(t.run, 'run.json'), JSON.stringify({ id: 5, key: '#5', title: 'T', kind: 'bug', url: '', branch: 'fix/5', base: 'origin/develop', repos: [{ key: 'mobile', worktree: wt, base: 'origin/develop' }], worktree: wt, platform: 'android' }))
+    writeFileSync(join(t.run, 'ticket.md'), '# #5 T\n\nThe walk is broken.\n')
+    t.store.append(run, 'human', { type: 'run.created', ticket: '#5', title: 'T', project: 'ex', base: 'origin/develop', repos: ['mobile'] })
+    const main = (t.pipe as unknown as { d: { project: { repos: { path: string }[] } } }).d.project.repos[0]!.path
+    Bun.spawnSync(['git', 'worktree', 'add', '-q', '-b', 'fix/5', wt, 'origin/develop'], { cwd: main, env }) // made before the restart
+    writeFileSync(join(wt, 'half.txt'), 'x')
+    try {
+      await t.pipe.redoSetup(run)
+      const types = t.store.events(run).map(e => e.type)
+      expect(types).toContain('setup.done')
+      expect(types).toContain('device.ready')
+      expect(existsSync(join(wt, 'half.txt'))).toBe(false)
+      expect(t.store.events(run).find(e => e.type === 'run.note')).toMatchObject({ text: expect.stringMatching(/setup .*again/) })
+      expect(t.store.state(run)!.stage).not.toBe('setup')
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})
+
 describe("a run's window", () => {
   test('headless by default (the emulator without its window); a run that asks for its window gets it', async () => {
     const t = setup({ consoleStart: 25780, metroStart: 28780 })

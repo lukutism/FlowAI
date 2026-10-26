@@ -145,12 +145,15 @@ describe('Service: after a restart, and when a step throws', () => {
     t.store.append('ex-8', 'human', { type: 'run.created', ticket: '#8', title: 'y', project: 'ex', base: 'origin/develop' })
     t.store.append('ex-8', 'engine', { type: 'setup.done' })
     t.store.append('ex-8', 'engine', { type: 'run.paused', window: '5h', until: 1 })
-    await t.svc.recover()
-    expect(t.store.state('ex-9')).toMatchObject({ status: 'failed', needs: { ask: expect.stringMatching(/restarted during setup/) } })
+    const redone: string[] = []
+    const orig = Pipeline.prototype.redoSetup
+    Pipeline.prototype.redoSetup = async function (r: string) { redone.push(r) }
+    try { await t.svc.recover(); await t.svc.idle() } finally { Pipeline.prototype.redoSetup = orig }
+    expect(redone).toEqual(['ex-9']) // a setup is done again from the start
     // said on the run, then sent on by itself (the next test)
     expect(t.store.events('ex-8').find(e => e.type === 'run.blocked')).toMatchObject({ reason: expect.stringMatching(/restarted during plan/) })
   })
-  test("an agent that was mid-turn is told to carry on by itself (its session resumes); a setup is not redone", async () => {
+  test("an agent that was mid-turn is told to carry on by itself (its session resumes); a setup is redone instead", async () => {
     const t = setup(() => [])
     const run = (id: string, ...e: EventBody[]) => { t.store.append(id, 'human', { type: 'run.created', ticket: `#${id}`, title: 'x', project: 'ex', base: 'origin/develop' }); for (const x of e) t.store.append(id, 'engine', x) }
     run('ex-9')
@@ -158,7 +161,9 @@ describe('Service: after a restart, and when a step throws', () => {
     const told: [string, string, string?][] = []
     const orig = Pipeline.prototype.message
     Pipeline.prototype.message = async function (r: string, text: string, from?: 'human' | 'flow') { told.push([r, text, from]) }
-    try { await t.svc.recover(); await t.svc.idle() } finally { Pipeline.prototype.message = orig }
+    const redo = Pipeline.prototype.redoSetup
+    Pipeline.prototype.redoSetup = async function () {}
+    try { await t.svc.recover(); await t.svc.idle() } finally { Pipeline.prototype.message = orig; Pipeline.prototype.redoSetup = redo }
     expect(told).toEqual([['ex-8', expect.stringMatching(/flow restarted .*Carry on/), 'flow']])
   })
   test('a step that throws blocks its run with the reason instead of leaving it running', async () => {

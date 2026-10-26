@@ -34,9 +34,10 @@ mkdir -p "$(dirname "$bin")"
 cp dist/flow "$bin.new" && mv -f "$bin.new" "$bin"
 echo "installed $bin ($version)"
 
-# a setup can't be carried on after a restart (an agent's turn can: it is told to): the service waits for setups to end
+# after a restart a setup is done again from the start (an agent is told to carry on): one that is building waits for
+# the restart rather than build again; one waiting for a slot doesn't hold it up
 waited=0
-while "$bin" status 2>/dev/null | grep -Eq ' setup · (running|waiting)' && [ "$waited" -lt "${FLOW_RELEASE_WAIT:-1200}" ]; do
+while "$bin" status 2>/dev/null | grep -q ' setup · running' && [ "$waited" -lt "${FLOW_RELEASE_WAIT:-1200}" ]; do
   [ "$waited" = 0 ] && echo "a run is setting up: the service restarts once it is done"
   sleep 10; waited=$((waited + 10))
 done

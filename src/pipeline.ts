@@ -266,6 +266,27 @@ export class Pipeline {
     return run
   }
 
+  /**
+   * A setup a restart of flow cut off, done again from the start: what it had made goes first (its device, its
+   * worktrees and their branches, which only it had: a setup refuses a branch that exists), then the run goes on to
+   * its plan as from a start.
+   */
+  async redoSetup(run: string) {
+    const m = this.meta(run)
+    await this.releaseDevice(run)
+    for (const r of m.repos) {
+      if (!existsSync(r.worktree)) continue
+      const repo = this.repoConfig(r.key).path, git = (...a: string[]) => Bun.spawnSync(['git', ...a], { cwd: repo, env: this.d.gitEnv })
+      if (git('worktree', 'remove', '--force', '--force', r.worktree).exitCode !== 0) rmSync(r.worktree, { recursive: true, force: true })
+      git('worktree', 'prune')
+      git('branch', '-D', m.branch)
+    }
+    this.d.store.append(run, 'engine', { type: 'run.note', text: 'the setup was cut off by a restart of flow: set up again from the start' })
+    if (!(await this.setup(run, m))) return
+    const f = join(this.runDir(run), 'ticket.md')
+    await this.planStep(run, existsSync(f) ? readFileSync(f, 'utf8') : m.title)
+  }
+
   /** a worktree per repo; false (and setup.failed) when one can't be made */
   private async setup(run: string, m: Meta): Promise<boolean> {
     const notes: string[] = []
