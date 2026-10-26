@@ -124,6 +124,8 @@ export const loadProject = (file: string): Project => parseProject(JSON.parse(re
 /** ~/.config/flow/flow.json: what holds for the whole machine (all projects share its slots) */
 const settings = z.object({
   limits: z.object({ agents: z.number().int().min(1).default(2), builds: z.number().int().min(1).default(2), devices: z.number().int().min(1).default(4) }).default({}),
+  /** a desktop notification when a run starts needing you */
+  notify: z.boolean().default(true),
 })
 export type Settings = z.infer<typeof settings>
 

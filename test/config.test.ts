@@ -27,13 +27,13 @@ describe('project config: one file per project, checked when flow starts', () =>
 })
 
 describe('flow.json: settings for the whole machine', () => {
-  test('no file: the default limits (2 agents, 2 builds, 4 devices)', () => {
-    expect(loadSettings(join(tmpdir(), 'no-such-flow.json'))).toEqual({ limits: { agents: 2, builds: 2, devices: 4 } })
+  test('no file: the default limits (2 agents, 2 builds, 4 devices), notifications on', () => {
+    expect(loadSettings(join(tmpdir(), 'no-such-flow.json'))).toEqual({ limits: { agents: 2, builds: 2, devices: 4 }, notify: true })
   })
   test('a partial file keeps the other defaults', () => {
     const f = join(mkdtempSync(join(tmpdir(), 'flow-set-')), 'flow.json')
     writeFileSync(f, JSON.stringify({ limits: { agents: 3 } }))
-    expect(loadSettings(f)).toEqual({ limits: { agents: 3, builds: 2, devices: 4 } })
+    expect(loadSettings(f)).toEqual({ limits: { agents: 3, builds: 2, devices: 4 }, notify: true })
   })
   test('a wrong value names itself', () => {
     const f = join(mkdtempSync(join(tmpdir(), 'flow-set-')), 'flow.json')

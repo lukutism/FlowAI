@@ -33,6 +33,7 @@ import type { RunEvent, RunState } from './run.ts'
 import { Runner } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import { EventStore } from './store.ts'
+import { notice, show } from './notify.ts'
 import { announce, connect, lock as lockService, running, startService, token, unlock as unlockService, withdraw } from './daemon.ts'
 import type { FlowClient } from './client.ts'
 import { serve } from './server.ts'
@@ -144,7 +145,13 @@ async function serveCmd() {
   const projects = Object.fromEntries((existsSync(PROJECTS) ? readdirSync(PROJECTS) : []).filter(f => f.endsWith('.json')).map(f => { const p = loadProject(join(PROJECTS, f)); return [p.key, p] }))
   const s = store()
   s.subscribe(showEvent)
-  const svc = new Service({ store: s, projects, projectsDir: PROJECTS, limits: loadSettings(join(PROJECTS, '..', 'flow.json')).limits, az: realAz, dataDir: DATA, makeAgent: o => new ClaudeAgent(o), makeReviewer: o => new ClaudeAgent({ ...o, permissionMode: 'plan' }), tap: (_, e) => showAgent(e) })
+  const machine = loadSettings(join(PROJECTS, '..', 'flow.json'))
+  if (machine.notify) {
+    // a notification when a run starts needing you
+    const last = new Map(s.runs().map(r => [r.id, r]))
+    s.subscribe(e => { const after = s.state(e.run); if (!after) return; const n = notice(last.get(e.run), after); last.set(e.run, after); if (n) show(n) })
+  }
+  const svc = new Service({ store: s, projects, projectsDir: PROJECTS, limits: machine.limits, az: realAz, dataDir: DATA, makeAgent: o => new ClaudeAgent(o), makeReviewer: o => new ClaudeAgent({ ...o, permissionMode: 'plan' }), tap: (_, e) => showAgent(e) })
   svc.onNotice(n => console.log(`notice ${n.run}: ${n.text}`))
   const srv = serve({ service: svc, store: s, dataDir: DATA, port: 0, token: token(DATA) })
   announce(DATA, srv.port)
