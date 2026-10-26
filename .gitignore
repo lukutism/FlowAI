@@ -5,3 +5,4 @@ spike/recordings/
 spike/sandbox/
 *.log
 .DS_Store
+dist/

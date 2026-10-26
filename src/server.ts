@@ -27,7 +27,9 @@ function runRepos(dataDir: string, run: string): RunRepo[] {
 }
 /** git's output, without holding up the service (every agent's stream goes through it) */
 async function git(cwd: string, ...a: string[]): Promise<string> {
-  const p = Bun.spawn(['git', ...a], { cwd, stdout: 'pipe', stderr: 'ignore' })
+  // the worktree can go between the check and the call (the run removed meanwhile): nothing, not an error
+  let p: Bun.Subprocess<'ignore', 'pipe', 'ignore'>
+  try { p = Bun.spawn(['git', ...a], { cwd, stdout: 'pipe', stderr: 'ignore' }) } catch { return '' }
   const out = await new Response(p.stdout).text()
   await p.exited
   return out

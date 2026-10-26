@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { FlowClient } from './client.ts'
+import { self } from './self.ts'
 
 /** Where the background service tells clients how to reach it: its port and pid, and a token only the user can read. */
 export const serviceFile = (data: string) => join(data, 'service.json')
@@ -68,7 +69,7 @@ export async function connect(data: string, cli?: string): Promise<FlowClient | 
 function spawnService(data: string, cli: string) {
   mkdirSync(data, { recursive: true })
   const log = openSync(join(data, 'service.log'), 'a')
-  Bun.spawn([process.execPath, cli, 'serve'], { stdio: ['ignore', log, log], env: process.env }).unref()
+  Bun.spawn(self('serve'), { stdio: ['ignore', log, log], env: process.env }).unref()
 }
 
 /** start `flow serve` in the background (its output in service.log) and wait until it answers */

@@ -15,6 +15,10 @@ Status: tickets go from Azure DevOps to a draft PR (one repo), with a terminal s
     flow add <run> <repo> / flow sync <run>   a repo the run lacks; the run brought up to its base
     flow doctor [<project>]              what a run would trip on: CLIs, logins, checkouts, devices, disk
 
+Releases: `scripts/release.sh` compiles flow into one binary at `~/.local/bin/flow` from the committed source, checks it
+(its guard refuses a commit, its MCP server answers), and restarts the service on it; `--test` runs the whole suite
+first. Runs then use the release's guard and tools, never the source being edited. `flow version` says which.
+
 Projects are JSON files in ~/.config/flow/projects (see test/fixtures/project.example.json).
 
 Try the connection (real turns on your subscription, with flow's guard):

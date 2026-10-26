@@ -304,7 +304,8 @@ export function guard(input: HookInput, ctx: { worktree: string; allow?: string[
   return null
 }
 
-if (import.meta.main) {
+/** the hook: the tool call on stdin, the run's worktree and folders in FLOW_WORKTREE, FLOW_ALLOW, FLOW_DENY */
+export async function runGuard() {
   const list = (v?: string) => (v ?? '').split(':').filter(Boolean)
   let d: Decision | null
   // fail closed: a guard that can't read its input or doesn't know where the run lives refuses (the hook only runs
@@ -316,3 +317,5 @@ if (import.meta.main) {
   } catch (e) { d = { deny: true, reason: `flow guard failed: ${e instanceof Error ? e.message : e}` } }
   if (d) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `flow: ${d.reason}` } }))
 }
+
+if (import.meta.main) await runGuard()

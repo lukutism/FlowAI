@@ -46,8 +46,11 @@ export async function serveMcp(o: { run: string; client: () => Promise<FlowClien
   ;(c as FlowClient | null)?.close()
 }
 
-if (import.meta.main) {
+/** the run's MCP server on stdio: FLOW_RUN names the run, FLOW_DATA flow's data folder */
+export async function runMcp() {
   const run = process.env.FLOW_RUN ?? '', data = process.env.FLOW_DATA ?? ''
   await serveMcp({ run, client: () => connect(data).catch(() => null), input: Bun.stdin.stream(), write: l => { process.stdout.write(l + '\n') } })
   process.exit(0)
 }
+
+if (import.meta.main) await runMcp()

@@ -31,7 +31,7 @@ import type { Windows } from './usage.ts'
 import { changedFiles, verify } from './verify.ts'
 
 /** the run's flow MCP server (its tools) */
-const MCP = join(import.meta.dir, 'mcp.ts')
+import { self } from './self.ts'
 
 /** a repo of a run: its worktree and the base it started from */
 interface RunRepo { key: string; worktree: string; base: string }
@@ -715,7 +715,7 @@ export class Pipeline {
     const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')
-    writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { flow: { command: process.execPath, args: [MCP], env: { FLOW_RUN: run, FLOW_DATA: this.d.dataDir } } } }, null, 2) + '\n')
+    writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { flow: { command: self('mcp')[0], args: self('mcp').slice(1), env: { FLOW_RUN: run, FLOW_DATA: this.d.dataDir } } } }, null, 2) + '\n')
     // the run's own emulator is the one adb (and the tools on it) talk to; Metro's port for React Native's CLI.
     // a tool such as verify can take minutes
     const env = { MCP_TOOL_TIMEOUT: '1800000', ...(dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : { ANDROID_SERIAL: 'no-device-for-this-run' }) }

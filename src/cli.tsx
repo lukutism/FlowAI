@@ -14,6 +14,7 @@
  *   flow add <run> <repo> [--base <ref>]                            a repo the run lacks: its own worktree on the run's branch
  *   flow sync <run>                                                 the run's repos brought up to their bases (the change kept)
  *   flow doctor [<project>]                                         what a run would trip on: CLIs, logins, checkouts, devices, disk
+ *   flow version                                                    the release running (its commit and date), or "source"
  *   flow code <run>                                                 the run's worktree in VS Code (FLOW_EDITOR to use another)
  *   flow device <run>                                               the run's device in the browser: see it, tap, swipe, type
  *   flow stop <run>                                                 end the agent's turn now; the run waits for a message
@@ -310,6 +311,7 @@ async function main(argv: string[]) {
       console.log(`\n${next(s.state(port)!)}\n${windowsLine(p.runner.ingest.windows)}`)
       return
     }
+    case 'version': { console.log(process.env.FLOW_RELEASE ?? `source ${new TextDecoder().decode(Bun.spawnSync(['git', 'rev-parse', '--short', 'HEAD'], { cwd: import.meta.dir }).stdout).trim()}`); return }
     case 'doctor': {
       const { doctor, report } = await import('./doctor.ts')
       const all = (existsSync(PROJECTS) ? readdirSync(PROJECTS) : []).filter(f => f.endsWith('.json')).map(f => loadProject(join(PROJECTS, f)))
