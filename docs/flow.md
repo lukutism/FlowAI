@@ -94,8 +94,14 @@ words). A turn that ends with a question to you stops the run as "Agent question
 1. **Setup.** The ticket is read (description, repro steps, comments newest first). A git worktree is created on
    `fix/<id>` or `feat/<id>` from the base; `node_modules` is cloned copy-on-write from the main checkout, then the
    install runs.
-2. **Plan.** The agent writes `plan.md` in the run's folder: what changes and why, the approach, and open questions,
-   each with a default. A question marked `(held)` decides whether behaviour changes; only you answer it.
+2. **Plan.** The agent writes `plan.md` in the run's folder, a definition of done: what changes and why; for a bug,
+   how it was reproduced first (`Repro: live | test | mocked | not-reproduced`, a mocked or missing one saying why
+   live isn't possible); where the project has release lines, the lines the fix is for (`Target lines`); whether the
+   PR may carry tests or comments and who asked (`PR extras`); the problem; the design choice (smallest option, what
+   it reuses, what it rejected); acceptance criteria each with its check; what must not change; the approach; a
+   decisions log; and open questions, each with a default (`- none — why` when there are none). flow checks every
+   part: one that is missing is named back to the agent once, then the run stops for you. A question marked
+   `(held)` decides whether behaviour changes; only you answer it.
 3. **Plan gate.** No questions: the build starts at once. Questions: the run waits for you; at the deadline
    (30 minutes by default) the service takes the defaults, never for a held question.
 4. **Build.** The agent changes code in its worktree and leaves the changes uncommitted. A message to the agent at any
@@ -160,7 +166,8 @@ React Native debug app pointed at another Metro port) are there for the Android 
   moves and git config changes, writes to the tracker or code host (also through `az rest`, `gh api`), edits outside
   the run's worktree (symlinks followed) and of `.git` or Claude Code's settings files. It reads a shell line the way
   the shell does: quotes, `$(…)`, wrappers such as `env` or `timeout`, `bash -c`. It fails closed, also when it can't
-  start. Of the run's folder the agent may write only `plan.md` and `pr.md`; flow's token is not readable.
+  start. Of the run's folder the agent may write only `plan.md`, `pr.md`, `resolution.md`, `blocked.md`, `learnings.md`,
+  `logins.md`, `evidence/` and `tests/` (a reproduction test that doesn't ship); flow's token is not readable.
 - **Tickets are data:** their text reaches the agent inside a fence with a random name it can't close, with the rule
   to name anything beyond the change instead of doing it.
 - **Denied tools** (per project, `denyTools`): an MCP server's write tools, as permission rules.

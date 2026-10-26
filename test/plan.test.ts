@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { commitMessage, parsePlan, prSummary } from '../src/plan.ts'
+import { commitMessage, parsePlan, planGaps, prSummary } from '../src/plan.ts'
+import { fullPlan } from './plans.ts'
 
 // The agent writes plan.md in the run folder; flow reads the summary and the open questions out of it.
 const plan = (questions: string) => `# Plan
@@ -31,6 +32,32 @@ describe('parsePlan', () => {
   })
   test('ids are made up when the agent left them out', () => {
     expect(parsePlan(plan('- Keep the old payload? — default: yes')).questions[0]).toMatchObject({ id: 'Q1', text: 'Keep the old payload?' })
+  })
+})
+
+describe('planGaps: what the plan still lacks (the agent is asked once to fill it in)', () => {
+  const bug = { bug: true, releaseLines: true }
+  test('a complete plan lacks nothing; "- none — why" is no question', () => {
+    expect(planGaps(fullPlan(), bug)).toEqual([])
+    expect(parsePlan(fullPlan()).questions).toEqual([])
+  })
+  test('each missing part is named, with the form it takes', () => {
+    const g = planGaps('# Plan\n\nDo it.\n\n## Open questions\nnone\n', bug)
+    for (const part of ['Repro', 'Target lines', 'PR extras', 'Problem', 'Design choice', 'Acceptance criteria', 'Unchanged behavior', 'Open questions: none — say why nothing is open']) expect(g.join('\n')).toContain(part)
+  })
+  test('a feature needs no Repro, a project without release lines no Target lines', () => {
+    const p = fullPlan().replace(/^Repro:.*\n/m, '').replace(/^Target lines:.*\n/m, '')
+    expect(planGaps(p, { bug: false, releaseLines: false })).toEqual([])
+    expect(planGaps(p, bug)).toEqual(['Repro: live | test | mocked | not-reproduced — <what you did>', 'Target lines: this base only | also <lines> — <why>'])
+  })
+  test('a mocked or missing reproduction says why live is not possible; tests or comments in the PR say who asked', () => {
+    expect(planGaps(fullPlan().replace(/^Repro:.*$/m, 'Repro: mocked'), bug)).toEqual(['Repro: why (mocked — <why live is not possible>)'])
+    expect(planGaps(fullPlan().replace(/^Repro:.*$/m, 'Repro: maybe'), bug)).toEqual(['Repro: live | test | mocked | not-reproduced — <what you did>'])
+    expect(planGaps(fullPlan().replace(/^PR extras:.*$/m, 'PR extras: tests'), bug)).toEqual(['PR extras: who asked (tests — <the human\'s or the ticket\'s ask>)'])
+  })
+  test('the design choice has all three parts, filled in; each criterion has its check', () => {
+    expect(planGaps(fullPlan().replace(/^- Reuses:.*$/m, '- Reuses: <helper>'), bug)).toEqual(['Design choice: Reuses'])
+    expect(planGaps(fullPlan().replace(' — check: verify\n\n## Unchanged', '\n\n## Unchanged'), bug)).toEqual(['AC1: check'])
   })
 })
 

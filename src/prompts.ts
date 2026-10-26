@@ -38,29 +38,52 @@ const where = (b: Brief) => (b.repos && b.repos.length > 1
   + (b.devServer ? `\nDev server: ${b.devServer.repo} at ${b.devServer.url}, this run's own (it reloads as you edit). Leave it running (flow stops it).` : '')
   + (b.device ? `\nDevice: ${b.device.platform} ${b.device.id}, Metro on port ${b.device.metroPort}, the app installed. It is this run's own: use only it, and leave it running (flow stops it).` : '')
 
-export const planPrompt = (b: Brief, ticket: string, planFile: string) => planWith(b, ticket, planFile, fenced('ticket', ticket))
+/** what the plan's form depends on: a bug is reproduced first; a project with release lines names the lines the fix is for */
+export interface PlanKind { bug: boolean; releaseLines: boolean; runDir: string }
+export const planPrompt = (b: Brief, ticket: string, planFile: string, k: PlanKind = { bug: false, releaseLines: false, runDir: '' }) => planWith(b, ticket, planFile, fenced('ticket', ticket), k)
 // where the agent works, the device and the project's notes are in the run's brief (its system prompt), not here
-const planWith = (b: Brief, ticket: string, planFile: string, t: { name: string; text: string }) => `${b.key ? `This step is the plan for ticket ${b.key} "${plainTitle(b.title)}" (its title, as the ticket has it).` : `This step is the plan for the task "${plainTitle(b.title)}".`}
+const planWith = (b: Brief, ticket: string, planFile: string, t: { name: string; text: string }, k: PlanKind) => `${b.key ? `This step is the plan for ticket ${b.key} "${plainTitle(b.title)}" (its title, as the ticket has it).` : `This step is the plan for the task "${plainTitle(b.title)}".`}
 
 ${b.key ? `The ticket (comments are newest first and override the description). ${fenceNote(t.name)}` : 'The task, as the human described it:'}
 ${b.key ? t.text : ticket}
 
-Understand the problem and find the code path. Don't change code yet. Then write your plan to ${planFile}:
+Understand the problem and find the code path. Don't change the app's code yet.${k.bug ? `
+Reproduce the bug first, with the cheapest proof that fails today: on the run's device if it is visible there
+(screenshots in ${k.runDir}/evidence/before-*.png), a test on the real code path beside the code (it doesn't ship:
+move it to ${k.runDir}/tests/ before you finish the build, unless PR extras names who asked for tests), or a
+file:line trace when it needs data or access you don't have. Say which on the Repro line.` : ''}
+Then write your plan to ${planFile}; flow checks that every part is there:
 
 # Plan
 
 <one paragraph: what you will change and why>
 
+${k.bug ? 'Repro: live | test | mocked | not-reproduced — <what you did; mocked or not-reproduced: why live is not possible>\n' : ''}${k.releaseLines ? 'Target lines: this base only | also <other lines, such as develop> — <why: where the bug exists>\n' : ''}PR extras: none | tests | comments — <who asked: the human or the ticket; otherwise none>
+
+## Problem
+<at most 5 lines: what is actually wrong, in your words>
+
+## Design choice
+- Smallest option: <the smallest change that meets the criteria>
+- Reuses: <the existing mechanism or helper it extends, with file:line> | nothing fits — <why>
+- Rejected: <the bigger or different alternative> — <why not>
+
+## Acceptance criteria
+- AC1: WHEN … THEN … — check: verify | test:<path> | device:evidence/<png> | manual:<what>
+
+## Unchanged behavior
+- U1: WHEN … THEN still … — check: …
+
 ## Approach
-<the smallest change that meets the ticket, and what you rejected>
+<at most 10 lines: the files and functions to change>
 
 ## Decisions log
 <each reversible choice you made yourself, one a line: what you chose and why>
 
 ## Open questions
-- Q1: <a question only the human can answer> — default: <what you will do if nobody answers>
+- Q1: <a decision only the human can make> — default: <your choice> because <why>
 (add "(held)" after the id, as in "Q2 (held):", when the answer decides whether the app's behaviour changes at all)
-or the single word: none
+or: - none — <why nothing is open>
 
 Then stop. flow reads the plan; when the questions are answered it sends you the next step.`
 
@@ -80,7 +103,7 @@ ${findings.map(f => `- ${f}`).join('\n')}
 
 Fix them in the code (no suppressions such as @ts-ignore or eslint-disable), then stop. flow runs verify again.`
 
-export const planRetryPrompt = (planFile: string, problem: string) => `${planFile} ${problem}. Write the plan there now, in the format from the first message, then stop.`
+export const planRetryPrompt = (planFile: string, problem: string) => `${planFile} ${problem}. Write the plan there now, in the form from the first message (every part filled in), then stop.`
 
 /** the first message to an agent that has no session yet (a port's): what it is working on, then the message */
 export const contextPrompt = (b: Brief, planFile: string, prFile: string, text: string) => `You are picking up ${b.key ? `ticket ${b.key} "${plainTitle(b.title)}"` : `the task "${plainTitle(b.title)}" (no ticket)`}; the run's brief says where and how.

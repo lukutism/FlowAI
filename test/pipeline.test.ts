@@ -8,6 +8,7 @@ import { parseProject } from '../src/config.ts'
 import { Pipeline } from '../src/pipeline.ts'
 import { EventStore } from '../src/store.ts'
 import { Resources } from '../src/resources.ts'
+import { fullPlan } from './plans.ts'
 
 // Whole runs: a real git project (origin + main checkout), a stand-in az, stand-in tools for verify, and a fake
 // agent whose turns change files the way a real agent would.
@@ -61,7 +62,7 @@ const review = (findings: object[]): FakeTurn => ({ stream: [JSON.stringify({ ty
 const reviewText = (text: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'rev-1', model: 'm', apiKeySource: 'none' }),
   JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 'rev-1', usage: { input_tokens: 500, output_tokens: 50 } })].join('\n') })
 const finding = { severity: 'P1', file: 'src/b.ts', line: 1, problem: 'b is exported but never used', evidence: 'no import of b anywhere', confidence: 90 }
-const plan = (questions = 'none') => `# Plan\n\nGuard the walk against missing assets.\n\n## Open questions\n${questions}\n`
+const plan = (questions = 'none') => fullPlan(questions)
 const prMd = '# Guard the asset walk against missing assets\n\n## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings\n'
 
 describe('a ticket to a draft PR', () => {
@@ -317,6 +318,20 @@ describe('port: the same fix onto another line', () => {
     expect(log).toContain('mobile: app env .env: APP_LICENSE set for this run')
     expect(log).not.toContain('LIC-42')
     expect(t.store.state(run)).toMatchObject({ stage: 'plan' })
+  })
+  test('a plan that lacks parts: the agent is asked once, naming them; still lacking, the run stops for you', async () => {
+    const thin = '# Plan\n\nGuard the walk.\n\n## Open questions\nnone\n'
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), thin)), turn(() => writeFileSync(join(d.run, 'plan.md'), thin))])
+    const run = await t.pipe.start(186278)
+    expect(t.agent.prompts[0]).toContain('Repro: live | test | mocked | not-reproduced')
+    expect(t.agent.prompts[0]).toContain('## Acceptance criteria')
+    expect(t.agent.prompts[1]).toMatch(/lacks: Repro.*Design choice.*Acceptance criteria/)
+    expect(t.store.state(run)).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/lacks: Repro/) } })
+  })
+  test('a plan completed on the second ask goes on to the build', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), '# Plan\n\nGuard it.\n')), turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ stage: 'plan', status: 'needs-you', needs: { kind: 'plan' } })
   })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])

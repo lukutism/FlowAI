@@ -12,7 +12,7 @@ import { contentHash, createWorktree, pending, pushed, shipChange } from './git.
 import { fillSh, logLine, sh, tail } from './sh.ts'
 import { parseLogins, writeAppEnv } from './appenv.ts'
 import { slug } from './slug.ts'
-import { commitMessage, parsePlan, prSummary } from './plan.ts'
+import { commitMessage, parsePlan, planGaps, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
 import { memoryDir, saveLearnings } from './learnings.ts'
@@ -562,7 +562,7 @@ export class Pipeline {
    */
   private say(run: string, text: string, from: 'flow' | 'you' = 'flow') {
     const s = this.must(run), m = this.meta(run)
-    const first = s.stage === 'plan' && !existsSync(this.planFile(run)) ? `${planPrompt(m, this.ticketText(run), this.planFile(run))}\n\n${text}`
+    const first = s.stage === 'plan' && !existsSync(this.planFile(run)) ? `${planPrompt(m, this.ticketText(run), this.planFile(run), this.planKind(run))}\n\n${text}`
       : s.stage === 'build' && !existsSync(this.prFile(run)) ? `${buildPrompt(m, this.answers(s), this.prFile(run))}\n\n${text}`
       : contextPrompt(m, this.planFile(run), this.prFile(run), text)
     return this.runner.turn(run, s.session ? text : first, from)
@@ -584,7 +584,7 @@ export class Pipeline {
     const dir = this.runDir(run)
     // of the run folder the agent writes only these: the plan, the PR description, how the run ended, its evidence,
     // and the test logins (a password the app made it change; ship checks the change against them all)
-    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence'), join(dir, 'logins.md')]
+    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence'), join(dir, 'tests'), join(dir, 'logins.md')]
     const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')
@@ -751,11 +751,20 @@ export class Pipeline {
 
   private readPlan(run: string): { plan: ReturnType<typeof parsePlan> } | { problem: string } {
     if (!existsSync(this.planFile(run))) return { problem: 'is missing' }
-    try { return { plan: parsePlan(readFileSync(this.planFile(run), 'utf8')) } } catch (e) { return { problem: `can't be read: ${(e as Error).message}` } }
+    let md: string, plan: ReturnType<typeof parsePlan>
+    try { md = readFileSync(this.planFile(run), 'utf8'); plan = parsePlan(md) } catch (e) { return { problem: `can't be read: ${(e as Error).message}` } }
+    const gaps = planGaps(md, this.planKind(run))
+    return gaps.length ? { problem: `lacks: ${gaps.join('; ')}` } : { plan }
+  }
+
+  /** what the run's plan has to say: a bug's reproduction; the lines the fix is for, where the project has release lines */
+  private planKind(run: string) {
+    const m = this.meta(run)
+    return { bug: m.kind === 'bug', releaseLines: m.repos.some(r => this.repoConfig(r.key).releaseBases.length > 0), runDir: this.runDir(run) }
   }
 
   private async planStep(run: string, ticket: string) {
-    const r = await this.runner.turn(run, planPrompt(this.meta(run), ticket, this.planFile(run)))
+    const r = await this.runner.turn(run, planPrompt(this.meta(run), ticket, this.planFile(run), this.planKind(run)))
     if (!r.ok || this.ended(run)) return
     let p = this.readPlan(run)
     if ('problem' in p) {

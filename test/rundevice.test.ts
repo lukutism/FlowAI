@@ -8,6 +8,7 @@ import { parseProject } from '../src/config.ts'
 import { Pipeline } from '../src/pipeline.ts'
 import { Resources } from '../src/resources.ts'
 import { EventStore } from '../src/store.ts'
+import { fullPlan } from './plans.ts'
 
 // A run with a device: booted during setup, named to the agent, held as a device slot, stopped at ship.
 const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }
@@ -35,7 +36,7 @@ function setup(o: { ready?: string; consoleStart?: number; metroStart?: number }
     : args.includes('create') ? { code: 0, out: '{"pullRequestId": 9}', err: '' } : { code: 0, out: '{"comments":[]}', err: '' }
   const data = join(root, 'data'), run = join(data, 'runs', 'ex-5'), wt = join(root, 'wt', '5', 'mobile')
   const agent = new FakeAgent([
-    turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), '# Plan\n\nDo it.\n\n## Open questions\nnone\n') }),
+    turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), fullPlan()) }),
     turn(() => { writeFileSync(join(wt, 'a.ts'), 'y\n'); writeFileSync(join(run, 'pr.md'), '# Change a\n\nVerified: tsc → clean\n') }),
   ])
   const store = new EventStore(':memory:')

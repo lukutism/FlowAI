@@ -7,6 +7,7 @@ import type { Az } from '../src/azure.ts'
 import { parseProject } from '../src/config.ts'
 import { Pipeline } from '../src/pipeline.ts'
 import { EventStore } from '../src/store.ts'
+import { fullPlan } from './plans.ts'
 
 // A run across several repos: one branch name, a worktree per repo under the run's root, verify and review per
 // repo, and one draft PR per repo that changed.
@@ -54,7 +55,7 @@ function setup(turns: (d: { root: string; run: string }) => FakeTurn[], o: { def
   const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, makeAgent: x => { made.push(x); return agent }, makeReviewer: () => reviewer })
   return { pipe, store, agent, reviewer, azCalls, made, root, runDir, mobile, portal }
 }
-const plan = '# Plan\n\nShow the remaining quantity in both apps.\n\n## Open questions\nnone\n'
+const plan = fullPlan('none', 'Show the remaining quantity in both apps.')
 
 describe('a run across two repos', () => {
   const both = (d: { root: string; run: string }) => [

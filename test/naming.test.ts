@@ -8,6 +8,7 @@ import type { Forge } from '../src/forge.ts'
 import { Pipeline } from '../src/pipeline.ts'
 import { EventStore } from '../src/store.ts'
 import type { Tracker } from '../src/tracker.ts'
+import { fullPlan } from './plans.ts'
 
 // A Jira + GitHub project with its own naming (shop's): the branch and the PR title are the key, the commit is
 // "<key> <summary>", the PR body is the ticket link.
@@ -36,7 +37,7 @@ function setup() {
   const forge: Forge = { draftPr: async o => { prs.push(o); return { number: 57, url: 'https://github.com/OWNER/shop-web-app/pull/57' } }, prState: async () => 'open' }
   const data = join(root, 'data'), run = join(data, 'runs', 'shop-SGL-692')
   const agent = new FakeAgent([
-    turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), '# Plan\n\nChange the text.\n\n## Open questions\nnone\n') }),
+    turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), fullPlan('none', 'Change the text.')) }),
     turn(() => { writeFileSync(join(root, 'wt', 'SGL-692', 'web', 'a.ts'), 'y\n'); writeFileSync(join(run, 'pr.md'), '# Show the new success text\n\nDetails.\n') }),
   ])
   const pipe = new Pipeline({ store: new EventStore(':memory:'), project, az: () => ({ code: 1, out: '', err: '' }), dataDir: data, gitEnv: env, tracker, forge, makeAgent: () => agent })

@@ -7,6 +7,7 @@ import type { Az } from '../src/azure.ts'
 import { parseProject } from '../src/config.ts'
 import { Pipeline } from '../src/pipeline.ts'
 import { EventStore } from '../src/store.ts'
+import { fullPlan } from './plans.ts'
 
 // A customer patch run: the patch applied at setup as a local commit (never pushed), so verify and review see only
 // the fix; ship writes the patch back (a dry run first, then for real) instead of opening a PR.
@@ -37,7 +38,7 @@ function setup(o: { apply?: string } = {}) {
     : args.includes('create') ? { code: 0, out: '{"pullRequestId": 9}', err: '' } : { code: 0, out: '{"comments":[]}', err: '' }
   const data = join(root, 'data'), run = join(data, 'runs', 'ex-5'), wt = join(root, 'wt', '5', 'mobile')
   const agent = new FakeAgent([
-    turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), '# Plan\n\nDo it.\n\n## Open questions\nnone\n') }),
+    turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), fullPlan()) }),
     turn(() => { writeFileSync(join(wt, 'a.ts'), 'y\n'); writeFileSync(join(wt, 'helper.ts'), 'h\n') }),
   ])
   const store = new EventStore(':memory:')

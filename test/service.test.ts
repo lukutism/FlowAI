@@ -9,6 +9,7 @@ import { Service } from '../src/service.ts'
 import { readTranscript } from '../src/transcript.ts'
 import { EventStore } from '../src/store.ts'
 import type { EventBody } from '../src/run.ts'
+import { fullPlan } from './plans.ts'
 
 const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' }
 const git = (cwd: string, ...a: string[]) => Bun.spawnSync(['git', ...a], { cwd, env })
@@ -35,7 +36,7 @@ function setup(turns: (d: { root: string; data: string }) => FakeTurn[], azMore?
   svc.onNotice(n => notices.push(`${n.run}: ${n.text}`))
   return { svc, store, notices, data, agent, at: (iso: string) => { now = Date.parse(iso) } }
 }
-const planWith = (data: string, q: string) => () => { mkdirSync(join(data, 'runs', 'ex-1'), { recursive: true }); writeFileSync(join(data, 'runs', 'ex-1', 'plan.md'), `# Plan\n\nDo it.\n\n## Open questions\n${q}\n`) }
+const planWith = (data: string, q: string) => () => { mkdirSync(join(data, 'runs', 'ex-1'), { recursive: true }); writeFileSync(join(data, 'runs', 'ex-1', 'plan.md'), fullPlan(q)) }
 
 describe('Service: the background process that drives runs', () => {
   test('a command is accepted at once and runs in the background; the run is busy until it ends', async () => {
