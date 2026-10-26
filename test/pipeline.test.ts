@@ -17,7 +17,7 @@ const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const result = (text = 'done') => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 's-1', usage: { input_tokens: 1000, output_tokens: 100 } })
 const turn = (effect?: (prompt: string) => void, text?: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), result(text)].join('\n'), effect })
 
-function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources } = {}) {
+function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources; appEnv?: object } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-pipe-'))
   const origin = join(root, 'origin.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin])
@@ -32,7 +32,7 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
     key: 'example', name: 'Example', worktrees: join(root, 'worktrees'),
     tracker: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' }, forge: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' },
     ...(o.reviewOff ? { review: { enabled: false } } : {}),
-    repos: [{ key: 'mobile', path: main, defaultBase: 'origin/develop', verify: [
+    repos: [{ key: 'mobile', path: main, defaultBase: 'origin/develop', ...(o.appEnv ? { appEnv: o.appEnv } : {}), verify: [
       { name: 'tsc', kind: 'tsc', cmd: `${TOOLS} tsc` },
       { name: 'eslint', kind: 'eslint', cmd: `${TOOLS} eslint {json} {files}`, changedOnly: true, ext: ['ts'] },
     ] }],
@@ -306,6 +306,17 @@ describe('port: the same fix onto another line', () => {
     writeFileSync(join(t.runDir, 'pr.md'), `# Long\n\n${'x'.repeat(4100)}\n`)
     await expect(t.pipe.ship(run)).rejects.toThrow(/4100 characters and Azure takes 4000: message the agent to cut 100/)
     expect(git(t.origin, 'branch', '--list', 'fix/186278')).toBe('')
+  })
+  test("the app's env: written at setup from the repo's template with the license from the login step; not a change", async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))], { appEnv: { file: '.env', from: '.env.example', login: { license: 'APP_LICENSE' } } })
+    writeFileSync(join(t.main, '.env.example'), 'APP_HOST=qa\nAPP_LICENSE=\n'); git(t.main, 'add', '.'); git(t.main, 'commit', '-qm', 'env'); git(t.main, 'push', '-q', 'origin', 'HEAD:develop')
+    const run = await t.pipe.start(186278, { logins: 'email: qa@example.com\nlicense: LIC-42' })
+    expect(readFileSync(join(t.wt, '.env'), 'utf8')).toBe('APP_HOST=qa\nAPP_LICENSE=LIC-42\n')
+    expect(git(t.wt, 'status', '--porcelain')).toBe('')
+    const log = readFileSync(join(t.runDir, 'setup.log'), 'utf8')
+    expect(log).toContain('mobile: app env .env: APP_LICENSE set for this run')
+    expect(log).not.toContain('LIC-42')
+    expect(t.store.state(run)).toMatchObject({ stage: 'plan' })
   })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])

@@ -37,6 +37,11 @@ const repo = z.object({
   default: z.boolean().default(false),
   /** a pattern (case-insensitive) on a ticket's target platform and tags: the new-run form picks the repos that match */
   match: z.string().optional(),
+  /**
+   * the app's env file, the run's own: file (relative to the worktree) from the template `from`, with `set` and the
+   * login step's values (login: which variable gets the email, password, license); git-excluded, never shipped
+   */
+  appEnv: z.object({ file: z.string(), from: z.string().optional(), set: z.record(z.string(), z.string()).default({}), login: z.object({ email: z.string().optional(), password: z.string().optional(), license: z.string().optional() }).default({}) }).optional(),
   /** a web app's dev server, started for a run that asks for one: cmd with {port}; url where it answers */
   devServer: z.object({ cmd: z.string(), portStart: z.number().int().default(5300), url: z.string().default('http://localhost:{port}') }).optional(),
   /**

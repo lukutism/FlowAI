@@ -9,7 +9,8 @@ import type { Project, Repo } from './config.ts'
 import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { startDevServer, stopDevServer, type DevServerState } from './devserver.ts'
 import { contentHash, createWorktree, pending, pushed, shipChange } from './git.ts'
-import { fillSh, sh, tail } from './sh.ts'
+import { fillSh, logLine, sh, tail } from './sh.ts'
+import { parseLogins, writeAppEnv } from './appenv.ts'
 import { slug } from './slug.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
@@ -241,8 +242,16 @@ export class Pipeline {
     try {
       for (const r of m.repos) {
         const c = this.repoConfig(r.key)
-        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles, ignore: this.d.project.ignore, log: join(this.runDir(run), 'setup.log') }))
+        const log = join(this.runDir(run), 'setup.log')
+        const ignore = [...this.d.project.ignore, ...(c.appEnv ? [`/${c.appEnv.file}`] : [])]
+        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles, ignore, log }))
         notes.push(...w.notes.map(n => `${r.key}: ${n}`))
+        // before the device's build reads it: the app's env with this run's values (the license from the login step)
+        if (c.appEnv) {
+          const f = join(this.runDir(run), 'logins.md')
+          const set = writeAppEnv(r.worktree, c.appEnv, parseLogins(existsSync(f) ? readFileSync(f, 'utf8') : ''))
+          if (set) { logLine(log, `${r.key}: app env ${set}`); notes.push(`${r.key}: app env ${set}`) }
+        }
       }
     } catch (e) {
       this.d.store.append(run, 'engine', { type: 'setup.failed', reason: (e as Error).message })
@@ -573,8 +582,9 @@ export class Pipeline {
     const m = this.meta(run)
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
     const dir = this.runDir(run)
-    // of the run folder the agent writes only these: the plan, the PR description, how the run ended, its evidence
-    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence')]
+    // of the run folder the agent writes only these: the plan, the PR description, how the run ended, its evidence,
+    // and the test logins (a password the app made it change; ship checks the change against them all)
+    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence'), join(dir, 'logins.md')]
     const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')

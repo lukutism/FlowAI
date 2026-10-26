@@ -81,6 +81,12 @@ what not to touch) and **test logins** (form fields, or `--note` / `--logins-fil
 the logins stay in the run's `logins.md` (readable only by you), the agent is told the file and that they never go
 into code, commits or the PR, and ship refuses a change or a PR description that contains them.
 
+**The app's env.** A repo's `appEnv` (`{ "file": ".env", "from": ".env.container.develop", "set": {…}, "login":
+{ "license": "OPS_LICENSE_KEY" } }`) gives each run its own env file: written at setup, before the device's build,
+from the template with the fixed values and the login step's email, password or license in the named variables. It
+is git-excluded (never shipped), and a link to the main checkout's file is replaced by the run's own, never written
+through. The setup log names the variables set, not their values.
+
 **How a run ends.** A PR (flow ships what the agent left); `resolution.md` when no change is needed (the run waits
 for you: `flow done` confirms it, a message carries it on); `blocked.md` when the agent can't go on (blocked with its
 words). A turn that ends with a question to you stops the run as "Agent question" instead of going on to verify.
