@@ -413,10 +413,18 @@ export class Pipeline {
     return out
   }
 
-  /** the run's device and dev server stopped and started again, with the settings as they are now */
-  async restartDevice(run: string) {
+  /**
+   * The run's device and dev server stopped and started again, with the settings as they are now. With a platform,
+   * a run that has no device gets one (its agent's next turn has it, and argent back).
+   */
+  async restartDevice(run: string, add?: 'android' | 'ios') {
     const s = this.must(run), m = this.meta(run)
     if (s.status === 'done' || s.status === 'failed') throw new Error(`${run} is ${s.status}: nothing to restart`)
+    if (add && !s.device && !m.platform) {
+      if (!this.d.project.devices?.[add]) throw new Error(`project ${this.d.project.key} has no devices configured for ${add} (devices.${add} in its config)`)
+      m.platform = add
+      writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
+    }
     const platform = s.device?.platform ?? m.platform
     const web = !!m.web && !!this.repoConfig(m.web).devServer
     if (!platform && !web) throw new Error(`${run} has no device or dev server`)
@@ -700,17 +708,21 @@ export class Pipeline {
     // of the run folder the agent writes only these: the plan, the PR description, how the run ended, its evidence,
     // and the test logins (a password the app made it change; ship checks the change against them all)
     const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence'), join(dir, 'tests'), join(dir, 'logins.md'), this.answersFile(run)]
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
+    // a run without a device of its own must not drive the ones running here (the human's, other runs'): they run
+    // the main checkout's code through its Metro, not this change. argent is off for it, adb points at no device
+    const dev = this.d.store.state(run)?.device
+    const denyTools = [...this.d.project.denyTools, ...(dev ? [] : ['mcp__argent'])]
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')
     writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { flow: { command: process.execPath, args: [MCP], env: { FLOW_RUN: run, FLOW_DATA: this.d.dataDir } } } }, null, 2) + '\n')
-    // the run's own emulator is the one adb (and the tools on it) talk to; Metro's port for React Native's CLI
-    const dev = this.d.store.state(run)?.device
+    // the run's own emulator is the one adb (and the tools on it) talk to; Metro's port for React Native's CLI.
     // a tool such as verify can take minutes
-    const env = { MCP_TOOL_TIMEOUT: '1800000', ...(dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : {}) }
+    const env = { MCP_TOOL_TIMEOUT: '1800000', ...(dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : { ANDROID_SERIAL: 'no-device-for-this-run' }) }
     const note = existsSync(join(dir, 'note.md')) ? readFileSync(join(dir, 'note.md'), 'utf8') : undefined
     const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run), otherRepos: this.d.project.repos.map(r => r.key).filter(k => !this.meta(run).repos.some(r => r.key === k)),
-      env: this.d.project.vars.filter(v => this.meta(run).vars?.[v.name]).map(v => `${v.label ?? v.name}: ${this.meta(run).vars![v.name]}`) })
+      env: this.d.project.vars.filter(v => this.meta(run).vars?.[v.name]).map(v => `${v.label ?? v.name}: ${this.meta(run).vars![v.name]}`),
+      ...(dev ? {} : { noDevice: { canAdd: !!(this.d.project.devices?.android || this.d.project.devices?.ios) } }) })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, mcpConfig, env, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent

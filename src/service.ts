@@ -22,7 +22,7 @@ export type Command =
   /** the agent's turn running now ended at once; the run stops for you (a message carries it on) */
   | { cmd: 'stop'; run: string }
   /** the run's device stopped and booted again (new settings, a stuck emulator) */
-  | { cmd: 'restartDevice'; run: string }
+  | { cmd: 'restartDevice'; run: string; add?: 'android' | 'ios' }
   /** a repo the run lacks: its own worktree on the run's branch; the agent's next turn has it */
   | { cmd: 'addRepo'; run: string; repo: string; base?: string }
   /** the run's repos brought up to their bases (the agent's change kept, uncommitted) */
@@ -246,7 +246,7 @@ export class Service {
       }
       if (c.cmd === 'done') { p.done(c.run); return { ok: true, run: c.run } }
       const run = c.run
-      const step = c.cmd === 'approve' ? () => p.approve(run, c.answers ?? {}) : c.cmd === 'message' ? () => p.message(run, c.text) : c.cmd === 'release' ? () => p.releaseDevice(run) : c.cmd === 'restartDevice' ? () => p.restartDevice(run)
+      const step = c.cmd === 'approve' ? () => p.approve(run, c.answers ?? {}) : c.cmd === 'message' ? () => p.message(run, c.text) : c.cmd === 'release' ? () => p.releaseDevice(run) : c.cmd === 'restartDevice' ? () => p.restartDevice(run, c.add)
         : c.cmd === 'addRepo' ? () => p.addRepo(run, c.repo, c.base).then(() => {}) : c.cmd === 'sync' ? () => p.sync(run).then(() => {})
         : c.cmd === 'remove' ? () => p.remove(run, { force: c.force }).then(() => {}) : c.cmd === 'ship' ? () => p.ship(run).then(() => {}) : null
       if (!step) throw new Error(`unknown command ${(c as { cmd: string }).cmd}`)

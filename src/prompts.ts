@@ -119,7 +119,9 @@ export interface RunBrief extends Brief { run: string; runDir: string; planFile:
   /** the project's other repos, which a run can be given */
   otherRepos?: string[]
   /** the run's environment, as label: value lines (which cloud, which application) */
-  env?: string[] }
+  env?: string[]
+  /** the run has no device of its own; canAdd: the human can give it one */
+  noDevice?: { canAdd: boolean } }
 
 /**
  * The run's brief, given with --append-system-prompt: unlike a step's message it stays through compactions. The
@@ -147,6 +149,7 @@ export function runBrief(b: RunBrief): string {
     ...(b.device ? [`The run's device is ${b.device.platform} ${b.device.id} (Metro on port ${b.device.metroPort}, the app installed). Drive it with the argent tools on ${b.device.id} only (pass that id); no other device is yours. Screenshots that prove the change (before and after, for anything visible) go in ${b.runDir}/evidence/ and are named in pr.md. Leave the device running.`] : []),
     ...(b.browser && b.devServer ? [`The run's browser shows the app on its dev server: drive it with the browser tool (snapshot for refs, then click, fill, press; screenshot into ${b.runDir}/evidence/ for anything visible, before and after). It is this run's own; flow closes it.`] : []),
     ...(b.env?.length ? [`This run's environment (the app's env and its browser use it; test there):\n${b.env.map(l => `- ${l}`).join('\n')}`] : []),
+    ...(b.noDevice ? [`This run has no device of its own. The emulators and simulators running on this Mac, and the Metro on port 8081, belong to the human or to other runs, and run the main checkout's code, not your change: don't use them (argent is off for this run, and adb points at no device). If the change needs checking on a device, say so with the ask tool${b.noDevice.canAdd ? '; the human can add a device to this run' : ''}.`] : []),
     ...(b.otherRepos?.length ? [`The project's other repos (${b.otherRepos.join(', ')}) can be added to this run, each its own worktree on its branch: if the change needs one, ask for it with the ask tool, rather than reading or changing another checkout.`] : []),
     ...(b.logins ? [`Test logins for this run are in ${b.runDir}/logins.md: for signing in on the device or in the app only, never in code, commits, pr.md, the plan or any other file. flow refuses to ship a change or a PR description that contains them.`] : []),
     ...(b.brief?.length ? [`About this project (from the human who runs flow):\n${b.brief.map(l => `- ${l}`).join('\n')}`] : []),

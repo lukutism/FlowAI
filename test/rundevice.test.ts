@@ -120,3 +120,24 @@ describe("a run's window", () => {
     try { expect(readFileSync(join(u.marks, 'window'), 'utf8').trim()).toBe('') } finally { await u.pipe.releaseDevice(shown).catch(() => {}) }
   })
 })
+
+describe('a run without a device', () => {
+  test("can't drive the devices running here; given one later, its agent's next turn has it", async () => {
+    const t = setup({ consoleStart: 25820, metroStart: 28820 })
+    const run = await t.pipe.start(5)
+    const first = t.made[0] as { env?: Record<string, string>; settings: string; appendSystemPrompt?: string }
+    expect(first.env).toMatchObject({ ANDROID_SERIAL: 'no-device-for-this-run' })
+    expect(JSON.parse(readFileSync(first.settings, 'utf8')).permissions.deny).toContain('mcp__argent')
+    expect(first.appendSystemPrompt).toContain('This run has no device of its own')
+    expect(first.appendSystemPrompt).toContain('the human can add a device to this run')
+    try {
+      await t.pipe.restartDevice(run, 'android')
+      expect(t.store.state(run)!.device).toMatchObject({ platform: 'android', id: 'emulator-25820' })
+      ;(t.pipe as unknown as { agentFor(r: string): unknown }).agentFor(run)
+      const next = t.made.at(-1) as { env?: Record<string, string>; settings: string; appendSystemPrompt?: string }
+      expect(next.env).toMatchObject({ ANDROID_SERIAL: 'emulator-25820' })
+      expect(JSON.parse(readFileSync(next.settings, 'utf8')).permissions?.deny ?? []).not.toContain('mcp__argent')
+      expect(next.appendSystemPrompt).toContain('Device: android emulator-25820')
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})
