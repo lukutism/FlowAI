@@ -45,7 +45,9 @@ async function screen(list = runs, size = { width: 130, height: 34 }, more: Part
     for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : k === 'ctrl+k' ? s.mockInput.pressKey('k', { ctrl: true }) : k === 'down' ? s.mockInput.pressArrow('down') : k === 'tab' ? s.mockInput.pressKey('\t') : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
     return frame()
   }
-  return { s, f, frame, press, quit: () => quit }
+  // content that loads (a file, a reply) arrives when it arrives: wait for it, up to 3s, rather than a fixed pause
+  const until = async (text: string) => { let f = ''; for (let i = 0; i < 100 && !(f = await frame()).includes(text); i++) await act(async () => { await Bun.sleep(30) }); return f }
+  return { s, f, frame, press, until, quit: () => quit }
 }
 
 describe('Runs screen', () => {
@@ -452,11 +454,28 @@ describe('the command palette', () => {
       for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Open the worktree in VS Code', 'Type in the shell', 'Port to develop']) expect(f).toContain(c)
       expect(f).not.toContain('Group by stage')
       expect(await t.press('esc')).toContain('← esc  #104') // still the detail
-      await t.press('ctrl+k', ...'plan'.split(''), 'enter'); await act(async () => { await Bun.sleep(80) })
-      expect(await t.frame()).toContain('The walk.')
+      await t.press('ctrl+k', ...'plan'.split(''), 'enter')
+      expect(await t.until('The walk.')).toContain('The walk.')
       await t.press('esc', 'ctrl+k', ...'port'.split(''), 'enter')
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
     } finally { t.s.renderer.destroy() }
+  })
+  test("remove from a run's detail: the question shows on the screen, y removes it and the list comes back", async () => {
+    const list = [base('fso-104', { stage: 'setup', status: 'failed', needs: { kind: 'setup', ask: 'git worktree add failed' } })]
+    for (const size of [{ width: 130, height: 34 }, { width: 220, height: 56 }, { width: 100, height: 26 }]) {
+    const t = await screen(list, size)
+    try {
+      await t.press('enter', 'ctrl+k', ...'remove the run'.split(''))
+      const f = await t.press('enter')
+      expect(f).toContain('Remove #104?')
+      expect(f).toContain('esc back') // on its own line, not over the detail's keys
+      const g = await t.press('y')
+      expect(t.f.sent).toContainEqual({ cmd: 'remove', run: 'fso-104', force: false })
+      expect(g).not.toContain('← esc  #104')
+      // the row says so until the run is gone
+      expect(await t.frame()).toContain('removing…')
+    } finally { t.s.renderer.destroy() }
+    }
   })
   test('it is centred, and its list follows the cursor past the first screenful', async () => {
     const many = Array.from({ length: 30 }, (_, i) => base(`fso-${300 + i}`, { createdAt: NOW - i * 60_000 }))
@@ -1110,7 +1129,7 @@ describe('the worktree in the editor', () => {
     try {
       await t.press('enter'); await act(async () => { await Bun.sleep(30) })
       await t.press('e')
-      for (let i = 0; i < 40 && !require('node:fs').existsSync(mark); i++) await Bun.sleep(25)
+      for (let i = 0; i < 120 && !require('node:fs').existsSync(mark); i++) await Bun.sleep(25)
       expect(require('node:fs').readFileSync(mark, 'utf8').trim()).toBe(dir)
     } finally { process.env.FLOW_EDITOR = old; t.s.renderer.destroy() }
   })

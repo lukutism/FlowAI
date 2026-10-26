@@ -85,9 +85,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const [attSel, setAttSel] = useState(0)
   const [hover, setHover] = useState<string | null>(null)
   const { width, height } = useTerminalDimensions()
+  // runs whose remove was sent: shown as removing until they are gone (a remove can take a while), or refused
+  const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
 
   useEffect(() => api.listen(m => {
-    if (m.type === 'notice' && m.notice) setNotice(`${m.notice.run}: ${m.notice.text}`)
+    if (m.type === 'notice' && m.notice) { setNotice(`${m.notice.run}: ${m.notice.text}`); const run = m.notice.run; setRemoving(x => (x.has(run) ? new Set([...x].filter(y => y !== run)) : x)) }
     if (m.type === 'closed') setNotice('the flow service stopped: start flow again')
     setTick(t => t + 1)
   }), [api])
@@ -97,7 +99,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const t = now()
   const all = [...api.runs.values()]
   const shown = filterRuns(all, filter, t)
-  const list = rows(shown, t, sort)
+  const list = rows(shown, t, sort).map(r => (removing.has(r.run) ? { ...r, status: 'removing…', tone: 'muted' as const, next: 'removing', mine: false } : r))
   const items: Grouped[] = grouped ? groupRows(list, shown, collapsed) : list.map(row => ({ kind: 'row', row }))
   const att = attention(all, t)
   const h = header(all, api.windows, t)
@@ -231,7 +233,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       return
     }
     if (mode.kind === 'remove') {
-      if (typed === 'y') { void send({ cmd: 'remove', run: mode.run, force: mode.force }, `removing ${mode.run}`); return setMode({ kind: 'list' }) }
+      if (typed === 'y') {
+        const run = mode.run
+        void send({ cmd: 'remove', run, force: mode.force }, `removing ${run}`).then(ok => { if (ok) setRemoving(x => new Set([...x, run])) })
+        return setMode({ kind: 'list' })
+      }
       if (typed === 'n' || name === 'escape') return setMode(after(mode))
       return
     }
@@ -333,7 +339,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   if (detailRun) return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
-      <RunDetail api={api} run={detailRun} now={t} width={width} height={height} message={message} bind={k => { detailKeys.current = k }}
+      <RunDetail api={api} run={detailRun} now={t} width={width} height={height - (inline ? 2 : 0)} message={message} bind={k => { detailKeys.current = k }}
         onMessage={text => send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} bindPaste={f => { pasteTo.current = f }} />
       {inline ? <Confirm mode={mode} run={detailRun} resources={api.resources} onKey={k => handle('', k)} /> : null}
       {mode.kind === 'message' ? <Bar mode={mode} run={detailRun} message="" compact={!L.tabNames} tab={tab} onKey={handle} /> : null}
