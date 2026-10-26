@@ -84,11 +84,11 @@ describe('a run without a ticket', () => {
 })
 
 describe('the project\'s brief', () => {
-  test('its lines reach the agent in the plan prompt', async () => {
+  test('its lines reach the agent in its brief (the system prompt for the whole run)', async () => {
     const t = setup()
     ;(t.pipe as unknown as { d: { project: { brief: string[] } } }).d.project.brief = ['the example-qa MCP reads QA data: call customer_list first', 'mock data: the mobile-probe skill']
     const prompts: string[] = []
-    ;(t.pipe as unknown as { d: { makeAgent: unknown } }).d.makeAgent = () => ({ async *turn(p: string) { prompts.push(p); throw new Error('stop') } })
+    ;(t.pipe as unknown as { d: { makeAgent: unknown } }).d.makeAgent = (o: { appendSystemPrompt: string }) => { prompts.push(o.appendSystemPrompt); return { async *turn() { throw new Error('stop') } } }
     await t.pipe.start(204598)
     expect(prompts[0]).toContain('About this project (from the human who runs flow):\n- the example-qa MCP reads QA data: call customer_list first\n- mock data: the mobile-probe skill')
   })

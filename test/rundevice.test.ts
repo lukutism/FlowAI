@@ -53,7 +53,7 @@ describe('a run with a device', () => {
       const ready = t.store.events(run).find(e => e.type === 'device.ready')
       expect(ready).toMatchObject({ platform: 'android', id: 'emulator-25720', metroPort: 28720 })
       expect(t.store.events(run).map(e => e.type).indexOf('device.ready')).toBeLessThan(t.store.events(run).map(e => e.type).indexOf('setup.done'))
-      expect(t.agent.prompts[0]).toContain('Device: android emulator-25720, Metro on port 28720')
+      expect((t.made[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('Device: android emulator-25720, Metro on port 28720')
       // adb in the agent's shell talks to this run's emulator, not whichever one is first
       expect(t.made[0]!.env).toMatchObject({ ANDROID_SERIAL: 'emulator-25720', RCT_METRO_PORT: '28720' })
       expect(t.slots.snapshot().holders.devices).toEqual([run])

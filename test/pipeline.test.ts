@@ -270,7 +270,8 @@ describe('port: the same fix onto another line', () => {
     const first = t.agent.prompts[prompts]!
     expect(first).toContain('ticket #186278 "Asset list crashes"')
     expect(first).toContain(join(t.root, 'data', 'runs', 'example-186278-develop', 'plan.md'))
-    expect(first).toContain('fix/186278-develop')
+    // where it works is in its brief
+    expect((t.agents.at(-1) as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('fix/186278-develop')
     expect(first).toEndWith("Resolve the conflict in src/a.ts, keeping develop's value.")
   })
   test('only a shipped run can be ported, and only once per line', async () => {

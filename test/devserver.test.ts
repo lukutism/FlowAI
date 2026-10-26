@@ -38,8 +38,9 @@ function setup(o: { cmd?: string; portStart?: number } = {}) {
   ])
   const store = new EventStore(':memory:')
   const slots = new Resources({ agents: 2, builds: 2, devices: 2 })
-  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, resources: slots, makeAgent: () => agent, devServerReadyTimeoutMs: 4000 })
-  return { pipe, store, agent, slots, run, data, portStart }
+  const made: unknown[] = []
+  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, resources: slots, makeAgent: o => { made.push(o); return agent }, devServerReadyTimeoutMs: 4000 })
+  return { made, pipe, store, agent, slots, run, data, portStart }
 }
 
 describe('a run with a dev server', () => {
@@ -49,7 +50,7 @@ describe('a run with a dev server', () => {
     try {
       expect(t.store.events(run).find(e => e.type === 'devserver.ready')).toMatchObject({ repo: 'portal', port: 5310, url: 'https://localhost:5310' })
       expect(t.store.state(run)!.devServer).toEqual({ repo: 'portal', port: 5310, url: 'https://localhost:5310' })
-      expect(t.agent.prompts[0]).toContain('Dev server: portal at https://localhost:5310')
+      expect((t.made[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('Dev server: portal at https://localhost:5310')
       expect(await (await fetch('http://127.0.0.1:5310/status')).text()).toBe('packager-status:running')
       expect(readFileSync(join(t.run, 'devserver.log'), 'utf8')).toContain('starting on 5310')
       await t.pipe.ship(run)

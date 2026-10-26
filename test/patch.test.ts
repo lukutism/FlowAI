@@ -41,8 +41,9 @@ function setup(o: { apply?: string } = {}) {
     turn(() => { writeFileSync(join(wt, 'a.ts'), 'y\n'); writeFileSync(join(wt, 'helper.ts'), 'h\n') }),
   ])
   const store = new EventStore(':memory:')
-  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, makeAgent: () => agent })
-  return { pipe, store, agent, marks, run, wt, origin, az }
+  const made: unknown[] = []
+  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, makeAgent: o => { made.push(o); return agent } })
+  return { made, pipe, store, agent, marks, run, wt, origin, az }
 }
 
 describe('a customer patch run', () => {
@@ -54,7 +55,7 @@ describe('a customer patch run', () => {
     expect(git(t.wt, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual(['logo.svg', 'theme.ts'])
     // the patch's red theme is in the base of the comparison, so the step is not a new finding
     expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' }, patch: { customer: 'acme', app: 'product' } })
-    expect(t.agent.prompts[0]).toContain('Customer patch acme/product is applied as a local commit')
+    expect((t.made[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('Customer patch acme/product is applied as a local commit')
   })
   test('ship: a dry run of the write-back with the whole change (patch, fix, new files), nothing committed or pushed; the worktree as before', async () => {
     const t = setup()
