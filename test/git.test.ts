@@ -40,6 +40,14 @@ describe('createWorktree: the run\'s own checkout on its own branch', () => {
     git(p.main, 'branch', 'fix/1')
     await expect(createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/1', base: 'origin/develop' })).rejects.toThrow(/branch fix\/1 exists/)
   })
+  test('a worktree that could not be made takes away the branch it made (a new run of the ticket is not refused for it)', async () => {
+    const p = project()
+    process.env.GIT_INDEX_FILE = '.git/index' // as in a git hook: the checkout fails after git made the branch
+    try { await expect(createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/3', base: 'origin/develop' })).rejects.toThrow(/worktree add failed/) }
+    finally { delete process.env.GIT_INDEX_FILE }
+    expect(git(p.main, 'branch', '--list', 'fix/3')).toBe('')
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/3', base: 'origin/develop' })
+  })
   test('a failing install is an error with its output', async () => {
     const p = project()
     await expect(createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/2', base: 'origin/develop', install: 'echo lockfile mismatch >&2; exit 1' })).rejects.toThrow(/install failed.*lockfile mismatch/s)

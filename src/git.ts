@@ -28,7 +28,12 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   logLine(o.log, `worktree ${o.worktree} on ${o.branch}, from ${o.base}`)
   mkdirSync(dirname(o.worktree), { recursive: true })
   const add = await run(['git', 'worktree', 'add', '--quiet', '--no-track', '-b', o.branch, o.worktree, o.base], o.repo)
-  if (add.code !== 0) throw new Error(`git worktree add failed: ${tail(add.err)}`)
+  if (add.code !== 0) {
+    // git makes the branch before the checkout: one it made for a worktree that isn't there goes too (it didn't exist above)
+    await run(['git', 'worktree', 'prune'], o.repo)
+    await run(['git', 'branch', '-D', o.branch], o.repo)
+    throw new Error(`git worktree add failed: ${tail(add.err)}`)
+  }
   // what tools write into a worktree (argent's .argent/) stays out of the change: git's local exclude list
   const indexes = (o.indexes ?? []).filter(x => existsSync(join(o.repo, x.dir)))
   const ignore = [...(o.ignore ?? []), ...indexes.map(x => `/${x.dir.replace(/\/$/, '')}/`)]
