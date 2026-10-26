@@ -477,6 +477,10 @@ export class Pipeline {
     const summary = prSummary(pr, m.title)
     // a task has no ticket to link to or name: its PR is the description, its title and commits the summary alone
     const body = n.prBody === 'ticket-link' && m.url ? m.url : pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`.trim()
+    // checked before anything is pushed: the PR's description is the agent's, whole
+    if (!pr.trim() && n.prBody !== 'ticket-link') throw new Error(`${run}: the agent wrote no PR description (${this.prFile(run)}): message it to write one, then ship again`)
+    const max = this.d.project.forge.kind === 'azure' ? 4000 : 65_536
+    if (body.length > max) throw new Error(`${run}: the PR description is ${body.length} characters and ${this.d.project.forge.kind === 'azure' ? 'Azure' : 'GitHub'} takes ${max}: message the agent to cut ${body.length - max} from ${this.prFile(run)}, then ship again`)
     const title = n.prTitle === 'key' && m.key ? m.key : `${m.key} ${summary}`.trim()
     const message = (files: string[], repo: string) => (n.commit === 'key-summary' ? `${m.key} ${summary}`.trim().slice(0, 100) : commitMessage({ id: m.task ? '' : m.id, title: m.title, kind: m.kind }, files, repo))
     const created: { number: number; url: string }[] = [], updated: { number: number; repo?: string }[] = []
@@ -611,6 +615,19 @@ export class Pipeline {
     // confirmed by you that no change was needed: what the agent learned on the way is kept
     if (!reason && s.needs?.kind === 'resolution') this.keepLearnings(run)
     this.d.store.append(run, reason ? 'engine' : 'human', { type: 'run.done', ...(reason ? { reason } : {}) })
+  }
+
+  /** the line a run's base names (patch/3.20, develop), and its first repo's default line */
+  defaultLine(run: string) { return this.firstRepo(run).defaultBase.replace(/^origin\//, '') }
+  private firstRepo(run: string) {
+    const f = join(this.runDir(run), 'run.json')
+    return this.repoConfig(existsSync(f) ? this.meta(run).repos[0]!.key : this.d.project.repos[0]!.key)
+  }
+  /** a run on a release line no port of which exists yet: that line; otherwise undefined */
+  unported(run: string): string | undefined {
+    const line = this.must(run).base.replace(/^origin\//, '')
+    if (line === this.defaultLine(run)) return undefined
+    return this.d.store.runs().some(x => x.id.startsWith(`${run}-`)) ? undefined : line
   }
 
   /** the run's learnings.md into its repos' memory and flow's backlog (after you shipped, or confirmed no change) */

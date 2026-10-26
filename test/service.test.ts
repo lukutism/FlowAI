@@ -180,8 +180,8 @@ describe('Service: commands it does not know', () => {
 })
 
 describe('Service: draft PRs merged or closed on the host', () => {
-  const shipped = (t: ReturnType<typeof setup>, id: string) => {
-    t.store.append(id, 'human', { type: 'run.created', ticket: '#1', title: 'x', project: 'ex', base: 'origin/develop' })
+  const shipped = (t: ReturnType<typeof setup>, id: string, base = 'origin/develop') => {
+    t.store.append(id, 'human', { type: 'run.created', ticket: '#1', title: 'x', project: 'ex', base })
     const steps: EventBody[] = [{ type: 'setup.done' }, { type: 'plan.submitted', summary: 'p', questions: [] }, { type: 'build.done' }, { type: 'verify.result', ok: true, newFindings: [] }, { type: 'review.skipped', reason: 'off' }]
     for (const e of steps) t.store.append(id, 'engine', e)
     t.store.append(id, 'human', { type: 'pr.opened', url: 'https://dev.azure.com/x/x/_git/m/pullrequest/7', number: 7 })
@@ -194,6 +194,19 @@ describe('Service: draft PRs merged or closed on the host', () => {
     expect(t.store.state('ex-1')).toBeUndefined()
     expect(t.store.events('ex-1').map(e => e.type).slice(-2)).toEqual(['run.done', 'run.removed'])
     expect(calls.filter(c => c.includes('show'))).toHaveLength(1)
+  })
+  test('merged on a release line with no port yet: done, not removed, saying so (the fix still has to reach the default line)', async () => {
+    const merged = (args: string[]) => (args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"completed"}', err: '' } : undefined)
+    const t = setup(() => [], merged)
+    shipped(t, 'ex-1', 'origin/patch/1.0')
+    t.svc.tick(); await t.svc.idle()
+    expect(t.store.state('ex-1')).toMatchObject({ status: 'done' })
+    expect(t.notices.join('\n')).toMatch(/ex-1: .*patch\/1\.0.*no port.*flow port ex-1/)
+    // with its port started, a merged release run goes as usual
+    const u = setup(() => [], merged)
+    shipped(u, 'ex-1', 'origin/patch/1.0'); shipped(u, 'ex-1-develop')
+    u.svc.tick(); await u.svc.idle()
+    expect(u.store.state('ex-1')).toBeUndefined()
   })
   test('still open: nothing changes, and the host is not asked again at the next tick', async () => {
     const calls: string[][] = []

@@ -25,3 +25,22 @@ describe('input from the web view', () => {
     expect(inputArgs({ ...android, platform: 'ios', id: 'UDID' }, { type: 'tap', x: 1, y: 1 })).toBeNull()
   })
 })
+
+describe('the video stream', () => {
+  test("stopping it ends flow's own screenrecord only, not other tools' recordings on the device", async () => {
+    const { mkdtempSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const { video } = await import('../src/screen.ts')
+    const log = join(mkdtempSync(join(tmpdir(), 'flow-video-')), 'adb.log')
+    process.env.FLOW_ADB = join(import.meta.dir, 'fake-adb.ts'); process.env.FAKE_ADB_LOG = log
+    const stop = video({ run: 'r', platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 8300, pids: [] }, { width: 1080, height: 2400 }, () => {})
+    await Bun.sleep(300)
+    stop()
+    await Bun.sleep(300)
+    const calls = readFileSync(log, 'utf8').trim().split('\n').map(l => JSON.parse(l) as string[])
+    const kill = calls.find(c => c.includes('pkill'))!
+    expect(kill).toContain('-f')
+    expect(kill.join(' ')).toContain('screenrecord --output-format=h264 --size 540x1200')
+  })
+})

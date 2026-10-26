@@ -86,9 +86,10 @@ export function video(d: DeviceState, size: { width: number; height: number }, o
   let stopped = false, proc: Bun.Subprocess | undefined
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2)
   const w = even(size.width / 2), h = even(size.height / 2)
+  const rec = ['screenrecord', '--output-format=h264', '--size', `${w}x${h}`, '--bit-rate', '4000000', '--time-limit', '180', '-']
   void (async () => {
     while (!stopped) {
-      proc = Bun.spawn([adb(), '-s', d.id, 'exec-out', 'screenrecord', '--output-format=h264', '--size', `${w}x${h}`, '--bit-rate', '4000000', '--time-limit', '180', '-'], { stdout: 'pipe', stderr: 'ignore', env: process.env })
+      proc = Bun.spawn([adb(), '-s', d.id, 'exec-out', ...rec], { stdout: 'pipe', stderr: 'ignore', env: process.env })
       for await (const c of proc.stdout as ReadableStream<Uint8Array>) { if (stopped) break; onData(c) }
       await proc.exited
       if (!stopped) await Bun.sleep(200)
@@ -99,10 +100,11 @@ export function video(d: DeviceState, size: { width: number; height: number }, o
     if (stopped) return
     stopped = true
     try { proc?.kill() } catch {}
-    // the encoder on the device outlives adb when the screen is still; the last viewer of a device stops it
+    // the encoder on the device outlives adb when the screen is still; the last viewer of a device stops it, by its
+    // own command line, so a recording another tool (argent) makes on the device goes on
     const left = (viewers.get(d.id) ?? 1) - 1
     viewers.set(d.id, left)
-    if (!left) Bun.spawn([adb(), '-s', d.id, 'shell', 'pkill', '-INT', 'screenrecord'], { stdout: 'ignore', stderr: 'ignore', env: process.env })
+    if (!left) Bun.spawn([adb(), '-s', d.id, 'shell', 'pkill', '-INT', '-f', `'${rec.join(' ')}'`], { stdout: 'ignore', stderr: 'ignore', env: process.env })
   }
 }
 const viewers = new Map<string, number>()

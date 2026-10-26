@@ -94,7 +94,7 @@ describe('a ticket to a draft PR', () => {
   test('open questions: the run waits; approve with an answer, and the build turn is told it', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also guard the order list? — default: no'))),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ])
     const run = await t.pipe.start(186278)
     expect(t.store.state(run)).toMatchObject({ stage: 'plan', status: 'needs-you', needs: { kind: 'plan', deadline: expect.any(Number) } })
@@ -105,7 +105,7 @@ describe('a ticket to a draft PR', () => {
   test('questions left unanswered at approve take the plan\'s defaults, and the agent is told them', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Guard the order list? — default: no\n- Q2: Log the skipped asset? — default: yes'))),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ])
     const run = await t.pipe.start(186278)
     await t.pipe.approve(run, { Q1: 'yes' })
@@ -115,7 +115,7 @@ describe('a ticket to a draft PR', () => {
   test('at the deadline: the defaults are taken by the engine (recorded as such) and the build goes on', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Guard the order list? — default: no'))),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ])
     const run = await t.pipe.start(186278)
     await t.pipe.decideByDeadline(run)
@@ -137,7 +137,7 @@ describe('a ticket to a draft PR', () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
       turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2 // ERR mine\n')),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ])
     const run = await t.pipe.start(186278)
     expect(t.agent.prompts[2]).toContain('src/b.ts|TS2322|export const b = 2 // ERR mine')
@@ -155,7 +155,7 @@ describe('a ticket to a draft PR', () => {
       turn(),
       turn(),
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ])
     const run = await t.pipe.start(186278)
     await t.pipe.message(run, 'Write the plan to plan.md now, please.')
@@ -185,7 +185,7 @@ describe('the independent review before ship', () => {
   test('nothing found: ready to ship; the reviewer saw the new file in full; its session did not replace the run\'s', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ], { review: [review([])] })
     const run = await t.pipe.start(186278)
     expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' }, session: 's-1' })
@@ -197,7 +197,7 @@ describe('the independent review before ship', () => {
   test('a finding goes to the agent; after its fix, verify and review run again, then ready to ship', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
       turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'const b = 2\nconsole.log(b)\n')),
     ], { review: [review([finding]), review([])] })
     const run = await t.pipe.start(186278)
@@ -208,7 +208,7 @@ describe('the independent review before ship', () => {
   test('an unreadable review is asked for once more, then recorded as skipped with the reason; it never counts as clean', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ], { review: [reviewText('LGTM'), reviewText('still no json')] })
     const run = await t.pipe.start(186278)
     expect(t.reviewer.prompts[1]).toMatch(/one .*json/i)
@@ -218,7 +218,7 @@ describe('the independent review before ship', () => {
   test('review turned off for the project: skipped, saying so', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ], { review: [], reviewOff: true })
     const run = await t.pipe.start(186278)
     expect(t.store.events(run).find(e => e.type === 'review.skipped')).toMatchObject({ reason: 'review is off for this project' })
@@ -299,6 +299,14 @@ describe('port: the same fix onto another line', () => {
     expect(t.agent.prompts[2]!).toContain('The plan is approved.')
     expect(t.agent.prompts[2]!).toEndWith('carry on')
   })
+  test('ship refuses, before pushing, a run with no PR description or one longer than the forge takes', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const run = await t.pipe.start(186278)
+    await expect(t.pipe.ship(run)).rejects.toThrow(/no PR description.*message it to write one/)
+    writeFileSync(join(t.runDir, 'pr.md'), `# Long\n\n${'x'.repeat(4100)}\n`)
+    await expect(t.pipe.ship(run)).rejects.toThrow(/4100 characters and Azure takes 4000: message the agent to cut 100/)
+    expect(git(t.origin, 'branch', '--list', 'fix/186278')).toBe('')
+  })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
     const run = await t.pipe.start(186278)
@@ -325,7 +333,7 @@ describe('shared slots', () => {
     expect(t.resources!.snapshot().holders.builds).toEqual([])
   })
   test('verify holds a build slot while it runs and gives it back', async () => {
-    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))], { resources: slots })
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })], { resources: slots })
     const seen: string[][] = []
     t.resources!.onChange(s => seen.push(s.holders.builds))
     await t.pipe.start(186278)
@@ -357,7 +365,7 @@ describe('pipeline: values from forms and tickets are checked before they reach 
 })
 
 describe('pipeline: a message at any gate carries the run on, and flow puts the gate back', () => {
-  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })]
   test('a question at the ship gate, nothing changed: ready to ship again, without verifying again', async () => {
     const t = setup(d => [...ready(d), turn(undefined, 'I added b.')])
     const run = await t.pipe.start(186278)
@@ -397,7 +405,7 @@ describe('pipeline: a message at any gate carries the run on, and flow puts the 
     expect(t.store.state(run)).toMatchObject({ stage: 'plan', needs: { kind: 'plan' }, plan: { questions: [{ id: 'Q1', default: 'yes' }, { id: 'Q2' }] } })
   })
   test('changed after verify without the agent (an edit by hand): ship verifies again instead of shipping unverified code', async () => {
-    const t = setup(d => [...ready(d), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const t = setup(d => [...ready(d), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
     const run = await t.pipe.start(186278)
     writeFileSync(join(t.wt, 'src/b.ts'), 'export const b = 2 // ERR by hand\n')
     expect(await t.pipe.ship(run)).toEqual([])
@@ -408,7 +416,7 @@ describe('pipeline: a message at any gate carries the run on, and flow puts the 
 })
 
 describe('pipeline: ship can be done again', () => {
-  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })]
   test('the push failed after the commit: shipping again pushes and opens the PR (it said "nothing to ship")', async () => {
     const t = setup(ready)
     const run = await t.pipe.start(186278)
@@ -434,7 +442,7 @@ describe('pipeline: ship can be done again', () => {
 })
 
 describe('pipeline: removing a run', () => {
-  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })]
   test('shipped: its worktree and local branch go, the run folder is archived, the run is gone', async () => {
     const t = setup(ready)
     const run = await t.pipe.start(186278)
@@ -475,7 +483,7 @@ describe('pipeline: removing a run', () => {
 })
 
 describe('pipeline: what the second review found', () => {
-  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })]
   test('remove keeps a branch the run never made (setup refused it because it existed, with your commits on it)', async () => {
     const t = setup(ready)
     git(t.main, 'checkout', '-qb', 'fix/186278'); writeFileSync(join(t.main, 'mine.txt'), 'mine\n'); git(t.main, 'add', '.'); git(t.main, 'commit', '-qm', 'my own work'); git(t.main, 'checkout', '-q', 'develop')
@@ -505,7 +513,7 @@ describe('pipeline: what the second review found', () => {
 
 describe('pipeline: remove never takes what another run uses', () => {
   test("a worktree another run's folder names stays (a failed run pointing at its source's worktree)", async () => {
-    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
     const run = await t.pipe.start(186278)
     await t.pipe.ship(run)
     // a second, failed run whose run.json names the same worktree
@@ -530,14 +538,14 @@ describe('pipeline: the agent ends the run, or asks', () => {
   })
   test('blocked.md during the build: blocked with its words; a message carries it on', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.run, 'blocked.md'), 'I need the qa login for acme-qa.\n')),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
     const run = await t.pipe.start(186278)
     expect(t.store.state(run)).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/I need the qa login for acme-qa/) } })
     await t.pipe.message(run, 'logins are in logins.md now')
     expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
   })
   test('a build turn that ends with a question: the run asks you instead of going to verify', async () => {
-    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'), 'Changed the walk.\n\nShould I also guard the order list?')])
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }, 'Changed the walk.\n\nShould I also guard the order list?')])
     const run = await t.pipe.start(186278)
     expect(t.store.state(run)).toMatchObject({ stage: 'build', status: 'needs-you', needs: { kind: 'question', ask: 'Should I also guard the order list?' } })
   })
@@ -588,7 +596,7 @@ describe('pipeline: the agent\'s flow tools', () => {
 describe('pipeline: a message while the agent works', () => {
   test('is queued and goes with the agent\'s next turn, first, recorded as yours', async () => {
     let t: ReturnType<typeof setup>
-    t = setup(d => [turn(() => { writeFileSync(join(d.run, 'plan.md'), plan()); t.pipe.queueMessage('example-186278', 'the tablet layout too') }), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    t = setup(d => [turn(() => { writeFileSync(join(d.run, 'plan.md'), plan()); t.pipe.queueMessage('example-186278', 'the tablet layout too') }), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
     const run = await t.pipe.start(186278)
     expect(t.agent.prompts[1]).toMatch(/^The human wrote while you worked:\n- the tablet layout too\n\n/)
     expect(t.store.events(run).some(e => e.type === 'human.message' && e.text === 'the tablet layout too')).toBe(true)
@@ -602,7 +610,7 @@ describe('pipeline: memory and learnings', () => {
     const mem = mkdtempSync(join(require('node:os').homedir(), '.flow-test-mem-'))
     afterAll(() => require('node:fs').rmSync(mem, { recursive: true, force: true }))
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => {
-      writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')
+      writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd)
       writeFileSync(join(d.run, 'learnings.md'), '[repo:mobile] jest: run it from the app folder\n[flow] verify: say which package failed\n')
     })])
     mkdirSync(join(t.main, '.claude'), { recursive: true }); writeFileSync(join(t.main, '.claude', 'settings.local.json'), JSON.stringify({ autoMemoryDirectory: mem }))
@@ -635,7 +643,7 @@ describe('pipeline: test logins never reach memory', () => {
 
 describe('pipeline: the reviewer', () => {
   test("gets the run's model", async () => {
-    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))], { review: [review([])] })
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })], { review: [review([])] })
     await t.pipe.start(186278, { model: 'sonnet' })
     expect(t.reviewers[0]).toMatchObject({ model: 'sonnet' })
   })

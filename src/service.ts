@@ -252,12 +252,16 @@ export class Service {
     for (const s of this.d.store.runs()) {
       if (s.needs?.kind === 'pr' && !this.busy.has(s.id) && now - (this.prChecked.get(s.id) ?? 0) >= PR_CHECK_MS) {
         this.prChecked.set(s.id, now)
-        // merged: done and removed (refused if something was left unshipped: then only done); closed: done, kept
+        // merged: done and removed (refused if something was left unshipped: then only done; kept too while a
+        // release-line fix has no port to the default line, whose branch the port is made from); closed: done, kept
         this.act(s.id, async () => {
           const p = this.pipeline(s.project), state = await p.prsState(s.id)
           if (state === 'open') return
           p.done(s.id, state === 'merged' ? 'its draft PR was merged' : 'its draft PR was closed')
-          if (state === 'merged') await p.remove(s.id)
+          if (state !== 'merged') return
+          const line = p.unported(s.id)
+          if (line) throw new Error(`merged on ${line} and kept: it has no port to ${p.defaultLine(s.id)} yet (flow port ${s.id}); remove it after`)
+          await p.remove(s.id)
         })
         continue
       }
