@@ -449,7 +449,7 @@ describe('the command palette', () => {
     try {
       const f = await t.press('enter', 'ctrl+k')
       expect(f).toContain('#104 commands')
-      for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Type in the shell', 'Port to develop', 'Mark done', 'Remove the run']) expect(f).toContain(c)
+      for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Open the worktree in VS Code', 'Type in the shell', 'Port to develop']) expect(f).toContain(c)
       expect(f).not.toContain('Group by stage')
       expect(await t.press('esc')).toContain('← esc  #104') // still the detail
       await t.press('ctrl+k', ...'plan'.split(''), 'enter'); await act(async () => { await Bun.sleep(80) })
