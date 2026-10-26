@@ -15,7 +15,7 @@ const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT
 const git = (cwd: string, ...a: string[]) => new TextDecoder().decode(Bun.spawnSync(['git', ...a], { cwd, env }).stdout).trim()
 const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' })
-const turn = (effect?: () => void): FakeTurn => ({ stream: `${init}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 1, session_id: 's-1', usage: { input_tokens: 10, output_tokens: 10 } })}`, effect })
+const turn = (effect?: () => void | Promise<void>): FakeTurn => ({ stream: `${init}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 1, session_id: 's-1', usage: { input_tokens: 10, output_tokens: 10 } })}`, effect })
 
 function repo(root: string, name: string, branches: string[] = []) {
   const origin = join(root, `${name}.git`), main = join(root, name)
@@ -162,5 +162,23 @@ describe('sync: the run brought up to its base', () => {
     await expect(t.pipe.sync(run)).rejects.toThrow(/mobile: the change conflicts with origin\/develop in src\/a\.ts/)
     expect(readFileSync(join(wt, 'src/a.ts'), 'utf8')).toBe('export const mobile = 5\n')
     expect(git(wt, 'stash', 'list')).toBe('')
+  })
+})
+
+describe('a repo the agent adds itself', () => {
+  test('add_repo makes its worktree; when the turn ends, the session restarts with it and carries on, nobody in between', async () => {
+    let pipe: Pipeline | undefined
+    const t = setup(d => [
+      turn(async () => { const r = await pipe!.callTool('ex-7', 'add_repo', { repo: 'portal' }); expect(r.text).toMatch(/portal is at .*End your turn now/) }),
+      turn(() => writeFileSync(join(d.run, 'plan.md'), fullPlan('- Q1: x? — default: y'))),
+    ])
+    pipe = t.pipe
+    const run = await t.pipe.start(7)
+    expect(git(join(t.root, 'portal'), 'branch', '--show-current')).toBe('fix/7')
+    expect(t.agent.prompts[1]).toMatch(/^portal is added to this run and writable now/)
+    expect((t.made.at(-1) as { appendSystemPrompt?: string }).appendSystemPrompt).toContain(`portal: ${join(t.root, 'portal')}`)
+    expect(t.made).toHaveLength(2) // a new session process, resuming the same session
+    expect(t.store.events(run).find(e => e.type === 'repo.added')).toMatchObject({ actor: 'agent', repo: 'portal' })
+    expect(t.store.state(run)).toMatchObject({ stage: 'plan', needs: { kind: 'plan' } })
   })
 })

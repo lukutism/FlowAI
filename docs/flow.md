@@ -101,6 +101,13 @@ from the template with the fixed values and the login step's email, password or 
 is git-excluded (never shipped), and a link to the main checkout's file is replaced by the run's own, never written
 through. The setup log names the variables set, not their values.
 
+**Autonomous by default.** A human is rarely there, and the brief says so: the agent decides what it can, records
+each choice in the plan's Decisions log and lists those a reviewer should confirm under "Decisions to confirm" in
+the PR description; `ask` (which stops the run until someone comes back) is for a decision where shipping either
+answer unconfirmed could harm users or their data. When an environment fails it, it tries another or proves the
+change another way, and blocks only when nothing can be proven. A repo the run lacks it adds itself (`add_repo`):
+flow restarts its session with the repo writable when the turn ends and sends it on.
+
 **How a run ends.** A PR (flow ships what the agent left); `resolution.md` when no change is needed (the run waits
 for you: `flow done` confirms it, a message carries it on); `blocked.md` when the agent can't go on (blocked with its
 words). A turn that ends with a question to you stops the run as "Agent question" instead of going on to verify.

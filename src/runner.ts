@@ -28,6 +28,8 @@ export interface RunnerOptions {
   queued?: (run: string) => string[]
   /** told as each of the run's own turns starts */
   turnStarts?: (run: string) => void
+  /** after a turn of the run's own agent: a prompt to carry on with at once (its session restarted meanwhile) */
+  afterTurn?: (run: string) => Promise<string | undefined>
 }
 
 /** Runs agent turns for runs: waits for room in the plan windows, records what each turn reports. */
@@ -52,7 +54,9 @@ export class Runner {
       for (const text of q) this.o.store.append(run, 'human', { type: 'human.message', text })
       prompt = `The human wrote while you worked (they read it later, not live: you still work unattended; fold it in):\n${q.map(x => `- ${x}`).join('\n')}\n\n${prompt}`
     }
-    return this.turnWith(run, this.o.agentFor(run), prompt, { from })
+    let r = await this.turnWith(run, this.o.agentFor(run), prompt, { from })
+    for (let next = r.ok ? await this.o.afterTurn?.(run) : undefined; next; next = r.ok ? await this.o.afterTurn?.(run) : undefined) r = await this.turnWith(run, this.o.agentFor(run), next)
+    return r
   }
 
   /** a turn with another agent for the run (the reviewer): its tokens count for the run, its session is not the run's */

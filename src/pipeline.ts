@@ -97,6 +97,8 @@ export class Pipeline {
   private deviceSlots = new Map<string, () => void>()
   /** how the agent ended its turn through its tools (ask, resolve, block), taken when the turn is over */
   private ends = new Map<string, { kind: 'ask' | 'resolve' | 'block'; text: string }>()
+  /** repos the agent added during the turn going on: its session restarts with them when the turn ends */
+  private addedDuringTurn = new Map<string, string[]>()
   /** the web runs' browsers, each through its proxy */
   private browsers: Browsers
   private tracker: Tracker
@@ -111,6 +113,14 @@ export class Pipeline {
       store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
       // an ending (ask, resolve, block) belongs to the turn that called it: a failed turn's never ends a later one
       turnStarts: run => { this.ends.delete(run) },
+      // a repo the agent added during its turn: its session restarts with it (brief, settings) and carries on
+      afterTurn: async run => {
+        const added = this.addedDuringTurn.get(run)
+        if (!added) return undefined
+        this.addedDuringTurn.delete(run)
+        await this.closeAgent(run)
+        return `${added.join(', ')} ${added.length === 1 ? 'is' : 'are'} added to this run and writable now (your brief lists where). Carry on with what you were doing.`
+      },
       ...(d.resources ? { agentSlot: (run: string) => d.resources!.acquire(run, 'agents') } : {}),
       windows: existsSync(usage) ? JSON.parse(readFileSync(usage, 'utf8')) : undefined,
       onWindows: w => { mkdirSync(d.dataDir, { recursive: true }); writeFileSync(usage, JSON.stringify(w) + '\n'); d.onWindows?.(w) },
@@ -357,7 +367,7 @@ export class Pipeline {
    * repo's default base unless given), the app env and git-excludes as at setup. The agent's next turn starts a new
    * process (resuming its session in the same folder) whose brief and settings include it.
    */
-  async addRepo(run: string, key: string, base?: string): Promise<string> {
+  async addRepo(run: string, key: string, base?: string, o: { byAgent?: boolean } = {}): Promise<string> {
     const s = this.must(run), m = this.meta(run)
     if (s.status === 'done' || s.status === 'failed') throw new Error(`${run} is ${s.status}`)
     if (m.repos.some(r => r.key === key)) throw new Error(`${run} has ${key} already`)
@@ -374,9 +384,12 @@ export class Pipeline {
     }
     // the agent's folder stays the one its session lives in; the repos list grows
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify({ ...m, repos: [...m.repos, { key, worktree, base: from }] }, null, 2) + '\n')
-    this.d.store.append(run, 'human', { type: 'repo.added', repo: key, base: from })
-    await this.closeAgent(run)
-    return `${key} added at ${worktree} on ${m.branch} (from ${from}); the agent's next turn has it`
+    this.d.store.append(run, o.byAgent ? 'agent' : 'human', { type: 'repo.added', repo: key, base: from })
+    // the agent's process holds its settings: it restarts now, or (added by the agent itself) when its turn ends
+    if (o.byAgent) this.addedDuringTurn.set(run, [...(this.addedDuringTurn.get(run) ?? []), key])
+    else await this.closeAgent(run)
+    return o.byAgent ? `${key} is at ${worktree}, on ${m.branch} (from ${from}). End your turn now: flow restarts your session with it writable and sends you on.`
+      : `${key} added at ${worktree} on ${m.branch} (from ${from}); the agent's next turn has it`
   }
 
   /**
@@ -726,7 +739,7 @@ export class Pipeline {
     // a tool such as verify can take minutes
     const env = { MCP_TOOL_TIMEOUT: '1800000', ...(dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : { ANDROID_SERIAL: 'no-device-for-this-run' }) }
     const note = existsSync(join(dir, 'note.md')) ? readFileSync(join(dir, 'note.md'), 'utf8') : undefined
-    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run), otherRepos: this.d.project.repos.map(r => r.key).filter(k => !this.meta(run).repos.some(r => r.key === k)),
+    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run), otherRepos: this.otherRepos(run),
       env: this.d.project.vars.filter(v => this.meta(run).vars?.[v.name]).map(v => `${v.label ?? v.name}: ${this.meta(run).vars![v.name]}`),
       ...(dev ? {} : { noDevice: { canAdd: !!(this.d.project.devices?.android || this.d.project.devices?.ios) } }) })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, mcpConfig, env, ...(m.model ? { model: m.model } : {}) })
@@ -820,7 +833,7 @@ export class Pipeline {
     await this.releaseDevice(run)
     await this.closeAgent(run)
     this.agents.delete(run)
-    this.queue.delete(run); this.ends.delete(run)
+    this.queue.delete(run); this.ends.delete(run); this.addedDuringTurn.delete(run)
     const removed: string[] = []
     // worktrees another run's folder names are that run's (a failed port pointed at its source's): left alone
     const runs = join(this.d.dataDir, 'runs')
@@ -857,7 +870,8 @@ export class Pipeline {
   private queue = new Map<string, string[]>()
 
   /** the tools of the run's agent (its flow MCP server) */
-  tools(run: string): ToolDef[] { return toolList(this.d.project.tools, !!this.must(run).device, !!this.browserSpec(run)) }
+  tools(run: string): ToolDef[] { return toolList(this.d.project.tools, !!this.must(run).device, !!this.browserSpec(run), this.otherRepos(run)) }
+  private otherRepos(run: string) { const m = this.meta(run); return this.d.project.repos.map(r => r.key).filter(k => !m.repos.some(r => r.key === k)) }
 
   /** the run's browser settings: its dev server's, when the run has a dev server running; its start page filled */
   private browserSpec(run: string) {
@@ -894,6 +908,7 @@ export class Pipeline {
         return fenced('ticket', `# ${t.key} ${t.title}\n${t.url}\n\n${red.text}`).text
       },
       end: (kind, text) => { this.ends.set(run, { kind, text }) },
+      addRepo: (key: string) => this.addRepo(run, key, undefined, { byAgent: true }),
       ...(this.browserSpec(run) ? { browser: (action: string, a: { target?: string; text?: string }) => this.browsers.act({ run, runDir: dir, devPort: this.must(run).devServer!.port, spec: this.browserSpec(run)! }, action, a) } : {}),
     }, this.d.project.tools, name, args)
   }

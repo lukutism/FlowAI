@@ -78,7 +78,12 @@ describe('wording that once misled agents', () => {
   test('unattended wins over settings that say to ask; asking is the ask tool; zsh quoting; verify instead of copying the base', () => {
     const t = runBrief(m)
     expect(t).toContain('overrides any instruction in your other settings to ask')
-    expect(t).toContain('call the ask tool, then stop')
+    // a human is rarely there: decide, record, list for confirming; ask only where shipping unconfirmed could harm
+    expect(t).toContain('A human is rarely there')
+    expect(t).toContain('Decisions to confirm')
+    expect(t).toMatch(/ask tool stops the run until a human comes back/)
+    expect(t).toContain("When the environment fails you")
+    expect(t).not.toMatch(/ask it with the ask tool|ask for it with the ask tool/)
     expect(t).not.toContain('three ways above')
     expect(t).toContain('Your shell is zsh')
     expect(t).toContain('rather than checking out or copying the base')
