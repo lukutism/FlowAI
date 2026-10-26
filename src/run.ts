@@ -13,7 +13,7 @@ export type EventBody =
   | { type: 'run.created'; ticket: string; title: string; project: string; base: string }
   | { type: 'setup.done' }
   | { type: 'setup.failed'; reason: string }
-  | { type: 'plan.submitted'; summary: string; questions: Question[]; deadline?: number }
+  | { type: 'plan.submitted'; summary: string; questions: Question[]; deadline?: number; targets?: string[] }
   | { type: 'plan.decided'; by: 'human' | 'deadline' | 'advisor'; answers: Record<string, string>; reasons?: Record<string, string> }
   /** at the deadline: questions the agent can look up itself, sent back to it (once) */
   | { type: 'plan.returned'; lookups: string[] }
@@ -69,7 +69,9 @@ export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'rev
 export interface RunState {
   id: string; ticket: string; title: string; project: string; base: string
   stage: Stage; status: Status; needs?: Needs
-  plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' | 'advisor'; reasons?: Record<string, string>; returned?: boolean }
+  plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' | 'advisor'; reasons?: Record<string, string>; returned?: boolean
+    /** the plan's Target lines: the other lines the fix is for (none: this base only; unset: the plan didn't say) */
+    targets?: string[] }
   /** verify: red runs in a row; verifyRuns: all runs; review: review runs that found something */
   loops: { verify: number; verifyRuns: number; review: number }
   /** the new work in tokens, and (apart) what was read back from the cache: far cheaper, but counted once per call */
@@ -120,7 +122,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'setup.failed': need(s, 'setup', e); return go(s, e, { status: 'failed', needs: { kind: 'setup', ask: e.reason } })
     case 'plan.submitted': {
       need(s, 'plan', e)
-      const plan = { summary: e.summary, questions: e.questions, ...(s.plan?.returned ? { returned: true } : {}) }
+      const plan = { summary: e.summary, questions: e.questions, ...(e.targets ? { targets: e.targets } : {}), ...(s.plan?.returned ? { returned: true } : {}) }
       if (!e.questions.length) return go(s, e, { stage: 'build', plan, ...running })
       const held = e.questions.some(q => q.held)
       const ask = `${e.questions.length} open question${e.questions.length > 1 ? 's' : ''}`

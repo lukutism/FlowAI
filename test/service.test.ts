@@ -181,9 +181,9 @@ describe('Service: commands it does not know', () => {
 })
 
 describe('Service: draft PRs merged or closed on the host', () => {
-  const shipped = (t: ReturnType<typeof setup>, id: string, base = 'origin/develop') => {
+  const shipped = (t: ReturnType<typeof setup>, id: string, base = 'origin/develop', targets?: string[]) => {
     t.store.append(id, 'human', { type: 'run.created', ticket: '#1', title: 'x', project: 'ex', base })
-    const steps: EventBody[] = [{ type: 'setup.done' }, { type: 'plan.submitted', summary: 'p', questions: [] }, { type: 'build.done' }, { type: 'verify.result', ok: true, newFindings: [] }, { type: 'review.skipped', reason: 'off' }]
+    const steps: EventBody[] = [{ type: 'setup.done' }, { type: 'plan.submitted', summary: 'p', questions: [], ...(targets ? { targets } : {}) }, { type: 'build.done' }, { type: 'verify.result', ok: true, newFindings: [] }, { type: 'review.skipped', reason: 'off' }]
     for (const e of steps) t.store.append(id, 'engine', e)
     t.store.append(id, 'human', { type: 'pr.opened', url: 'https://dev.azure.com/x/x/_git/m/pullrequest/7', number: 7 })
   }
@@ -208,6 +208,18 @@ describe('Service: draft PRs merged or closed on the host', () => {
     shipped(u, 'ex-1', 'origin/patch/1.0'); shipped(u, 'ex-1-develop')
     u.svc.tick(); await u.svc.idle()
     expect(u.store.state('ex-1')).toBeUndefined()
+  })
+  test("the plan's Target lines decide: \"this base only\" on a release line goes; a line it names keeps the run until ported", async () => {
+    const merged = (args: string[]) => (args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"completed"}', err: '' } : undefined)
+    const t = setup(() => [], merged)
+    shipped(t, 'ex-1', 'origin/patch/1.0', [])
+    t.svc.tick(); await t.svc.idle()
+    expect(t.store.state('ex-1')).toBeUndefined()
+    const u = setup(() => [], merged)
+    shipped(u, 'ex-1', 'origin/develop', ['release/2.0'])
+    u.svc.tick(); await u.svc.idle()
+    expect(u.store.state('ex-1')).toMatchObject({ status: 'done' })
+    expect(u.notices.join('\n')).toContain('no port to release/2.0 yet (flow port ex-1 --to release/2.0)')
   })
   test('still open: nothing changes, and the host is not asked again at the next tick', async () => {
     const calls: string[][] = []

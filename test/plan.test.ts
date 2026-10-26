@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { commitMessage, parsePlan, planGaps, prSummary } from '../src/plan.ts'
+import { commitMessage, parsePlan, planFacts, planGaps, prSummary } from '../src/plan.ts'
 import { fullPlan } from './plans.ts'
 
 // The agent writes plan.md in the run folder; flow reads the summary and the open questions out of it.
@@ -58,6 +58,14 @@ describe('planGaps: what the plan still lacks (the agent is asked once to fill i
   test('the design choice has all three parts, filled in; each criterion has its check', () => {
     expect(planGaps(fullPlan().replace(/^- Reuses:.*$/m, '- Reuses: <helper>'), bug)).toEqual(['Design choice: Reuses'])
     expect(planGaps(fullPlan().replace(' — check: verify\n\n## Unchanged', '\n\n## Unchanged'), bug)).toEqual(['AC1: check'])
+  })
+})
+
+describe('planFacts: the lines a fix is for', () => {
+  test('"this base only": none besides the base; "also …": each line named, without origin/', () => {
+    expect(planFacts(fullPlan()).targets).toEqual([])
+    expect(planFacts(fullPlan().replace(/^Target lines:.*$/m, 'Target lines: also develop, origin/release/3.20 — the bug is on both')).targets).toEqual(['develop', 'release/3.20'])
+    expect(planFacts(fullPlan().replace(/^Target lines:.*\n/m, '')).targets).toBeUndefined()
   })
 })
 

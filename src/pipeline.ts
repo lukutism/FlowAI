@@ -668,12 +668,17 @@ export class Pipeline {
     const f = join(this.runDir(run), 'run.json')
     return this.repoConfig(existsSync(f) ? this.meta(run).repos[0]!.key : this.d.project.repos[0]!.key)
   }
-  /** a run on a release line no port of which exists yet: that line; otherwise undefined */
-  unported(run: string): string | undefined {
-    const line = this.must(run).base.replace(/^origin\//, '')
-    if (line === this.defaultLine(run)) return undefined
-    return this.d.store.runs().some(x => x.id.startsWith(`${run}-`)) ? undefined : line
+  /**
+   * The lines a shipped fix still has to reach, with no port of it yet: those the plan's Target lines name, or (a
+   * plan that didn't say) the default line for a fix on a release line. Empty: nothing holds the run back.
+   */
+  unported(run: string): string[] {
+    const s = this.must(run), base = s.base.replace(/^origin\//, '')
+    const lines = s.plan?.targets ?? (base === this.defaultLine(run) ? [] : [this.defaultLine(run)])
+    const ported = (line: string) => this.d.store.runs().some(x => x.id === `${run}-${line.split('/').pop()}`)
+    return lines.filter(l => l !== base && !ported(l))
   }
+
 
   /** the run's learnings.md into its repos' memory and flow's backlog (after you shipped, or confirmed no change) */
   private keepLearnings(run: string) {
@@ -784,12 +789,13 @@ export class Pipeline {
 
   async close() { await Promise.all([...this.agents.values()].map(a => a.close?.())) }
 
-  private readPlan(run: string): { plan: ReturnType<typeof parsePlan> } | { problem: string } {
+  private readPlan(run: string): { plan: ReturnType<typeof parsePlan> & { targets?: string[] } } | { problem: string } {
     if (!existsSync(this.planFile(run))) return { problem: 'is missing' }
     let md: string, plan: ReturnType<typeof parsePlan>
     try { md = readFileSync(this.planFile(run), 'utf8'); plan = parsePlan(md) } catch (e) { return { problem: `can't be read: ${(e as Error).message}` } }
     const gaps = planGaps(md, this.planKind(run))
-    return gaps.length ? { problem: `lacks: ${gaps.join('; ')}` } : { plan }
+    const targets = planFacts(md).targets
+    return gaps.length ? { problem: `lacks: ${gaps.join('; ')}` } : { plan: { ...plan, ...(targets ? { targets } : {}) } }
   }
 
   /** what the run's plan has to say: a bug's reproduction; the lines the fix is for, where the project has release lines */
@@ -811,10 +817,10 @@ export class Pipeline {
     await this.submitPlan(run, p.plan)
   }
 
-  private async submitPlan(run: string, plan: ReturnType<typeof parsePlan>) {
+  private async submitPlan(run: string, plan: ReturnType<typeof parsePlan> & { targets?: string[] }) {
     const held = plan.questions.some(q => q.held)
     const deadline = plan.questions.length && !held ? this.now() + this.d.project.plan.deadlineMinutes * 60_000 : undefined
-    this.d.store.append(run, 'agent', { type: 'plan.submitted', summary: plan.summary, questions: plan.questions, ...(deadline ? { deadline } : {}) })
+    this.d.store.append(run, 'agent', { type: 'plan.submitted', summary: plan.summary, questions: plan.questions, ...(deadline ? { deadline } : {}), ...(plan.targets ? { targets: plan.targets } : {}) })
     if (this.must(run).stage === 'build') await this.buildStep(run)
   }
 

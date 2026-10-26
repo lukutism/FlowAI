@@ -259,8 +259,8 @@ export class Service {
           if (state === 'open') return
           p.done(s.id, state === 'merged' ? 'its draft PR was merged' : 'its draft PR was closed')
           if (state !== 'merged') return
-          const line = p.unported(s.id)
-          if (line) throw new Error(`merged on ${line} and kept: it has no port to ${p.defaultLine(s.id)} yet (flow port ${s.id}); remove it after`)
+          const lines = p.unported(s.id)
+          if (lines.length) throw new Error(`merged on ${s.base.replace(/^origin\//, '')} and kept: no port to ${lines.join(', ')} yet (${lines.map(l => `flow port ${s.id} --to ${l}`).join('; ')}); remove it after`)
           await p.remove(s.id)
         })
         continue

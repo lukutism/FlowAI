@@ -75,10 +75,14 @@ export function planGaps(md: string, o: { bug: boolean; releaseLines: boolean })
 }
 
 /** what the plan allows in the PR (PR extras: tests, comments) and how the bug was reproduced */
-export function planFacts(md: string): { extras: { tests: boolean; comments: boolean }; repro?: string } {
+export function planFacts(md: string): { extras: { tests: boolean; comments: boolean }; repro?: string; targets?: string[] } {
   const what = (field(md, 'PR extras') ?? '').split(/\s+[—–]+\s+/)[0] ?? ''
   const repro = /^(live|test|mocked|not-reproduced)\b/i.exec(field(md, 'Repro') ?? '')?.[1]?.toLowerCase()
-  return { extras: { tests: /\btests?\b/i.test(what), comments: /\bcomments?\b/i.test(what) }, ...(repro ? { repro } : {}) }
+  // Target lines: "this base only", or "also develop, release/3.20 — why": the other lines the fix is for
+  const line = field(md, 'Target lines')
+  const also = line === undefined ? undefined : /^\s*also\s+(.+)$/i.exec(line.split(/\s+[—–]+\s+/)[0] ?? '')?.[1]
+  const targets = line === undefined ? undefined : (also ?? '').split(/[,\s]+/).map(x => x.trim().replace(/^origin\//, '')).filter(x => x && x !== 'and')
+  return { extras: { tests: /\btests?\b/i.test(what), comments: /\bcomments?\b/i.test(what) }, ...(repro ? { repro } : {}), ...(targets ? { targets } : {}) }
 }
 
 const HEADER_MAX = 100

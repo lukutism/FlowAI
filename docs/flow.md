@@ -60,7 +60,9 @@ the service restarts.
 (Remove the run) stops its device and dev server, removes its worktrees and local branch (a PR's branch stays on the
 code host) and archives its folder under `runs/.removed`; work never shipped is refused unless you add `--force`.
 A removed run's id can start again, so a run whose setup failed doesn't use up its ticket. The service looks at
-each draft PR every 10 minutes: merged, the run is done and removed; closed, it is done and kept. `flow stop <run>`
+each draft PR every 10 minutes: merged, the run is done and removed (kept, with a notice saying which `flow port`
+to run, while a line the plan's Target lines name has no port yet; a release-line fix whose plan didn't say counts
+the default line); closed, it is done and kept. `flow stop <run>`
 (Stop the agent's turn) ends a turn now; a message carries the run on.
 
 **Slots.** All runs on the machine share three kinds of slot: agent turns, builds (installs, verify, app builds) and
