@@ -60,7 +60,7 @@ const plan = fullPlan('none', 'Show the remaining quantity in both apps.')
 describe('a run across two repos', () => {
   const both = (d: { root: string; run: string }) => [
     turn(() => writeFileSync(join(d.run, 'plan.md'), plan)),
-    turn(() => { writeFileSync(join(d.root, 'mobile', 'src/a.ts'), 'export const mobile = 2\n'); writeFileSync(join(d.root, 'portal', 'src/a.ts'), 'export const portal = 2\n'); writeFileSync(join(d.run, 'pr.md'), '# Both repos\n') }),
+    turn(() => { writeFileSync(join(d.root, 'mobile', 'src/a.ts'), 'export const mobile = 2\n'); writeFileSync(join(d.root, 'portal', 'src/a.ts'), 'export const portal = 2\n'); writeFileSync(join(d.run, 'pr.md'), '# Both repos\n\nVerified: tsc → clean\nNot verified: nothing\n') }),
   ]
   test('the agent works in the run\'s root, told where each repo is; the guard allows every worktree', async () => {
     const t = setup(both)
@@ -89,7 +89,7 @@ describe('a run across two repos', () => {
     expect(t.pipe.state(run)).toMatchObject({ prs: [{ repo: 'mobile', number: 101 }, { repo: 'portal', number: 102 }], needs: { ask: 'review draft PRs #101, #102' } })
   })
   test('a repo the agent left unchanged gets no PR', async () => {
-    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan)), turn(() => { writeFileSync(join(d.root, 'portal', 'src/a.ts'), 'export const portal = 3\n'); writeFileSync(join(d.run, 'pr.md'), '# Portal only\n') })])
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan)), turn(() => { writeFileSync(join(d.root, 'portal', 'src/a.ts'), 'export const portal = 3\n'); writeFileSync(join(d.run, 'pr.md'), '# Portal only\n\nVerified: tsc → clean\nNot verified: nothing\n') })])
     const run = await t.pipe.start(7, { repos: ['mobile', 'portal'] })
     await t.pipe.ship(run)
     expect(t.azCalls.filter(a => a.includes('create')).map(c => c[c.indexOf('--repository') + 1])).toEqual(['portal'])

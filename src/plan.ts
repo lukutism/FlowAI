@@ -74,6 +74,13 @@ export function planGaps(md: string, o: { bug: boolean; releaseLines: boolean })
   return gaps
 }
 
+/** what the plan allows in the PR (PR extras: tests, comments) and how the bug was reproduced */
+export function planFacts(md: string): { extras: { tests: boolean; comments: boolean }; repro?: string } {
+  const what = (field(md, 'PR extras') ?? '').split(/\s+[—–]+\s+/)[0] ?? ''
+  const repro = /^(live|test|mocked|not-reproduced)\b/i.exec(field(md, 'Repro') ?? '')?.[1]?.toLowerCase()
+  return { extras: { tests: /\btests?\b/i.test(what), comments: /\bcomments?\b/i.test(what) }, ...(repro ? { repro } : {}) }
+}
+
 const HEADER_MAX = 100
 
 /** `fix(cmms): #186278 Fix asset list memory crash`: conventional (commitlint), the ticket in the subject */

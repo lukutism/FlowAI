@@ -37,7 +37,7 @@ function setup(o: { ready?: string; consoleStart?: number; metroStart?: number }
   const data = join(root, 'data'), run = join(data, 'runs', 'ex-5'), wt = join(root, 'wt', '5', 'mobile')
   const agent = new FakeAgent([
     turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), fullPlan()) }),
-    turn(() => { writeFileSync(join(wt, 'a.ts'), 'y\n'); writeFileSync(join(run, 'pr.md'), '# Change a\n\nVerified: tsc → clean\n') }),
+    turn(() => { writeFileSync(join(wt, 'a.ts'), 'y\n'); writeFileSync(join(run, 'pr.md'), '# Change a\n\nVerified: tsc → clean\nNot verified: nothing\n') }),
   ])
   const store = new EventStore(':memory:')
   const slots = new Resources({ agents: 2, builds: 2, devices: 1 })

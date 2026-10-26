@@ -63,7 +63,7 @@ const reviewText = (text: string): FakeTurn => ({ stream: [JSON.stringify({ type
   JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 'rev-1', usage: { input_tokens: 500, output_tokens: 50 } })].join('\n') })
 const finding = { severity: 'P1', file: 'src/b.ts', line: 1, problem: 'b is exported but never used', evidence: 'no import of b anywhere', confidence: 90 }
 const plan = (questions = 'none') => fullPlan(questions)
-const prMd = '# Guard the asset walk against missing assets\n\n## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings\n'
+const prMd = '# Guard the asset walk against missing assets\n\n## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings\nNot verified: the device — no device in this test\n'
 
 describe('a ticket to a draft PR', () => {
   test('no open questions: plan → build → verify → waits for ship; ship commits, pushes and opens the draft PR', async () => {
@@ -89,7 +89,7 @@ describe('a ticket to a draft PR', () => {
     expect(git(t.origin, 'log', '-1', '--format=%s', 'fix/186278')).toBe('fix(mobile): #186278 Asset list crashes')
     const create = t.azCalls.find(a => a.includes('create'))!
     expect(create).toEqual(expect.arrayContaining(['--draft', 'true', '--target-branch', 'develop', '--source-branch', 'fix/186278', '--work-items', '186278', '--title', '#186278 Guard the asset walk against missing assets']))
-    expect(create[create.indexOf('--description') + 1]).toBe('## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings')
+    expect(create[create.indexOf('--description') + 1]).toBe('## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings\nNot verified: the device — no device in this test')
     expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'pr' }, pr: { number: 4711 } })
   })
   test('open questions: the run waits; approve with an answer, and the build turn is told it', async () => {
@@ -332,6 +332,16 @@ describe('port: the same fix onto another line', () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), '# Plan\n\nGuard it.\n')), turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
     const run = await t.pipe.start(186278)
     expect(t.store.state(run)).toMatchObject({ stage: 'plan', status: 'needs-you', needs: { kind: 'plan' } })
+  })
+  test('a test file the PR extras did not ask for: verify names it, the agent moves it to the run\'s tests/, then ship', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.wt, 'src/b.test.ts'), 'test("b", () => {})\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+      turn(() => { mkdirSync(join(d.run, 'tests'), { recursive: true }); writeFileSync(join(d.run, 'tests', 'b.test.ts'), 'test("b", () => {})\n'); require('node:fs').rmSync(join(d.wt, 'src/b.test.ts')) }),
+    ])
+    const run = await t.pipe.start(186278)
+    expect(t.agent.prompts[2]).toMatch(/src\/b\.test\.ts\|tests\|a new test file.*tests\/ folder/)
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
   })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
@@ -599,7 +609,7 @@ describe('pipeline: the agent\'s flow tools', () => {
     writeFileSync(join(t.wt, 'src/b.ts'), 'export const b = 2 // ERR mine\n')
     const before = t.store.events(run).length
     const r = await t.pipe.callTool(run, 'verify', {})
-    expect(r.text).toMatch(/1 new finding.*src\/b\.ts\|TS2322/s)
+    expect(r.text).toMatch(/new findings.*src\/b\.ts\|TS2322.*src\/b\.ts\|comments/s)
     expect(t.store.events(run)).toHaveLength(before)
   })
   test('ask through the tool: after the turn the run asks you', async () => {

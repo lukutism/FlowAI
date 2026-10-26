@@ -109,7 +109,12 @@ words). A turn that ends with a question to you stops the run as "Agent question
    verifying again first if the code changed.
 5. **Verify.** The project's checks run on the change and on the base (the same worktree with the change stashed).
    Only findings the base doesn't have count, so a base that is already red doesn't block. New findings go back
-   to the agent; three reds in a row stop the run for you.
+   to the agent; three reds in a row stop the run for you. Verify also holds the change to only the fix and to what
+   may be published (hwt's PR checks): new suppressions; added or edited test files, jest config and new comment
+   lines unless the plan's `PR extras` names who asked (a reproduction test goes to the run's `tests/`); local paths
+   and edited env files; in `pr.md`, a `Verified:` and a `Not verified:` line, no local paths, no mention of the
+   agent; `Repro: live` with its `evidence/before-*.png`. The change is the worktree against HEAD, so a customer
+   patch committed under it doesn't count.
 6. **Review.** A fresh `claude` session in plan mode (it reads, never edits, never saw the agent's reasoning) gets
    the ticket, the plan and the change, and answers with findings as JSON. Findings under 80% confidence are left
    out; the rest go to the agent to fix or explain. Three reviews with findings stop the run for you.

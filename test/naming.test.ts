@@ -38,7 +38,7 @@ function setup() {
   const data = join(root, 'data'), run = join(data, 'runs', 'shop-SGL-692')
   const agent = new FakeAgent([
     turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), fullPlan('none', 'Change the text.')) }),
-    turn(() => { writeFileSync(join(root, 'wt', 'SGL-692', 'web', 'a.ts'), 'y\n'); writeFileSync(join(run, 'pr.md'), '# Show the new success text\n\nDetails.\n') }),
+    turn(() => { writeFileSync(join(root, 'wt', 'SGL-692', 'web', 'a.ts'), 'y\n'); writeFileSync(join(run, 'pr.md'), '# Show the new success text\n\nDetails.\n\nVerified: tsc → clean\nNot verified: nothing\n') }),
   ])
   const pipe = new Pipeline({ store: new EventStore(':memory:'), project, az: () => ({ code: 1, out: '', err: '' }), dataDir: data, gitEnv: env, tracker, forge, makeAgent: () => agent })
   return { pipe, prs, origin }

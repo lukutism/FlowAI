@@ -12,7 +12,8 @@ import { contentHash, createWorktree, pending, pushed, shipChange } from './git.
 import { fillSh, logLine, sh, tail } from './sh.ts'
 import { parseLogins, writeAppEnv } from './appenv.ts'
 import { slug } from './slug.ts'
-import { commitMessage, parsePlan, planGaps, prSummary } from './plan.ts'
+import { commitMessage, parsePlan, planFacts, planGaps, prSummary } from './plan.ts'
+import { drift, prProblems } from './drift.ts'
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
 import { memoryDir, saveLearnings } from './learnings.ts'
@@ -849,7 +850,15 @@ export class Pipeline {
       ok &&= res.ok
       findings.push(...res.steps.flatMap(s => s.newFindings).map(f => (m.repos.length > 1 ? `${r.key}: ${f}` : f)))
     }
-    return { ok, findings }
+    // only the fix, nothing that shouldn't be published: the change beyond the plan's PR extras, and the description
+    const plan = existsSync(this.planFile(run)) ? planFacts(readFileSync(this.planFile(run), 'utf8')) : { extras: { tests: false, comments: false } }
+    const own: string[] = []
+    for (const r of m.repos) own.push(...(await drift(r.worktree, plan.extras)).map(f => (m.repos.length > 1 ? `${r.key}: ${f}` : f)))
+    if (existsSync(this.prFile(run))) {
+      const ev = join(this.runDir(run), 'evidence')
+      own.push(...prProblems(readFileSync(this.prFile(run), 'utf8'), { repro: plan.repro, evidence: existsSync(ev) ? readdirSync(ev) : [] }))
+    }
+    return { ok: ok && !own.length, findings: [...findings, ...own] }
   }
 
   private async verifyLoop(run: string) {

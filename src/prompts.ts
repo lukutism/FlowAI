@@ -91,7 +91,9 @@ export const buildPrompt = (b: Brief, answers: { id: string; text: string; answe
 
 Implement it in this worktree: the smallest change that meets the ${b.key ? 'ticket' : 'task'}, matching the code around it. Leave your
 changes uncommitted: flow commits, pushes and opens the draft PR itself after checking them (git commit and push
-are refused here). No new tests, comments or refactoring unless the ${b.key ? 'ticket asks' : 'task asks'} for them.
+are refused here). No new tests, comments or refactoring unless the ${b.key ? 'ticket asks' : 'task asks'} for them: flow's
+verify refuses added or edited test files and new comment lines unless the plan's PR extras names who asked, and
+any new suppression. A reproduction test you wrote goes to the run's tests/ folder before you finish.
 
 When done, write the pull request description to ${prFile}: first line "# <one-line summary in English>", then the
 repo's PR template if it has one (such as .azuredevops/pull_request_template/ or .github/pull_request_template.md),
