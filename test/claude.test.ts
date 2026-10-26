@@ -74,6 +74,12 @@ describe('ClaudeAgent: one claude process per run, one message per turn', () => 
     expect(Date.now() - at).toBeLessThan(2000)
     expect(log().filter(x => x.argv)).toHaveLength(1)
   })
+  test('the run brief goes in as an appended system prompt', async () => {
+    const { a, log } = agent(['01-turn-tool'], { appendSystemPrompt: 'You work unattended.' })
+    await all(a.turn('x'))
+    const { argv } = log()[0]
+    expect(argv.slice(argv.indexOf('--append-system-prompt'), argv.indexOf('--append-system-prompt') + 2)).toEqual(['--append-system-prompt', 'You work unattended.'])
+  })
   test('closed between turns (to free its memory), the next turn resumes the session in a new process', async () => {
     const { a, log } = agent(['01-turn-tool', '02-resume'])
     await all(a.turn('one'))

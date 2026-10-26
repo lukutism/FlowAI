@@ -176,3 +176,13 @@ describe('a message sends the run on from any gate; flow puts the gate back afte
     expect(f).toMatchObject({ status: 'failed' })
   })
 })
+
+describe('the agent ends a run itself', () => {
+  test('no change needed: waits for you to confirm (done), or a message carries it on', () => {
+    let s = apply(fold([...toBuild()]), ev({ type: 'run.resolved', summary: 'already fixed on develop by #4711', text: '…' }))
+    expect(s).toMatchObject({ status: 'needs-you', needs: { kind: 'resolution', ask: 'no change needed: already fixed on develop by #4711' } })
+    expect(apply(s, ev({ type: 'run.done', actor: 'human' }))).toMatchObject({ status: 'done' })
+    s = apply(s, ev({ type: 'human.message', actor: 'human', text: 'it still happens on 3.18' }))
+    expect(s).toMatchObject({ status: 'running', stage: 'build' })
+  })
+})

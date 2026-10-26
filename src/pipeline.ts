@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
@@ -12,7 +12,7 @@ import { contentHash, createWorktree, pending, pushed, shipChange } from './git.
 import { fillSh, sh, tail } from './sh.ts'
 import { slug } from './slug.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
-import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, type Brief } from './prompts.ts'
+import { buildPrompt, contextPrompt, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
 import type { RunState } from './run.ts'
 import type { Resources } from './resources.ts'
@@ -44,7 +44,7 @@ export interface PipelineDeps {
   az: Az
   /** flow's own data: the event log and one folder per run */
   dataDir: string
-  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string> }) => RunAgent
+  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string }) => RunAgent
   /** a fresh, read-only reviewer session per review; without it the review is skipped */
   makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
@@ -184,7 +184,7 @@ export class Pipeline {
     return { ok: res.code === 0, text: tail(res.out || res.err, 1) }
   }
 
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string } = {}): Promise<string> {
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string; note?: string; logins?: string } = {}): Promise<string> {
     const p = this.d.project
     const run = o.task?.trim() && !String(ticket).trim() ? this.taskRunId(o.task) : this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
@@ -215,6 +215,10 @@ export class Pipeline {
     const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(task ? { task: true } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
+    // what you add before the start: a note into the agent's brief; test logins in a file only you can read, which
+    // the agent is pointed at (never their values) and ship checks the change against
+    if (o.note?.trim()) writeFileSync(join(this.runDir(run), 'note.md'), o.note.trim() + '\n')
+    if (o.logins?.trim()) writeFileSync(join(this.runDir(run), 'logins.md'), o.logins.trim() + '\n', { mode: 0o600 })
     writeFileSync(join(this.runDir(run), 'ticket.md'), task ? `# ${t.title}\n\n${t.text}\n` : `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
     this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key || 'task', title: t.title, project: p.key, base: m.base })
     if (!(await this.setup(run, m))) return run
@@ -375,7 +379,7 @@ export class Pipeline {
   async message(run: string, text: string) {
     this.d.store.append(run, 'human', { type: 'human.message', text })
     const r = await this.say(run, text, 'you')
-    if (!r.ok) return
+    if (!r.ok || this.ended(run, r.text)) return
     const s = this.must(run)
     if (s.status !== 'running') return // the agent asked something back, or the run was done or failed already
     if (s.stage === 'plan') {
@@ -435,6 +439,7 @@ export class Pipeline {
     }
     if (!changed.length) throw new Error(s.prs?.length ? `${run}: nothing new to ship; the draft PR is current` : `${run}: nothing to ship, no repo has changes`)
     const pr = existsSync(this.prFile(run)) ? readFileSync(this.prFile(run), 'utf8') : ''
+    this.noLogins(run, pr, changed)
     const summary = prSummary(pr, m.title)
     // a task has no ticket to link to or name: its PR is the description, its title and commits the summary alone
     const body = n.prBody === 'ticket-link' && m.url ? m.url : pr.replace(/^#\s+.+\n?/m, '').trim() || `${m.key} ${m.title}\n${m.url}`.trim()
@@ -514,11 +519,16 @@ export class Pipeline {
     if (cached) return cached
     const m = this.meta(run)
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, this.planFile(run), this.prFile(run)], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
+    const dir = this.runDir(run)
+    // of the run folder the agent writes only these: the plan, the PR description, how the run ended, its evidence
+    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'evidence')]
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
     // the run's own emulator is the one adb (and the tools on it) talk to; Metro's port for React Native's CLI
     const dev = this.d.store.state(run)?.device
     const env = dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : undefined
-    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, ...(m.model ? { model: m.model } : {}), ...(env ? { env } : {}) })
+    const note = existsSync(join(dir, 'note.md')) ? readFileSync(join(dir, 'note.md'), 'utf8') : undefined
+    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')) })
+    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, ...(m.model ? { model: m.model } : {}), ...(env ? { env } : {}) })
     this.agents.set(run, agent)
     return agent
   }
@@ -609,7 +619,7 @@ export class Pipeline {
   async stopTurn(run: string) { await this.agents.get(run)?.stop?.() }
 
   /** the run's agent process closed (it holds about 2 GB); its next turn starts one again on the same session */
-  async closeAgent(run: string) { await this.agents.get(run)?.close?.() }
+  async closeAgent(run: string) { const a = this.agents.get(run); this.agents.delete(run); await a?.close?.() }
 
   async close() { await Promise.all([...this.agents.values()].map(a => a.close?.())) }
 
@@ -620,7 +630,7 @@ export class Pipeline {
 
   private async planStep(run: string, ticket: string) {
     const r = await this.runner.turn(run, planPrompt(this.meta(run), ticket, this.planFile(run)))
-    if (!r.ok) return
+    if (!r.ok || this.ended(run)) return
     let p = this.readPlan(run)
     if ('problem' in p) {
       const again = await this.runner.turn(run, planRetryPrompt(this.planFile(run), p.problem))
@@ -642,9 +652,45 @@ export class Pipeline {
     const s = this.must(run)
     const answers = (s.plan?.questions ?? []).map(q => ({ id: q.id, text: q.text, answer: s.plan?.answers?.[q.id] ?? q.default }))
     const r = await this.runner.turn(run, buildPrompt(this.meta(run), answers, this.prFile(run)))
-    if (!r.ok) return
+    if (!r.ok || this.ended(run, r.text)) return
     this.d.store.append(run, 'agent', { type: 'build.done' })
     await this.verifyLoop(run)
+  }
+
+  /** the run's test logins must not ship: a secret-looking word of them in a changed file or pr.md refuses */
+  private noLogins(run: string, pr: string, changed: { r: RunRepo; files: string[] }[]) {
+    const f = join(this.runDir(run), 'logins.md')
+    if (!existsSync(f)) return
+    // words that look like secrets (6 characters or more, with a digit or a symbol): not plain words such as a name
+    const secrets = [...new Set(readFileSync(f, 'utf8').split(/[\s,;:/|]+/).filter(w => w.length >= 6 && /[^a-zA-Z]/.test(w) && !/^https?$/i.test(w)))]
+    const where: string[] = []
+    if (secrets.some(x => pr.includes(x))) where.push('pr.md')
+    for (const { r, files } of changed) for (const file of files) {
+      const p = join(r.worktree, file)
+      if (existsSync(p) && statSync(p).isFile() && statSync(p).size < 2_000_000 && secrets.some(x => readFileSync(p, 'utf8').includes(x))) where.push(file)
+    }
+    if (where.length) throw new Error(`${run}: a test login is in ${where.join(', ')}; take it out (message the agent), then ship again`)
+  }
+
+  /**
+   * After a turn: the agent ended the run itself (resolution.md: no change needed; blocked.md: it can't go on), or
+   * its last paragraph asks the human something. The run then stops for you; the file is kept under a dated name.
+   */
+  private ended(run: string, text = ''): boolean {
+    const dir = this.runDir(run)
+    const gist = (t: string) => t.split('\n').map(l => l.replace(/^#+\s*/, '').trim()).filter(Boolean).slice(0, 2).join(' — ').slice(0, 300)
+    for (const name of ['blocked', 'resolution'] as const) {
+      const f = join(dir, `${name}.md`)
+      if (!existsSync(f)) continue
+      const body = readFileSync(f, 'utf8'), kept = `${name}-${this.now()}.md`
+      renameSync(f, join(dir, kept))
+      if (name === 'blocked') this.d.store.append(run, 'agent', { type: 'run.blocked', reason: `the agent is blocked: ${gist(body)} (${kept})` })
+      else this.d.store.append(run, 'agent', { type: 'run.resolved', summary: gist(body), text: body.slice(0, 4000) })
+      return true
+    }
+    const last = text.trim().split(/\n\s*\n/).pop()?.trim() ?? ''
+    if (/\?[)*_"'»]*$/.test(last) && last.length <= 1000) { this.d.store.append(run, 'agent', { type: 'agent.asked', question: last }); return true }
+    return false
   }
 
   /** verify every repo; with several repos each finding names its repo */
@@ -676,7 +722,7 @@ export class Pipeline {
       }
       if (s.stage !== 'build') return // stopped for the human (red too often)
       const r = await this.say(run, prompt)
-      if (!r.ok) return
+      if (!r.ok || this.ended(run, r.text)) return
       this.d.store.append(run, 'agent', { type: 'build.done' })
     }
   }

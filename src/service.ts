@@ -11,7 +11,8 @@ import { appendTranscript, type Entry } from './transcript.ts'
 import type { Windows } from './usage.ts'
 
 export type Command =
-  | { cmd: 'start'; project: string; ticket: number | string; task?: string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string }
+  /** note: added to the agent's brief; logins: test logins, kept in a file only you can read */
+  | { cmd: 'start'; project: string; ticket: number | string; task?: string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; note?: string; logins?: string }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
@@ -56,7 +57,7 @@ export interface ServiceDeps {
   projects: Record<string, Project>
   az: Az
   dataDir: string
-  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string> }) => RunAgent
+  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string }) => RunAgent
   makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
@@ -195,7 +196,7 @@ export class Service {
         const run = c.task?.trim() && !String(c.ticket).trim() ? p.taskRunId(c.task) : p.runId(c.ticket)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
-        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, task: c.task }) })
+        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, task: c.task, note: c.note, logins: c.logins }) })
         return { ok: true, run }
       }
       if (c.cmd === 'stop') {

@@ -16,6 +16,8 @@ export type EventBody =
   | { type: 'plan.submitted'; summary: string; questions: Question[]; deadline?: number }
   | { type: 'plan.decided'; by: 'human' | 'deadline'; answers: Record<string, string> }
   | { type: 'agent.asked'; question: string }
+  /** the agent found no change is needed (resolution.md): you confirm with done, or a message carries it on */
+  | { type: 'run.resolved'; summary: string; text: string }
   | { type: 'human.message'; text: string }
   /** reason: why the engine sent a change back to verify (it moved after it was verified) */
   | { type: 'build.done'; reason?: string }
@@ -58,7 +60,7 @@ export type EventBody =
 export type RunEvent = EventBody & { seq: number; at: number; run: string; actor: Actor }
 export type EventType = EventBody["type"]
 
-export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'review' | 'setup' | 'ship' | 'pr' | 'patch'; ask: string; held?: boolean; deadline?: number }
+export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'review' | 'setup' | 'ship' | 'pr' | 'patch' | 'resolution'; ask: string; held?: boolean; deadline?: number }
 
 export interface RunState {
   id: string; ticket: string; title: string; project: string; base: string
@@ -155,6 +157,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'run.done': return go(s, e, { stage: 'done', status: 'done', needs: undefined, waitingFor: undefined, pausedUntil: undefined })
     case 'run.removed': return go(s, e, { removed: true, needs: undefined, waitingFor: undefined, pausedUntil: undefined })
     case 'agent.asked': return go(s, e, { status: 'needs-you', needs: { kind: 'question', ask: e.question } })
+    case 'run.resolved': return go(s, e, { status: 'needs-you', needs: { kind: 'resolution', ask: `no change needed: ${e.summary}` } })
     case 'human.message':
       // a message sends the run on from wherever it stopped (a question, a block, a gate, a cap); flow puts the gate
       // back once the agent's turn is done. A failed setup and a finished run stay as they are.

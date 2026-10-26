@@ -18,7 +18,7 @@ export interface Lookup {
   area?: string; platform?: string
 }
 
-type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model'
+type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'note' | 'logins'
 const MODELS = ['default', 'opus', 'sonnet']
 
 /** the base a ticket's release tag points at (3.18 → the newest patch/3.18.x), else none */
@@ -80,6 +80,9 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const [ticket, setTicket] = useState('')
   /** no ticket: what to do, in your words (its first line names the run and the branch) */
   const [task, setTask] = useState('')
+  // what you add for this run: a note for the agent's brief, and test logins (kept apart, never shown)
+  const [note, setNote] = useState('')
+  const [logins, setLogins] = useState('')
   const [look, setLook] = useState<{ state: 'idle' | 'loading' | 'ok' | 'error'; data?: Lookup; error?: string }>({ state: 'idle' })
   const [bases, setBases] = useState<Record<string, string[]>>({})
   const [refs, setRefs] = useState<string[]>([])
@@ -157,11 +160,12 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
 
   const devRepos = (p?.devServers ?? []).filter(r => repos.includes(r))
   const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', ...(ticket.trim() ? [] : ['task' as const]), 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
-    ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
+    ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model', 'note', 'logins']
   const move = (d: number) => setField(f => fields[(fields.indexOf(f) + d + fields.length) % fields.length]!)
   const cycle = <T,>(list: T[], cur: T, d: number): T => list[(list.indexOf(cur) + d + list.length) % list.length] ?? cur
 
   const start = () => {
+    const extra = { ...(note.trim() ? { note: note.trim() } : {}), ...(logins.trim() ? { logins: logins.trim() } : {}) }
     if (!p) return setProblem('no project: add one in ~/.config/flow/projects')
     if (!ticket.trim()) {
       // no ticket: a task described instead
@@ -169,7 +173,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       if (!slug(task.split('\n')[0]!)) { setField('task'); return setProblem('describe the task in a few words: they name the run and the branch') }
       if (!repos.length) { setField('repos'); return setProblem('choose at least one repo') }
       return onStart({ cmd: 'start', project, ticket: '', task: task.trim(), ...(base ? { base } : {}), kind, repos,
-        ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}) })
+        ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...extra })
     }
     if (look.state === 'loading') return setProblem('still looking the ticket up')
     if (look.state === 'error') return setProblem(look.error ?? 'the ticket could not be read')
@@ -177,7 +181,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (!repos.length) { setField('repos'); return setProblem('choose at least one repo') }
     if (patch && check && !check.ok) { setField('patch'); return setProblem('the customer patch does not fit this base: choose another base or no patch') }
     onStart({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), kind, repos,
-      ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}) })
+      ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...extra })
   }
   const choose = (f: 'base' | 'patch', v: string) => { touch(f); if (f === 'base') setBase(v); else setPatch(v); setPicking(null) }
   const open = (f: 'base' | 'patch', query = '') => {
@@ -218,6 +222,12 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       else if (typed) setTask(x => x + typed)
       return true
     }
+    if (field === 'note' || field === 'logins') {
+      const set = field === 'note' ? setNote : setLogins
+      if (n === 'backspace') set(x => x.slice(0, -1))
+      else if (typed) set(x => x + typed)
+      return true
+    }
     // base and patch: any key opens the list (a letter starts the search)
     if (field === 'base' || field === 'patch') { open(field, typed && typed !== ' ' ? typed : ''); return true }
     if (field === 'repos' && p) {
@@ -239,6 +249,8 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (picking) return setPicking(x => x && { ...x, query: x.query + one, index: 0 })
     if (field === 'ticket') return setTicket(x => x + one.replace(/\s+/g, ''))
     if (field === 'task') return setTask(x => x + text.trim())
+    if (field === 'note') return setNote(x => x + text.trim())
+    if (field === 'logins') return setLogins(x => (x ? `${x}\n` : '') + text.trim())
     if (field === 'base' || field === 'patch') return open(field, one)
   }
   useEffect(() => { bindPaste?.(paste); return () => bindPaste?.(null) })
@@ -313,6 +325,8 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       {patch && check && !check.ok ? <text fg={C.warning} bg="#2A2416">{`             ⚠ ${fit(check.text || 'no patch for this base', W - 18)}`}</text> : null}
       {patch && check?.ok ? <text fg={C.success}>{`             ✓ ${fit(check.text, W - 18)}`}</text> : null}
       {row('model', 'Model', <>{radio(MODELS.map(m => ({ v: m, label: m })), model, setModel)}</>)}
+      {row('note', 'Note', <text fg={C.text}>{note.length > W - 18 ? `…${note.slice(-(W - 19))}` : note}{field === 'note' ? <span fg={C.accent}>▏</span> : ''}{note ? '' : <span fg={C.faint}>for the agent: how to test, which order or tenant, what not to touch</span>}</text>)}
+      {row('logins', 'Logins', <text fg={C.text}>{logins ? '•'.repeat(Math.min(logins.length, 24)) : ''}{field === 'logins' ? <span fg={C.accent}>▏</span> : ''}<span fg={C.faint}>{logins ? '   kept in a file only you can read; never in the change or the PR' : 'user and password for the device: kept apart, never shown'}</span></text>)}
       {blank}
       {wrap(will, W - 16).slice(0, 3).map((l, i) => <text key={i}>{'  '}<span fg={C.muted}>{i ? '          ' : 'Will      '}</span><span fg={C.secondary}>{l}</span></text>)}
       {used && limits ? <text>{'  '}<span fg={C.muted}>{'Slots     '}</span><span fg={buildsFull ? C.warning : C.secondary}>{`agents ${limits.agents - used.agents}/${limits.agents} free · builds ${used.builds}/${limits.builds}${buildsFull ? ' full → the install waits for a slot' : ''}`}</span></text> : null}

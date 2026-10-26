@@ -492,3 +492,40 @@ describe('pipeline: remove never takes what another run uses', () => {
     expect(git(t.main, 'branch', '--list', 'fix/186278')).toContain('fix/186278')
   })
 })
+
+describe('pipeline: the agent ends the run, or asks', () => {
+  test('resolution.md at the plan step: no change needed, waiting for you; the file is kept under its own name', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'resolution.md'), '# Already fixed\n\nFixed on develop by PR #4711.\n'))])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ stage: 'plan', status: 'needs-you', needs: { kind: 'resolution', ask: expect.stringMatching(/no change needed: Already fixed — Fixed on develop by PR #4711/) } })
+    expect(existsSync(join(t.runDir, 'resolution.md'))).toBe(false)
+  })
+  test('blocked.md during the build: blocked with its words; a message carries it on', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.run, 'blocked.md'), 'I need the qa login for acme-qa.\n')),
+      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/I need the qa login for acme-qa/) } })
+    await t.pipe.message(run, 'logins are in logins.md now')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
+  })
+  test('a build turn that ends with a question: the run asks you instead of going to verify', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'), 'Changed the walk.\n\nShould I also guard the order list?')])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ stage: 'build', status: 'needs-you', needs: { kind: 'question', ask: 'Should I also guard the order list?' } })
+  })
+  test('the agent gets the run brief as its system prompt, with your note and the logins file', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
+    await t.pipe.start(186278, { note: 'Use order 700216740.', logins: 'qa user: tester / s3cret-pass' })
+    const brief = (t.agents[0] as { appendSystemPrompt?: string }).appendSystemPrompt!
+    expect(brief).toContain('Additional instructions from the human:\nUse order 700216740.')
+    expect(brief).toContain(join(t.runDir, 'logins.md'))
+    expect(brief).not.toContain('s3cret-pass')
+    expect(require('node:fs').statSync(join(t.runDir, 'logins.md')).mode & 0o777).toBe(0o600)
+  })
+  test('a test login in the change or the PR description: ship refuses', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = "s3cret-pass"\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
+    const run = await t.pipe.start(186278, { logins: 'qa user: tester / s3cret-pass' })
+    await expect(t.pipe.ship(run)).rejects.toThrow(/test login.*src\/b\.ts/)
+    expect(t.azCalls.some(a => a.includes('create'))).toBe(false)
+  })
+})

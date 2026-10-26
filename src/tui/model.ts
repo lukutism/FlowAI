@@ -33,8 +33,9 @@ const LABELS: Record<Needs['kind'], [label: string, key: AttentionItem['key'], a
   ship: ['Ready to ship', 'S', 'ship', 'success'],
   pr: ['Draft PR', '↵', 'open', 'accent'],
   patch: ['Write-back checked', 'S', 'ship', 'success'],
+  resolution: ['No change needed', 'm', 'message', 'accent'],
 }
-const ORDER = ['plan', 'question', 'blocked', 'setup', 'verify', 'review', 'ship', 'patch', 'pr']
+const ORDER = ['plan', 'question', 'blocked', 'setup', 'verify', 'review', 'resolution', 'ship', 'patch', 'pr']
 
 export function attention(runs: RunState[], now: number): AttentionItem[] {
   const items = runs.filter(r => r.needs && r.status !== 'done')
@@ -82,7 +83,7 @@ function statusWord(r: RunState): string {
 
 function next(r: RunState): { text: string; mine: boolean } {
   const n = r.needs
-  if (n) return { mine: true, text: { plan: 'approve plan', question: 'answer the agent', blocked: 'message the agent', setup: 'check setup', verify: 'message the agent', review: 'decide on review', ship: r.patch ? 'check the write-back' : 'ship', pr: `review PR #${r.pr?.number ?? ''}`, patch: 'write the patch back' }[n.kind] }
+  if (n) return { mine: true, text: { plan: 'approve plan', question: 'answer the agent', blocked: 'message the agent', setup: 'check setup', verify: 'message the agent', review: 'decide on review', ship: r.patch ? 'check the write-back' : 'ship', pr: `review PR #${r.pr?.number ?? ''}`, patch: 'write the patch back', resolution: 'confirm: flow done' }[n.kind] }
   if (r.status === 'waiting') return { mine: false, text: `waits for ${r.waitingFor ?? 'a slot'}` }
   if (r.status === 'paused') return { mine: false, text: 'resumes by itself' }
   if (r.status === 'done') return { mine: false, text: r.pr ? `PR #${r.pr.number}` : r.patch ? 'patch written back' : 'done' }
@@ -186,6 +187,7 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'plan.submitted': return { stage: 'plan', text: e.questions.length ? `plan ready, ${e.questions.length} question${e.questions.length > 1 ? 's' : ''}` : 'plan ready, no questions' }
     case 'plan.decided': return { stage: 'plan', text: e.by === 'human' ? 'approved by you' : 'defaults taken at the deadline' }
     case 'agent.asked': return { stage: '', text: `asks: ${e.question}` }
+    case 'run.resolved': return { stage: '', text: `no change needed: ${e.summary}` }
     case 'human.message': return { stage: '', text: `you: ${e.text}` }
     case 'build.done': return { stage: 'build', text: e.reason ? `verify again: ${e.reason}` : 'change made' }
     case 'verify.result': return { stage: 'verify', text: e.ok ? 'no new findings' : `${e.newFindings.length} new finding${e.newFindings.length === 1 ? '' : 's'}` }

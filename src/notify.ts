@@ -4,7 +4,7 @@
  */
 import type { RunState } from './run.ts'
 
-const WHAT: Record<string, string> = { plan: 'Plan to approve', ship: 'Ready to ship', pr: 'Draft PR to review', patch: 'Write-back to check', question: 'The agent asks', verify: 'Verify keeps failing', review: 'Review keeps finding', blocked: 'Blocked', setup: 'Setup failed' }
+const WHAT: Record<string, string> = { plan: 'Plan to approve', ship: 'Ready to ship', pr: 'Draft PR to review', patch: 'Write-back to check', question: 'The agent asks', verify: 'Verify keeps failing', review: 'Review keeps finding', blocked: 'Blocked', setup: 'Setup failed', resolution: 'No change needed' }
 
 /** what to say when a run went from before to after; null when nothing new needs you */
 export function notice(before: RunState | undefined, after: RunState): { title: string; text: string } | null {

@@ -72,6 +72,19 @@ working from their common folder, verify per repo, and at ship one draft PR per 
 
 ## A run
 
+**The agent's brief.** Besides each step's message, the agent gets a brief for the whole run as its system prompt
+(it stays through compactions): it works unattended (it decides reversible things and records them in the plan),
+the goal (the smallest correct change, a PR description a reviewer can judge in ten minutes), what flow does for it
+(verify, review, commit, push, PR), the three ways a run ends, and the run's device (argent, on that device only;
+screenshots in the run's `evidence/`). Before the start you can add a **note** (how to test, which order or tenant,
+what not to touch) and **test logins** (form fields, or `--note` / `--logins-file`): the note goes into the brief;
+the logins stay in the run's `logins.md` (readable only by you), the agent is told the file and that they never go
+into code, commits or the PR, and ship refuses a change or a PR description that contains them.
+
+**How a run ends.** A PR (flow ships what the agent left); `resolution.md` when no change is needed (the run waits
+for you: `flow done` confirms it, a message carries it on); `blocked.md` when the agent can't go on (blocked with its
+words). A turn that ends with a question to you stops the run as "Agent question" instead of going on to verify.
+
 1. **Setup.** The ticket is read (description, repro steps, comments newest first). A git worktree is created on
    `fix/<id>` or `feat/<id>` from the base; `node_modules` is cloned copy-on-write from the main checkout, then the
    install runs.

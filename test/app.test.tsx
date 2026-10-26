@@ -788,6 +788,23 @@ describe('the new-run form', () => {
       expect(f).not.toMatch(/Project +\(/)
     } finally { t.s.renderer.destroy() }
   })
+  test('a note for the agent and test logins go with the run; the logins never show on the screen', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query() as FlowApi['query'] })
+    try {
+      await t.press('n', 'enter')
+      await typeIn(t, 'Fix the walk')
+      for (let i = 0; i < 12 && !(await t.frame()).includes('▌ Note'); i++) await keys(t, 'tab')
+      await typeIn(t, 'Use order 700216740')
+      await keys(t, 'tab')
+      await typeIn(t, 'tester / s3cret-pass')
+      const f = await t.frame()
+      expect(f).toContain('Use order 700216740')
+      expect(f).not.toContain('s3cret-pass')
+      expect(f).toContain('kept in a file only you can read')
+      await keys(t, 'enter')
+      expect(t.f.sent[0]).toMatchObject({ cmd: 'start', task: 'Fix the walk', note: 'Use order 700216740', logins: 'tester / s3cret-pass' })
+    } finally { t.s.renderer.destroy() }
+  })
   test('no ticket: leave it empty and describe the task; the branch is named from it', async () => {
     const t = await screen(runs, undefined, { projects: [fso], query: query() as FlowApi['query'] })
     try {
