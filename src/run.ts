@@ -180,7 +180,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     // at setup; later when the device is restarted
     case 'device.ready': if (s.stage === 'done') need(s, 'setup', e); return go(s, e, { device: { platform: e.platform, id: e.id, metroPort: e.metroPort } })
     case 'device.released': return go(s, e, { device: undefined })
-    case 'devserver.ready': need(s, 'setup', e); return go(s, e, { devServer: { repo: e.repo, port: e.port, url: e.url } })
+    case 'devserver.ready': if (s.stage === 'done') need(s, 'setup', e); return go(s, e, { devServer: { repo: e.repo, port: e.port, url: e.url } })
     case 'devserver.stopped': return go(s, e, { devServer: undefined })
     case 'patch.applied': need(s, 'setup', e); return go(s, e, { patch: { customer: e.customer, app: e.app, commit: e.commit } })
     case 'patch.checked':

@@ -112,14 +112,16 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
 /** stop and remove the device, end its background processes (and their children), forget it */
 export async function stopDevice(state: DeviceState, spec: DeviceSpec, runDir: string) {
   const cmds = spec[state.platform]
-  const vars = { run: state.run, id: state.id, consolePort: state.consolePort, metroPort: state.metroPort, runDir, template: cmds?.template }
-  if (cmds?.stop && state.id) await sh(fillSh(cmds.stop, vars), runDir)
+  const vars = { run: state.run, id: state.id, consolePort: state.consolePort, grpcPort: state.consolePort + 3000, metroPort: state.metroPort, runDir, template: cmds?.template }
+  const headless = spec.headless && state.platform === 'android' ? '-no-window -no-audio' : ''
+  const filled = (c: string) => fillSh(c.replaceAll('{headless}', headless), vars)
+  if (cmds?.stop && state.id) await sh(filled(cmds.stop), runDir)
   for (const pid of livePids(state.pids)) {
     try { process.kill(-pid, 'SIGTERM') } catch {}
     try { process.kill(pid, 'SIGTERM') } catch {}
   }
   await Bun.sleep(200)
   for (const pid of livePids(state.pids)) { try { process.kill(-pid, 'SIGKILL') } catch {} }
-  if (cmds?.remove) await sh(fillSh(cmds.remove, vars), runDir)
+  if (cmds?.remove) await sh(filled(cmds.remove), runDir)
   rmSync(join(runDir, 'device.json'), { force: true })
 }

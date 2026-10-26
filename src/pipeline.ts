@@ -323,13 +323,17 @@ export class Pipeline {
 
   /** the run's own device: a device slot, free ports (not another run's), boot, Metro, install; the slot is freed on failure */
   /** the run's device stopped and booted again with the project's current commands (the app built and installed) */
+  /** the run's device and dev server stopped and started again, with the settings as they are now */
   async restartDevice(run: string) {
     const s = this.must(run), m = this.meta(run)
+    if (s.status === 'done' || s.status === 'failed') throw new Error(`${run} is ${s.status}: nothing to restart`)
     const platform = s.device?.platform ?? m.platform
-    if (!platform) throw new Error(`${run} has no device`)
+    const web = !!m.web && !!this.repoConfig(m.web).devServer
+    if (!platform && !web) throw new Error(`${run} has no device or dev server`)
     await this.releaseDevice(run)
-    await this.closeAgent(run) // its next turn gets the device's new id in its brief
-    await this.bootDevice(run, platform, m.repos[0]!.worktree)
+    await this.closeAgent(run) // its next turn gets the device's new id (and the dev server's port) in its brief
+    if (platform) await this.bootDevice(run, platform, m.repos[0]!.worktree)
+    if (web) await this.bootDevServer(run, m)
   }
 
   private async bootDevice(run: string, platform: 'android' | 'ios', worktree: string) {
@@ -539,11 +543,25 @@ export class Pipeline {
     return run
   }
 
-  /** a message to the run's agent; an agent with no session yet (a port's) gets the run's context first */
+  /**
+   * A message to the run's agent. An agent with no session yet gets the step it never began (a restart killed its
+   * turn first: the plan, the build), or else the run's context (a port's), then the message.
+   */
   private say(run: string, text: string, from: 'flow' | 'you' = 'flow') {
-    const s = this.must(run)
-    return this.runner.turn(run, s.session ? text : contextPrompt(this.meta(run), this.planFile(run), this.prFile(run), text), from)
+    const s = this.must(run), m = this.meta(run)
+    const first = s.stage === 'plan' && !existsSync(this.planFile(run)) ? `${planPrompt(m, this.ticketText(run), this.planFile(run))}\n\n${text}`
+      : s.stage === 'build' && !existsSync(this.prFile(run)) ? `${buildPrompt(m, this.answers(s), this.prFile(run))}\n\n${text}`
+      : contextPrompt(m, this.planFile(run), this.prFile(run), text)
+    return this.runner.turn(run, s.session ? text : first, from)
   }
+
+  /** the ticket's text as the plan step had it (ticket.md without its heading) */
+  private ticketText(run: string) {
+    const f = join(this.runDir(run), 'ticket.md')
+    return existsSync(f) ? readFileSync(f, 'utf8').split('\n\n').slice(1).join('\n\n').trim() : ''
+  }
+
+  private answers(s: RunState) { return (s.plan?.questions ?? []).map(q => ({ id: q.id, text: q.text, answer: s.plan?.answers?.[q.id] ?? q.default })) }
 
   private agentFor(run: string): RunAgent {
     const cached = this.agents.get(run)
@@ -730,9 +748,7 @@ export class Pipeline {
   }
 
   private async buildStep(run: string) {
-    const s = this.must(run)
-    const answers = (s.plan?.questions ?? []).map(q => ({ id: q.id, text: q.text, answer: s.plan?.answers?.[q.id] ?? q.default }))
-    const r = await this.runner.turn(run, buildPrompt(this.meta(run), answers, this.prFile(run)))
+    const r = await this.runner.turn(run, buildPrompt(this.meta(run), this.answers(this.must(run)), this.prFile(run)))
     if (!r.ok || this.ended(run, r.text)) return
     this.d.store.append(run, 'agent', { type: 'build.done' })
     await this.verifyLoop(run)

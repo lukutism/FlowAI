@@ -78,3 +78,18 @@ describe('a run with a dev server', () => {
     await expect(t.pipe.start(5, { devServer: true })).rejects.toThrow(/no repo of this run has a dev server/)
   })
 })
+
+describe('restarting a run with a dev server', () => {
+  test('its dev server is started again too; a shipped run refuses', async () => {
+    const t = setup({ portStart: 5370 })
+    const run = await t.pipe.start(5, { devServer: true })
+    try {
+      await t.pipe.restartDevice(run)
+      expect(t.store.events(run).filter(e => e.type === 'devserver.ready')).toHaveLength(2)
+      expect(t.store.state(run)!.devServer).toMatchObject({ repo: 'portal' })
+      expect(await (await fetch(`http://127.0.0.1:${t.store.state(run)!.devServer!.port}/status`)).text()).toBe('packager-status:running')
+      t.store.append(run, 'human', { type: 'run.done' })
+      await expect(t.pipe.restartDevice(run)).rejects.toThrow(/is done/)
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})

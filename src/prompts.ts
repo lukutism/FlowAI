@@ -54,6 +54,9 @@ Understand the problem and find the code path. Don't change code yet. Then write
 ## Approach
 <the smallest change that meets the ticket, and what you rejected>
 
+## Decisions log
+<each reversible choice you made yourself, one a line: what you chose and why>
+
 ## Open questions
 - Q1: <a question only the human can answer> — default: <what you will do if nobody answers>
 (add "(held)" after the id, as in "Q2 (held):", when the answer decides whether the app's behaviour changes at all)
@@ -63,13 +66,14 @@ Then stop. flow reads the plan; when the questions are answered it sends you the
 
 export const buildPrompt = (b: Brief, answers: { id: string; text: string; answer: string }[], prFile: string) => `The plan is approved.${answers.length ? `\nAnswers:\n${answers.map(a => `- ${a.id} ${a.text} → ${a.answer}`).join('\n')}` : ''}
 
-Implement it in this worktree: the smallest change that meets the ticket, matching the code around it. Leave your
+Implement it in this worktree: the smallest change that meets the ${b.key ? 'ticket' : 'task'}, matching the code around it. Leave your
 changes uncommitted: flow commits, pushes and opens the draft PR itself after checking them (git commit and push
-are refused here). No new tests, comments or refactoring unless the ticket asks for them.
+are refused here). No new tests, comments or refactoring unless the ${b.key ? 'ticket asks' : 'task asks'} for them.
 
 When done, write the pull request description to ${prFile}: first line "# <one-line summary in English>", then the
-repo's PR template if it has one (.azuredevops/pull_request_template/), with a "Verified: <command> → <result>" line
-for each check you ran and one "Not verified: <what and why>" line. Then stop.`
+repo's PR template if it has one (such as .azuredevops/pull_request_template/ or .github/pull_request_template.md),
+with a "Verified: <command> → <result>" line for each check you ran and one "Not verified: <what and why>" line.
+Add to learnings.md what the next agent here would otherwise get wrong (see your brief). Then stop.`
 
 export const fixPrompt = (findings: string[]) => `flow's verify found problems that are new compared with the base (format: file|rule|message):
 ${findings.map(f => `- ${f}`).join('\n')}
@@ -96,19 +100,21 @@ export function runBrief(b: RunBrief): string {
   const what = b.key ? `ticket ${b.key} "${plainTitle(b.title)}" (its title, as the ticket has it)` : `the task "${plainTitle(b.title)}"`
   return [
     `You are the agent of flow run ${b.run}, working on ${what}${b.url ? ` (${b.url})` : ''}. ${where(b)}`,
-    'You work unattended: nobody watches this session, and a question at the end of your reply goes unanswered. Decide reversible things yourself and record each in the plan\'s Decisions log; a human reads the plan and the draft PR later.',
+    'You work unattended: nobody watches this session, and a question at the end of your reply goes unanswered. This overrides any instruction in your other settings to ask or check with the user. Decide reversible things yourself and record each in the plan\'s Decisions log; a human reads the plan and the draft PR later.',
     `Goal: resolve ${what} with the smallest correct change, and leave a pull request description (${b.prFile}) that a reviewer can judge in ten minutes from its evidence.`,
     'How the run goes: flow sends you one step at a time (the plan, the build, fixes). flow itself verifies your change against the base, has another agent review it, and commits, pushes and opens the draft PR: git commit and push are refused here, so leave your change uncommitted.',
     [
       'The run ends in exactly one of three ways:',
       `- the change in the worktree and ${b.prFile} written; flow takes it from there;`,
       `- ${b.runDir}/resolution.md when no change is needed (already fixed, a configuration or data issue, not reproducible on current code): what you found, the evidence, and a suggested comment for the ticket;`,
-      `- ${b.runDir}/blocked.md when you can't go on: what you need, what you tried, your recommendation. This is also how you ask the human something: write it there, then stop.`,
+      `- ${b.runDir}/blocked.md when you can't go on: what you need, what you tried, your recommendation.`,
+      'A question only the human can answer pauses the run instead: call the ask tool, then stop; the run carries on with their answer.',
     ].join('\n'),
-    `Your flow tools (mcp__flow__*) act on this run only; call them instead of working out commands: verify (flow's checks now, only findings new against the base; run it before ending a build turn), ${b.device ? 'device (reload, relaunch, screenshot into evidence/, log), ' : ''}logs (Metro, dev server, device), ticket (this one again, or a linked one), and ask, resolve or block to end your turn the three ways above${b.tools?.length ? `. The project's own: ${b.tools.map(t => `${t.name} (${t.description})`).join('; ')}` : ''}.`,
+    `Your flow tools (mcp__flow__*) act on this run only; call them instead of working out commands: verify (flow's checks now, only findings new against the base; run it before ending a build turn), ${b.device ? 'device (reload, relaunch, screenshot into evidence/, log), ' : ''}logs (Metro, dev server, device), ticket (this one again, or a linked one), and ask (a question for the human), resolve (no change needed) or block (you can't go on), each followed by ending your turn. To compare with the base, call verify rather than checking out or copying the base's files${b.tools?.length ? `. The project's own: ${b.tools.map(t => `${t.name} (${t.description})`).join('; ')}` : ''}.`,
     `What the next agent here would otherwise get wrong goes in ${b.runDir}/learnings.md before you finish, one fact a line: [repo:<key>] <when it applies>: <fact> (kept in that repo's memory once the run is shipped), or [flow] <when it applies>: <fact> (something flow got wrong or lacks). Only non-obvious facts; nothing about this ticket alone. The repo's memory is read-only for you: what you learn goes there through this file.`,
+    'Your shell is zsh: quote any argument with ?, *, [ or ! in it (a URL, a glob for another tool), or zsh refuses the command with "no matches found".',
     `Keep your working state in ${b.planFile}: this brief stays with you, but long turns are compacted and older messages are lost.`,
-    'Before you end a turn, read your last paragraph: if it is a plan, a question or a promise ("next I will…"), do that work now, or put the question in blocked.md.',
+    'Before you end a turn, read your last paragraph: if it is a plan, a question or a promise ("next I will…"), do that work now, or ask it with the ask tool.',
     ...(b.device ? [`The run's device is ${b.device.platform} ${b.device.id} (Metro on port ${b.device.metroPort}, the app installed). Drive it with the argent tools on ${b.device.id} only (pass that id); no other device is yours. Screenshots that prove the change (before and after, for anything visible) go in ${b.runDir}/evidence/ and are named in pr.md. Leave the device running.`] : []),
     ...(b.logins ? [`Test logins for this run are in ${b.runDir}/logins.md: for signing in on the device or in the app only, never in code, commits, pr.md, the plan or any other file. flow refuses to ship a change or a PR description that contains them.`] : []),
     ...(b.brief?.length ? [`About this project (from the human who runs flow):\n${b.brief.map(l => `- ${l}`).join('\n')}`] : []),

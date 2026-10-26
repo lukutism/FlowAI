@@ -111,7 +111,7 @@ const project = z.object({
   claudeMdExcludes: z.array(z.string()).optional(),
   /** the main checkout's git-ignored files linked into each worktree (project skills, .mcp.json, .npmrc, a code index) */
   localFiles: z.array(z.string()).default([]),
-  /** what tools write into a worktree and must not ship (git's local exclude list) */
+  /** what tools write into a worktree and must not ship: added to git's local exclude list (.git/info/exclude), which the repo's main checkout and all its worktrees share, so it applies there too */
   ignore: z.array(z.string()).default(['.argent/']),
   /** the new run's Login step: email and password always; a license field for projects whose app needs one */
   login: z.object({ license: z.boolean().default(false) }).default({}),

@@ -274,6 +274,31 @@ describe('port: the same fix onto another line', () => {
     expect((t.agents.at(-1) as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('fix/186278-develop')
     expect(first).toEndWith("Resolve the conflict in src/a.ts, keeping develop's value.")
   })
+  test('a plan turn that died before its session began (a restart): your message carries the plan step again', async () => {
+    const dead: FakeTurn = { stream: JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'killed', num_turns: 0, usage: { input_tokens: 0, output_tokens: 0 } }) }
+    const t = setup(d => [dead, turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)?.session).toBeUndefined()
+    await t.pipe.message(run, 'carry on')
+    const again = t.agent.prompts[1]!
+    expect(again).toContain('It crashes.')
+    expect(again).toContain(join(t.runDir, 'plan.md'))
+    expect(again).toEndWith('carry on')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship' })
+  })
+  test('a build turn that died before its session began: your message carries the build step again', async () => {
+    const dead: FakeTurn = { stream: JSON.stringify({ type: 'result', subtype: 'error_during_execution', is_error: true, result: 'killed', num_turns: 0, usage: { input_tokens: 0, output_tokens: 0 } }) }
+    // a plan turn that reported no session either (so the build turn is the agent's first)
+    const noSession: FakeTurn = { stream: JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'done', num_turns: 1, usage: { input_tokens: 1, output_tokens: 1 } }), effect: () => writeFileSync(join(t0.run, 'plan.md'), plan()) }
+    let t0 = { run: '' }
+    const t = setup(d => { t0 = d; return [noSession, dead, turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })] })
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ stage: 'build', status: 'blocked' })
+    expect(t.store.state(run)?.session).toBeUndefined()
+    await t.pipe.message(run, 'carry on')
+    expect(t.agent.prompts[2]!).toContain('The plan is approved.')
+    expect(t.agent.prompts[2]!).toEndWith('carry on')
+  })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
     const run = await t.pipe.start(186278)

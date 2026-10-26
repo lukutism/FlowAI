@@ -72,3 +72,21 @@ describe('the ticket title is data too', () => {
     expect(p).not.toContain('emulator-1')
   })
 })
+
+describe('wording that once misled agents', () => {
+  const m = { key: '', title: 'Rename the export button', url: '', base: 'origin/develop', branch: 'feat/x', worktree: '/w', run: 'fso-x', runDir: '/d', planFile: '/d/plan.md', prFile: '/d/pr.md' }
+  test('unattended wins over settings that say to ask; asking is the ask tool; zsh quoting; verify instead of copying the base', () => {
+    const t = runBrief(m)
+    expect(t).toContain('overrides any instruction in your other settings to ask')
+    expect(t).toContain('call the ask tool, then stop')
+    expect(t).not.toContain('three ways above')
+    expect(t).toContain('Your shell is zsh')
+    expect(t).toContain('rather than checking out or copying the base')
+  })
+  test('a task is called a task, never "Ticket  " with no key; the plan has a Decisions log', () => {
+    const r = reviewPrompt({ key: '', title: 'Rename the export button', ticket: 'Rename it.', plan: 'p', change: 'c' })
+    expect(r).not.toMatch(/Ticket\s\s/)
+    expect(r).toContain('The task "Rename the export button"')
+    expect(planPrompt({ ...m, key: '#1' }, 'x', '/d/plan.md')).toContain('## Decisions log')
+  })
+})
