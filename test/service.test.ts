@@ -147,7 +147,8 @@ describe('Service: after a restart, and when a step throws', () => {
     t.store.append('ex-8', 'engine', { type: 'run.paused', window: '5h', until: 1 })
     await t.svc.recover()
     expect(t.store.state('ex-9')).toMatchObject({ status: 'failed', needs: { ask: expect.stringMatching(/restarted during setup/) } })
-    expect(t.store.state('ex-8')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/restarted during plan.*message/) } })
+    // said on the run, then sent on by itself (the next test)
+    expect(t.store.events('ex-8').find(e => e.type === 'run.blocked')).toMatchObject({ reason: expect.stringMatching(/restarted during plan/) })
   })
   test("an agent that was mid-turn is told to carry on by itself (its session resumes); a setup is not redone", async () => {
     const t = setup(() => [])
