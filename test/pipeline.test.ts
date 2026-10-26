@@ -529,3 +529,30 @@ describe('pipeline: the agent ends the run, or asks', () => {
     expect(t.azCalls.some(a => a.includes('create'))).toBe(false)
   })
 })
+
+describe('pipeline: the agent\'s flow tools', () => {
+  test('verify now, during the build: findings new against the base, no event recorded', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
+    const run = await t.pipe.start(186278)
+    writeFileSync(join(t.wt, 'src/b.ts'), 'export const b = 2 // ERR mine\n')
+    const before = t.store.events(run).length
+    const r = await t.pipe.callTool(run, 'verify', {})
+    expect(r.text).toMatch(/1 new finding.*src\/b\.ts\|TS2322/s)
+    expect(t.store.events(run)).toHaveLength(before)
+  })
+  test('ask through the tool: after the turn the run asks you', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); void t.pipe.callTool('example-186278', 'ask', { question: 'Also the tablet layout? Default: no.' }) })])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'question', ask: 'Also the tablet layout? Default: no.' } })
+  })
+  test("a project tool runs its command with the argument as one word, in the worktree", async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
+    ;(t.pipe as unknown as { d: { project: { tools: unknown[] } } }).d.project.tools = [{ name: 'echo_arg', description: 'says it back', cmd: 'printf "%s|" {word} && pwd', cwd: 'worktree', args: [{ name: 'word', description: 'w' }] }]
+    const run = await t.pipe.start(186278)
+    expect(t.pipe.tools(run).map(x => x.name)).toContain('echo_arg')
+    const r = await t.pipe.callTool(run, 'echo_arg', { word: 'a b; rm -rf /' })
+    expect(r).toMatchObject({ ok: true })
+    expect(r.text).toContain('a b; rm -rf /|')
+    expect(r.text).toContain(require('node:fs').realpathSync(t.wt))
+  })
+})

@@ -25,6 +25,8 @@ export interface DeviceCommands {
   install?: string
   stop?: string
   remove?: string
+  /** the app's id (android package, iOS bundle id) */
+  app?: string
 }
 /** headless: the emulator runs without its window ({headless} in the boot command); it is seen in the browser instead */
 export interface DeviceSpec { metro: string; consolePortStart: number; metroPortStart: number; headless?: boolean; android?: DeviceCommands; ios?: DeviceCommands }

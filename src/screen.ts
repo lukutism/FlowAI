@@ -42,7 +42,7 @@ export function inputArgs(d: DeviceState, i: Input): string[] | null {
   return [...on, 'text', `'${i.text.replace(/ /g, '%s').replace(/'/g, `'\\''`)}'`]
 }
 
-const adb = () => process.env.FLOW_ADB ?? join(process.env.ANDROID_HOME ?? join(process.env.HOME ?? '', 'Library/Android/sdk'), 'platform-tools/adb')
+export const adb = () => process.env.FLOW_ADB ?? join(process.env.ANDROID_HOME ?? join(process.env.HOME ?? '', 'Library/Android/sdk'), 'platform-tools/adb')
 
 /** the device's screen now, as an image */
 export async function frame(d: DeviceState): Promise<{ type: string; bytes: Uint8Array }> {

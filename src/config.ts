@@ -62,6 +62,8 @@ const deviceCommands = z.object({
   install: z.string().optional(),
   stop: z.string().optional(),
   remove: z.string().optional(),
+  /** the app on the device (android package, iOS bundle id): the agent's device tool relaunches it */
+  app: z.string().optional(),
 })
 const devices = z.object({
   metro: z.string(),
@@ -99,6 +101,14 @@ const project = z.object({
   localFiles: z.array(z.string()).default([]),
   /** the new run's Login step: email and password always; a license field for projects whose app needs one */
   login: z.object({ license: z.boolean().default(false) }).default({}),
+  /** the project's own commands, as tools the agents call by name ({worktree} {runDir} {run} {base} {id} {metroPort} and each argument; arguments are quoted) */
+  tools: z.array(z.object({
+    name: z.string().regex(/^[a-z][a-z0-9_]{1,40}$/).refine(n => !['verify', 'device', 'logs', 'ticket', 'ask', 'resolve', 'block'].includes(n), "that name is one of flow's own tools"),
+    description: z.string().min(1),
+    cmd: z.string().min(1),
+    cwd: z.enum(['worktree', 'run']).default('worktree'),
+    args: z.array(z.object({ name: z.string().regex(/^[a-z][a-zA-Z0-9_]*$/), description: z.string() })).default([]),
+  })).default([]),
   /** tools the agents may not call (an MCP server's write tools); permission rules, as in Claude Code's settings */
   denyTools: z.array(z.string()).default([]),
   /** an independent reviewer (a fresh, read-only claude session) before ship */

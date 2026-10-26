@@ -59,7 +59,7 @@ export interface ServiceDeps {
   projects: Record<string, Project>
   az: Az
   dataDir: string
-  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string }) => RunAgent
+  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string; mcpConfig?: string }) => RunAgent
   makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
@@ -123,6 +123,10 @@ export class Service {
       else this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `${why}; message the agent to carry on` })
     } catch {}
   }
+
+  /** the tools of a run's agent, and a call of one (from the run's flow MCP server) */
+  tools(run: string) { const s = this.d.store.state(run); if (!s) throw new Error(`no run ${run}`); return this.pipeline(s.project).tools(run) }
+  tool(run: string, name: string, args: Record<string, unknown>) { const s = this.d.store.state(run); if (!s) throw new Error(`no run ${run}`); return this.pipeline(s.project).callTool(run, name, args) }
 
   onNotice(fn: (n: Notice) => void) { this.notices.add(fn); return () => { this.notices.delete(fn) } }
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }

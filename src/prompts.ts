@@ -84,7 +84,7 @@ pushes and opens the draft PR itself after verify and review.
 ${text}`
 
 /** what a run's agent keeps for the whole run (its system prompt), beside each step's message */
-export interface RunBrief extends Brief { run: string; runDir: string; planFile: string; prFile: string; note?: string; logins?: boolean }
+export interface RunBrief extends Brief { run: string; runDir: string; planFile: string; prFile: string; note?: string; logins?: boolean; tools?: { name: string; description: string }[] }
 
 /**
  * The run's brief, given with --append-system-prompt: unlike a step's message it stays through compactions. The
@@ -103,6 +103,7 @@ export function runBrief(b: RunBrief): string {
       `- ${b.runDir}/resolution.md when no change is needed (already fixed, a configuration or data issue, not reproducible on current code): what you found, the evidence, and a suggested comment for the ticket;`,
       `- ${b.runDir}/blocked.md when you can't go on: what you need, what you tried, your recommendation. This is also how you ask the human something: write it there, then stop.`,
     ].join('\n'),
+    `Your flow tools (mcp__flow__*) act on this run only; call them instead of working out commands: verify (flow's checks now, only findings new against the base; run it before ending a build turn), ${b.device ? 'device (reload, relaunch, screenshot into evidence/, log), ' : ''}logs (Metro, dev server, device), ticket (this one again, or a linked one), and ask, resolve or block to end your turn the three ways above${b.tools?.length ? `. The project's own: ${b.tools.map(t => `${t.name} (${t.description})`).join('; ')}` : ''}.`,
     `Keep your working state in ${b.planFile}: this brief stays with you, but long turns are compacted and older messages are lost.`,
     'Before you end a turn, read your last paragraph: if it is a plan, a question or a promise ("next I will…"), do that work now, or put the question in blocked.md.',
     ...(b.device ? [`The run's device is ${b.device.platform} ${b.device.id} (Metro on port ${b.device.metroPort}, the app installed). Drive it with the argent tools on ${b.device.id} only (pass that id); no other device is yours. Screenshots that prove the change (before and after, for anything visible) go in ${b.runDir}/evidence/ and are named in pr.md. Leave the device running.`] : []),

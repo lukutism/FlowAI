@@ -82,7 +82,7 @@ export async function diffs(dataDir: string, run: string, maxLines = 1500, patch
 /** the logs of a run the screen may read: Metro's, the dev server's, the device's */
 export const RUN_LOGS = ['metro', 'devserver', 'device'] as const
 export type RunLog = (typeof RUN_LOGS)[number]
-export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'changes'; run: string } | { cmd: 'diff'; run: string } | { cmd: 'query'; query: Query } | { cmd: 'log'; run: string; name: RunLog; lines: number }
+export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'changes'; run: string } | { cmd: 'diff'; run: string } | { cmd: 'query'; query: Query } | { cmd: 'log'; run: string; name: RunLog; lines: number } | { cmd: 'tools'; run: string } | { cmd: 'tool'; run: string; name: string; args: Record<string, unknown> }
 export type Request = RequestBody & { id: number }
 
 export type Message =
@@ -98,7 +98,7 @@ export type Message =
   | { type: 'projects'; projects: ProjectSummary[] }
   | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: true; changes: Change[] } | { ok: true; diffs: FileDiff[] } | { ok: true; data: unknown } | { ok: false; error: string } }
 
-type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent' | 'query' | 'onProjects'>
+type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent' | 'query' | 'onProjects'> & Partial<Pick<Service, 'tools' | 'tool'>>
 
 /** how many of the latest events the screen gets on connect (its Activity) */
 export const RECENT = 300
@@ -150,6 +150,9 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
           return
         }
         if (r.cmd === 'events') { reply({ ok: true, events: o.store.events(r.run) }); return }
+        // the run's agent's tools, through its flow MCP server
+        if (r.cmd === 'tools') { try { reply({ ok: true, data: o.service.tools?.(r.run) ?? [] }) } catch (e) { reply({ ok: false, error: (e as Error).message }) } return }
+        if (r.cmd === 'tool') { try { reply({ ok: true, data: await o.service.tool!(r.run, r.name, r.args ?? {}) }) } catch (e) { reply({ ok: false, error: (e as Error).message }) } return }
         const safe = /^[\w.-]+$/.test(r.cmd === 'transcript' || r.cmd === 'log' || r.cmd === 'file' || r.cmd === 'changes' || r.cmd === 'diff' ? r.run : '')
         const patch = safe && 'run' in r ? o.store.state(r.run)?.patch?.commit : undefined
         if (r.cmd === 'diff') { reply(safe ? { ok: true, diffs: await diffs(o.dataDir, r.run, 1500, patch) } : { ok: false, error: 'not a run' }); return }

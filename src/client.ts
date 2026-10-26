@@ -110,6 +110,18 @@ export class FlowClient {
     return r.changes
   }
 
+  /** a run's agent tools (for its flow MCP server), and a call of one */
+  async tools(run: string): Promise<unknown[]> {
+    const r = await this.request({ cmd: 'tools', run })
+    if (!r.ok || !('data' in r)) throw new Error('error' in r ? r.error : 'no tools')
+    return r.data as unknown[]
+  }
+  async tool(run: string, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; text: string }> {
+    const r = await this.request({ cmd: 'tool', run, name, args })
+    if (!r.ok || !('data' in r)) return { ok: false, text: 'error' in r ? r.error : 'no answer' }
+    return r.data as { ok: boolean; text: string }
+  }
+
   /** a question of the new-run form; its answer, or the error */
   async query<T>(q: Query): Promise<T> {
     const r = await this.request({ cmd: 'query', query: q })

@@ -11,7 +11,7 @@ const METRO = join(import.meta.dir, 'fake-metro-server.ts')
 function spec(dir: string, over: Partial<DeviceSpec['android'] & object> = {}): DeviceSpec {
   return {
     metro: `${process.execPath} ${METRO} {metroPort}`,
-    consolePortStart: 5700, metroPortStart: 8700,
+    consolePortStart: 25700, metroPortStart: 28700,
     android: {
       template: 'Pixel_9',
       prepare: `echo prepared > ${dir}/prepared`,
@@ -38,11 +38,11 @@ describe('a run\'s device', () => {
     const d = dirs()
     const s = await startDevice({ spec: spec(d.dir), platform: 'android', run: 'fso-1', runDir: d.runDir, worktree: d.wt, readyTimeoutMs: 5000 })
     try {
-      expect(s).toMatchObject({ platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 8700 })
+      expect(s).toMatchObject({ platform: 'android', id: 'emulator-25700', consolePort: 25700, metroPort: 28700 })
       expect(readFileSync(join(d.dir, 'prepared'), 'utf8')).toBe('prepared\n')
-      expect(readFileSync(join(d.dir, 'installed'), 'utf8')).toBe('emulator-5700 8700\n')
-      expect(await (await fetch('http://127.0.0.1:8700/status')).text()).toBe('packager-status:running')
-      expect(JSON.parse(readFileSync(join(d.runDir, 'device.json'), 'utf8'))).toMatchObject({ id: 'emulator-5700', metroPort: 8700 })
+      expect(readFileSync(join(d.dir, 'installed'), 'utf8')).toBe('emulator-25700 28700\n')
+      expect(await (await fetch('http://127.0.0.1:28700/status')).text()).toBe('packager-status:running')
+      expect(JSON.parse(readFileSync(join(d.runDir, 'device.json'), 'utf8'))).toMatchObject({ id: 'emulator-25700', metroPort: 28700 })
     } finally { await stopDevice(s, spec(d.dir), d.runDir) }
   })
   test('headless: {headless} in the boot command is the platform\'s no-window flags; shown, it is nothing', async () => {
@@ -57,10 +57,10 @@ describe('a run\'s device', () => {
     const d = dirs()
     const s = await startDevice({ spec: spec(d.dir), platform: 'android', run: 'fso-2', runDir: d.runDir, worktree: d.wt, readyTimeoutMs: 5000 })
     await stopDevice(s, spec(d.dir), d.runDir)
-    expect(readFileSync(join(d.dir, 'stopped'), 'utf8')).toBe('stopped emulator-5700\n')
+    expect(readFileSync(join(d.dir, 'stopped'), 'utf8')).toBe('stopped emulator-25700\n')
     expect(readFileSync(join(d.dir, 'removed'), 'utf8')).toBe('removed fso-2\n')
     for (const pid of s.pids) expect(() => process.kill(pid, 0)).toThrow()
-    await expect(fetch('http://127.0.0.1:8700/status')).rejects.toThrow()
+    await expect(fetch('http://127.0.0.1:28700/status')).rejects.toThrow()
     expect(existsSync(join(d.runDir, 'device.json'))).toBe(false)
   })
   test('the id printed by create when the project names none (a simulator clone prints its UDID)', async () => {
