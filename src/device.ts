@@ -30,7 +30,8 @@ export interface DeviceCommands {
 }
 /** headless: the emulator runs without its window ({headless} in the boot command); it is seen in the browser instead */
 export interface DeviceSpec { metro: string; consolePortStart: number; metroPortStart: number; headless?: boolean; android?: DeviceCommands; ios?: DeviceCommands }
-export interface DeviceState { run: string; platform: 'android' | 'ios'; id: string; consolePort: number; metroPort: number; pids: number[] }
+/** app: the app's id on it, when the project names it (its log, its relaunch) */
+export interface DeviceState { run: string; platform: 'android' | 'ios'; id: string; consolePort: number; metroPort: number; pids: number[]; app?: string }
 
 async function must(what: string, cmd: string, cwd: string) {
   const r = await sh(cmd, cwd)
@@ -70,7 +71,7 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
   const vars: Record<string, string | number | undefined> = { run: o.run, consolePort, metroPort, worktree: o.worktree, runDir: o.runDir, template: cmds.template, grpcPort: consolePort + 3000 }
   // flow's own flags, several words: put in as they are (other values are quoted as one word each)
   const filled = (c: string) => fillSh(c.replaceAll('{headless}', headless), vars)
-  const state: DeviceState = { run: o.run, platform: o.platform, id: cmds.id ? fill(cmds.id, vars) : '', consolePort, metroPort, pids: [] }
+  const state: DeviceState = { run: o.run, platform: o.platform, id: cmds.id ? fill(cmds.id, vars) : '', consolePort, metroPort, pids: [], ...(cmds.app ? { app: cmds.app } : {}) }
   const timeout = o.readyTimeoutMs ?? 180_000
   const deviceLog = join(o.runDir, 'device.log'), metroLog = join(o.runDir, 'metro.log')
   try {

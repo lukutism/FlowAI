@@ -117,8 +117,15 @@ export async function emulators(): Promise<string[]> {
 
 /** the app's log on the device: the JS console (React Native) and errors; all: every line */
 export async function appLog(d: DeviceState, all = false, lines = 300): Promise<string[]> {
+  // the app's own process when its id is known; else React Native's tags and every error
+  let pid = ''
+  if (!all && d.platform === 'android' && d.app) {
+    const p = Bun.spawn([adb(), '-s', d.id, 'shell', 'pidof', d.app], { stdout: 'pipe', stderr: 'ignore', env: process.env })
+    pid = (await new Response(p.stdout).text()).trim().split(/\s+/)[0] ?? ''
+    await p.exited
+  }
   const argv = d.platform === 'android'
-    ? [adb(), '-s', d.id, 'logcat', '-d', '-t', String(lines), '-v', 'time', ...(all ? [] : ['ReactNativeJS:V', 'ReactNative:W', 'AndroidRuntime:E', '*:E'])]
+    ? [adb(), '-s', d.id, 'logcat', '-d', '-t', String(lines), '-v', 'time', ...(all ? [] : pid ? [`--pid=${pid}`] : ['ReactNativeJS:V', 'ReactNative:W', 'AndroidRuntime:E', '*:E'])]
     : ['xcrun', 'simctl', 'spawn', d.id, 'log', 'show', '--last', '5m', '--style', 'compact', ...(all ? [] : ['--predicate', 'subsystem == "com.facebook.react.log" OR messageType == error'])]
   const p = Bun.spawn(argv, { stdout: 'pipe', stderr: 'ignore', env: process.env })
   const out = await new Response(p.stdout).text()
