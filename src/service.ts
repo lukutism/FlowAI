@@ -18,6 +18,8 @@ export type Command =
   | { cmd: 'port'; run: string; to?: string }
   /** stop the run's device and free its slot (ship does it too) */
   | { cmd: 'release'; run: string }
+  /** the agent's turn running now ended at once; the run stops for you (a message carries it on) */
+  | { cmd: 'stop'; run: string }
   /** finished (merged, or given up): off the attention list */
   | { cmd: 'done'; run: string }
   /** device, worktrees and local branch removed, the folder archived; work never shipped needs force */
@@ -193,6 +195,12 @@ export class Service {
         if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
         this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, task: c.task }) })
         return { ok: true, run }
+      }
+      if (c.cmd === 'stop') {
+        const st = this.d.store.state(c.run)
+        if (!st || !this.busy.has(c.run)) throw new Error(`${c.run} has no turn running`)
+        void this.pipeline(st.project).stopTurn(c.run)
+        return { ok: true, run: c.run }
       }
       // a run just started may not be recorded yet (its ticket is still being read): it is busy, not missing
       if (this.busy.has(c.run)) throw new Error(`${c.run} is busy: wait for its current step to end`)

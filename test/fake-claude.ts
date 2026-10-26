@@ -3,7 +3,7 @@
  * A stand-in for the `claude` executable in process tests. Reads stream-json user messages on stdin, like
  * `claude -p --input-format stream-json`, and answers each with the next recorded session (FAKE_TURNS: fixture
  * paths, comma-separated). Logs its argv, env and the prompts it got to FAKE_LOG.
- * A prompt "CRASH" makes it write half a turn and exit 3, as a killed CLI would.
+ * A prompt "CRASH" makes it write half a turn and exit 3, as a killed CLI would; "HANG" writes half a turn and hangs.
  */
 import { appendFileSync, readFileSync } from 'node:fs'
 
@@ -20,6 +20,7 @@ for await (const chunk of Bun.stdin.stream()) {
     const prompt = JSON.parse(line).message.content
     log({ prompt })
     const lines = readFileSync(turns[n++ % turns.length]!, 'utf8').split('\n').filter(Boolean)
+    if (prompt === 'HANG') { process.stdout.write(lines[0] + '\n'); await new Promise(() => {}) }
     if (prompt === 'CRASH') { process.stdout.write(lines[0] + '\n'); process.stderr.write('fatal: something broke\n'); process.exit(3) }
     for (const l of lines) { process.stdout.write(l + '\n'); await Bun.sleep(1) }
   }

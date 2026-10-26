@@ -154,6 +154,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (r.pr) a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
       if (r.device && api.pageUrl) a.push({ label: 'See the device in the browser', hint: `${r.device.platform === 'android' ? 'see it and use it' : 'see it'} · ${r.device.id}`, run: () => { (api.openUrl ?? openUrl)(api.pageUrl!(`/device/${r.id}`)); setNotice(`${r.ticket}: the device opened in the browser`) } })
       if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })
+      if (r.status === 'running') a.push({ label: "Stop the agent's turn", hint: 'it ends now; a message carries the run on', run: () => void send({ cmd: 'stop', run: r.id }, `${r.ticket}: stopping the agent's turn`) })
       if (r.status !== 'done') a.push({ label: 'Mark done', hint: r.pr ? 'merged, or given up: off the attention list' : 'given up: off the attention list', run: () => ask.done(r) })
       a.push({ label: 'Remove the run', hint: 'device, worktrees, local branch; folder archived', run: () => ask.remove(r) })
       a.push({ label: 'Remove the run, dropping work not shipped', hint: 'uncommitted changes and unpushed commits are lost', run: () => ask.remove(r, true) })

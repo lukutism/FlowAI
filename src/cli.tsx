@@ -12,6 +12,7 @@
  *                                                                   a patch run: the write-back's dry run, then (again) the write-back
  *   flow release <run>                                              stop the run's device now and free its slot
  *   flow device <run>                                               the run's device in the browser: see it, tap, swipe, type
+ *   flow stop <run>                                                 end the agent's turn now; the run waits for a message
  *   flow done <run>                                                 the run is finished (merged, or given up): off the attention list
  *   flow rm <run> [--force]                                         remove it: device, worktrees, local branch; its folder archived
  *   flow status [<run>]                                             runs and what they need; your plan windows
@@ -171,7 +172,7 @@ async function main(argv: string[]) {
   const [cmd, ...args] = argv
   const f = flags(args, ['base', 'model', 'cwd', 'kind', 'to', 'repos', 'device', 'patch'])
   const repos = f.repos ? f.repos.split(',').map(x => x.trim()).filter(Boolean) : undefined
-  const service = ['start', 'approve', 'message', 'ship', 'port', 'release', 'done', 'rm'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
+  const service = ['start', 'approve', 'message', 'ship', 'port', 'release', 'done', 'rm', 'stop'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
   switch (cmd) {
     case undefined: case 'ui': return uiCmd()
     case 'serve': return serveCmd()
@@ -230,6 +231,15 @@ async function main(argv: string[]) {
         console.log(url.replace(/token=.*/, 'token=…'))
         Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url])
       } finally { c.close() }
+      return
+    }
+    case 'stop': {
+      const [run] = args
+      if (!run) throw new Error('flow stop <run>')
+      if (!service) throw new Error('no turn is running: the flow service is not running')
+      const r = await service.send({ cmd: 'stop', run }).finally(() => service.close())
+      if (!r.ok) throw new Error(r.error)
+      console.log(`${run}: the agent's turn is stopped; flow message ${run} "…" carries it on`)
       return
     }
     case 'done': {

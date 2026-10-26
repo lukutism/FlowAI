@@ -577,6 +577,9 @@ export class Pipeline {
     return { removed }
   }
 
+  /** the agent's turn running now ended at once (its process killed); the run blocks, saying you stopped it */
+  async stopTurn(run: string) { await this.agents.get(run)?.stop?.() }
+
   /** the run's agent process closed (it holds about 2 GB); its next turn starts one again on the same session */
   async closeAgent(run: string) { await this.agents.get(run)?.close?.() }
 

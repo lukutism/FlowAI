@@ -5,7 +5,7 @@ import type { EventStore } from './store.ts'
 import { Turns } from './turns.ts'
 import { canStartTurn, type UsageLimits, type Windows } from './usage.ts'
 
-export type RunAgent = Agent & { close?: () => Promise<void> }
+export type RunAgent = Agent & { close?: () => Promise<void>; stop?: () => Promise<void> }
 
 export interface RunnerOptions {
   store: EventStore

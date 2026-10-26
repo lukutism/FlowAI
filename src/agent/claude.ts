@@ -43,6 +43,7 @@ export class ClaudeAgent implements Agent {
         if (next.done) {
           const code = await proc.exited
           if (this.proc === proc) this.proc = undefined // the next turn starts a new process on the same session
+          if (this.stopping) { this.stopping = false; throw new Error('the turn was stopped by you') }
           throw new Error(`claude exited with ${code} before the turn ended: ${this.stderr.trim().split('\n').slice(-3).join(' | ') || '(no stderr)'}`)
         }
         for (const e of parseLine(next.value)) {
@@ -54,6 +55,16 @@ export class ClaudeAgent implements Agent {
       }
     } finally { this.busy = false }
   }
+
+  /** the turn running now ended at once (the process killed); the next turn resumes the session */
+  async stop() {
+    const p = this.proc
+    if (!p) return
+    this.stopping = true
+    p.kill()
+    await p.exited
+  }
+  private stopping = false
 
   async close() {
     const p = this.proc

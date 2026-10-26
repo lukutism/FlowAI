@@ -64,6 +64,16 @@ describe('ClaudeAgent: one claude process per run, one message per turn', () => 
     expect(starts).toHaveLength(2)
     expect(starts[1]!.slice(starts[1]!.indexOf('--resume'), starts[1]!.indexOf('--resume') + 2)).toEqual(['--resume', '944ca44e-23ae-4522-b779-8be15378469e'])
   })
+  test('stopped during a turn: the turn ends at once, saying you stopped it; the next turn resumes the session', async () => {
+    const { a, log } = agent(['01-turn-tool', '02-resume'])
+    const t = all(a.turn('HANG'))
+    await Bun.sleep(300)
+    const at = Date.now()
+    await a.stop()
+    await expect(t).rejects.toThrow(/stopped by you/)
+    expect(Date.now() - at).toBeLessThan(2000)
+    expect(log().filter(x => x.argv)).toHaveLength(1)
+  })
   test('closed between turns (to free its memory), the next turn resumes the session in a new process', async () => {
     const { a, log } = agent(['01-turn-tool', '02-resume'])
     await all(a.turn('one'))
