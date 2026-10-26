@@ -154,6 +154,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (r.needs?.kind === 'ship' || r.needs?.kind === 'patch') a.push({ label: r.patch ? (r.needs.kind === 'patch' ? 'Write the patch back' : 'Check the write-back') : 'Ship', hint: r.patch ? 'S' : 'S · commit, push, draft PR', run: () => ask.ship(r) })
       a.push(...(detailCmds.current?.() ?? []))
       if (r.pr) a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
+      if (r.status !== 'done' && r.status !== 'failed') {
+        const has = new Set(r.repos ?? []), all = api.projects?.find(p => p.key === r.project)?.repos ?? []
+        for (const key of r.repos ? all.filter(k => !has.has(k)) : []) a.push({ label: `Add repo ${key}`, hint: "its own worktree on the run's branch; the agent's next turn has it", run: () => void send({ cmd: 'addRepo', run: r.id, repo: key }, `${r.ticket}: adding ${key}`) })
+        a.push({ label: 'Sync with the base', hint: "fetch, merge the base under the agent's change (kept uncommitted)", run: () => void send({ cmd: 'sync', run: r.id }, `${r.ticket}: syncing with its base`) })
+      }
       if (r.device && api.pageUrl) a.push({ label: 'See the device in the browser', hint: `${r.device.platform === 'android' ? 'see it and use it' : 'see it'} · ${r.device.id}`, run: () => { (api.openUrl ?? openUrl)(api.pageUrl!(`/device/${r.id}`)); setNotice(`${r.ticket}: the device opened in the browser`) } })
       if (r.device || r.devServer) a.push({ label: r.device ? 'Restart the device' : 'Restart the dev server', hint: r.device ? 'stop it, boot it again with the current settings, install the app' : 'stop it and start it again with the current settings', run: () => void send({ cmd: 'restartDevice', run: r.id }, `${r.ticket}: restarting its device`) })
       if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })

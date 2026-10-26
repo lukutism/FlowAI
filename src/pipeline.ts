@@ -242,7 +242,7 @@ export class Pipeline {
     const logins = [o.logins?.trim(), ...red.found.map(f => `from the ticket, ${f.label}: ${f.value}`)].filter(Boolean).join('\n')
     if (logins) writeFileSync(join(this.runDir(run), 'logins.md'), logins + '\n', { mode: 0o600 })
     writeFileSync(join(this.runDir(run), 'ticket.md'), task ? `# ${t.title}\n\n${red.text}\n` : `# ${t.key} ${t.title}\n${t.url}\n\n${red.text}\n`)
-    this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key || 'task', title: t.title, project: p.key, base: m.base })
+    this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key || 'task', title: t.title, project: p.key, base: m.base, repos: m.repos.map(r => r.key) })
     if (!(await this.setup(run, m))) return run
     await this.planStep(run, red.text)
     return run
@@ -344,6 +344,67 @@ export class Pipeline {
 
   /** the run's own device: a device slot, free ports (not another run's), boot, Metro, install; the slot is freed on failure */
   /** the run's device stopped and booted again with the project's current commands (the app built and installed) */
+  /**
+   * A repo the run lacks, added while it waits: its own worktree on the run's branch beside the others (from the
+   * repo's default base unless given), the app env and git-excludes as at setup. The agent's next turn starts a new
+   * process (resuming its session in the same folder) whose brief and settings include it.
+   */
+  async addRepo(run: string, key: string, base?: string): Promise<string> {
+    const s = this.must(run), m = this.meta(run)
+    if (s.status === 'done' || s.status === 'failed') throw new Error(`${run} is ${s.status}`)
+    if (m.repos.some(r => r.key === key)) throw new Error(`${run} has ${key} already`)
+    if (!this.d.project.repos.some(r => r.key === key)) throw new Error(`project ${this.d.project.key} has no repo ${key}`)
+    const c = this.repoConfig(key), from = base ?? c.defaultBase
+    if (!/^[A-Za-z0-9][\w./-]*$/.test(from) || from.includes('..') || from.endsWith('/')) throw new Error(`base "${from}" is not a branch name`)
+    const worktree = join(dirname(m.repos[0]!.worktree), key), log = join(this.runDir(run), 'setup.log')
+    const ignore = [...this.d.project.ignore, ...(c.appEnv ? [`/${c.appEnv.file}`] : [])]
+    await this.building(run, () => createWorktree({ repo: c.path, worktree, branch: m.branch, base: from, install: c.install, localFiles: this.d.project.localFiles, ignore, log }))
+    if (c.appEnv) {
+      const f = join(this.runDir(run), 'logins.md')
+      const set = writeAppEnv(worktree, c.appEnv, parseLogins(existsSync(f) ? readFileSync(f, 'utf8') : ''))
+      if (set) logLine(log, `${key}: app env ${set}`)
+    }
+    // the agent's folder stays the one its session lives in; the repos list grows
+    writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify({ ...m, repos: [...m.repos, { key, worktree, base: from }] }, null, 2) + '\n')
+    this.d.store.append(run, 'human', { type: 'repo.added', repo: key, base: from })
+    await this.closeAgent(run)
+    return `${key} added at ${worktree} on ${m.branch} (from ${from}); the agent's next turn has it`
+  }
+
+  /**
+   * The run's repos brought up to their bases: fetched, then the base merged under the agent's change, which stays
+   * uncommitted (set aside and put back). A change that conflicts with the base is left exactly as it was, the files
+   * named; the agent resolves it on the new base only once told (a message).
+   */
+  async sync(run: string): Promise<string[]> {
+    const m = this.meta(run), out: string[] = [], env = this.d.gitEnv ?? process.env
+    const git = (cwd: string, ...a: string[]) => { const x = Bun.spawnSync(['git', ...a], { cwd, env }); return { code: x.exitCode, out: new TextDecoder().decode(x.stdout).trim(), err: new TextDecoder().decode(x.stderr).trim() } }
+    for (const r of m.repos) {
+      const f = git(r.worktree, 'fetch', '-q', 'origin')
+      if (f.code !== 0) throw new Error(`${r.key}: git fetch failed: ${f.err.split('\n')[0]}`)
+      if (git(r.worktree, 'merge-base', '--is-ancestor', r.base, 'HEAD').code === 0) { out.push(`${r.key}: up to date with ${r.base}`); continue }
+      const dirty = git(r.worktree, 'status', '--porcelain').out !== ''
+      if (dirty && git(r.worktree, 'stash', 'push', '-u', '-q', '-m', 'flow sync').code !== 0) throw new Error(`${r.key}: could not set the change aside`)
+      const merged = git(r.worktree, 'merge', '--no-edit', '--no-verify', '-q', r.base)
+      if (merged.code !== 0) {
+        git(r.worktree, 'merge', '--abort')
+        if (dirty) git(r.worktree, 'stash', 'pop', '-q')
+        throw new Error(`${r.key}: the run's commits conflict with ${r.base}: ${merged.out || merged.err}`.slice(0, 500))
+      }
+      if (dirty && git(r.worktree, 'stash', 'pop', '-q').code !== 0) {
+        // the change and the new base touch the same lines: back to where it was, the change untouched
+        const files = git(r.worktree, 'diff', '--name-only', '--diff-filter=U').out.split('\n').filter(Boolean)
+        git(r.worktree, 'reset', '-q', '--hard', 'ORIG_HEAD')
+        git(r.worktree, 'stash', 'pop', '-q')
+        throw new Error(`${r.key}: the change conflicts with ${r.base} in ${files.join(', ') || '(unknown files)'}; nothing was changed: message the agent to bring its change onto the new base, or sync by hand in ${r.worktree}`)
+      }
+      out.push(`${r.key}: brought up to ${r.base}`)
+    }
+    const moved = out.filter(x => x.includes('brought up')).map(x => x.split(':')[0]!)
+    if (moved.length) this.d.store.append(run, 'human', { type: 'run.synced', repos: moved })
+    return out
+  }
+
   /** the run's device and dev server stopped and started again, with the settings as they are now */
   async restartDevice(run: string) {
     const s = this.must(run), m = this.meta(run)
@@ -578,7 +639,7 @@ export class Pipeline {
     const pr = existsSync(this.prFile(source)) ? readFileSync(this.prFile(source), 'utf8') : `# ${m.title}\n`
     const prs = (src.prs ?? [src.pr]).map(x => `#${x.number}`).join(', ')
     writeFileSync(this.prFile(run), pr.replace(/^(#\s+.+\n?)/m, `$1\nPort of ${src.ticket} PR ${prs} (${from}) to ${to}.\n`))
-    this.d.store.append(run, 'human', { type: 'run.created', ticket: m.key, title: m.title, project: p.key, base: pm.base })
+    this.d.store.append(run, 'human', { type: 'run.created', ticket: m.key, title: m.title, project: p.key, base: pm.base, repos: pm.repos.map(r => r.key) })
     if (!(await this.setup(run, pm))) return run
     this.d.store.append(run, 'engine', { type: 'plan.submitted', summary: `Port of ${src.ticket} PR ${prs} (${from}) to ${to}`, questions: [] })
     const conflicts: string[] = []
@@ -640,7 +701,7 @@ export class Pipeline {
     // a tool such as verify can take minutes
     const env = { MCP_TOOL_TIMEOUT: '1800000', ...(dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : {}) }
     const note = existsSync(join(dir, 'note.md')) ? readFileSync(join(dir, 'note.md'), 'utf8') : undefined
-    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run) })
+    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run), otherRepos: this.d.project.repos.map(r => r.key).filter(k => !this.meta(run).repos.some(r => r.key === k)) })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, mcpConfig, env, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent

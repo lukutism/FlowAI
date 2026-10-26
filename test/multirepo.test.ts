@@ -114,3 +114,53 @@ describe('a run across two repos', () => {
     await expect(t.pipe.start(7, { repos: ['mobile', 'nope'] })).rejects.toThrow(/no repo nope in project ex/)
   })
 })
+
+describe('a repo added to a running run', () => {
+  test('its own worktree on the run\'s branch beside the others; the agent\'s next turn is told it and may write there', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), fullPlan('- Q1: Also the portal? — default: no'))), turn()])
+    const run = await t.pipe.start(7)
+    expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'plan' }, repos: ['mobile'] })
+    expect((t.made[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain("The project's other repos (portal) can be added")
+    const note = await t.pipe.addRepo(run, 'portal')
+    expect(t.store.state(run)!.repos).toEqual(['mobile', 'portal'])
+    expect(note).toContain(join(t.root, 'portal'))
+    expect(git(join(t.root, 'portal'), 'branch', '--show-current')).toBe('fix/7')
+    expect(JSON.parse(readFileSync(join(t.runDir, 'run.json'), 'utf8')).repos.map((r: { key: string }) => r.key)).toEqual(['mobile', 'portal'])
+    expect(t.store.events(run).map(e => e.type)).toContain('repo.added')
+    await t.pipe.message(run, 'carry on')
+    const last = t.made.at(-1) as { cwd: string; settings: string; appendSystemPrompt?: string }
+    expect(last.cwd).toBe(join(t.root, 'mobile')) // the session's folder stays (it resumes there)
+    expect(last.appendSystemPrompt).toContain(`portal: ${join(t.root, 'portal')}`)
+    expect(readFileSync(last.settings, 'utf8')).toContain(join(t.root, 'portal'))
+  })
+  test('a repo the run has, or the project lacks, is refused', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), fullPlan('- Q1: x? — default: y')))])
+    const run = await t.pipe.start(7)
+    await expect(t.pipe.addRepo(run, 'mobile')).rejects.toThrow(/has mobile already/)
+    await expect(t.pipe.addRepo(run, 'cloud')).rejects.toThrow(/no repo cloud/)
+  })
+})
+
+describe('sync: the run brought up to its base', () => {
+  test('the base moved on: merged under the agent\'s uncommitted change, which stays uncommitted', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), fullPlan('- Q1: x? — default: y')))])
+    const run = await t.pipe.start(7)
+    const wt = join(t.root, 'mobile')
+    writeFileSync(join(wt, 'src/a.ts'), 'export const mobile = 5\n')
+    writeFileSync(join(t.mobile.main, 'src/new.ts'), 'export const n = 1\n'); git(t.mobile.main, 'add', '.'); git(t.mobile.main, 'commit', '-qm', 'moved on'); git(t.mobile.main, 'push', '-q', 'origin', 'HEAD:develop')
+    expect(await t.pipe.sync(run)).toEqual(['mobile: brought up to origin/develop'])
+    expect(readFileSync(join(wt, 'src/new.ts'), 'utf8')).toBe('export const n = 1\n')
+    expect(readFileSync(join(wt, 'src/a.ts'), 'utf8')).toBe('export const mobile = 5\n')
+    expect(git(wt, 'status', '--porcelain')).toBe('M src/a.ts')
+  })
+  test('the base changed the same lines: the change is left as it was, the files named', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), fullPlan('- Q1: x? — default: y')))])
+    const run = await t.pipe.start(7)
+    const wt = join(t.root, 'mobile')
+    writeFileSync(join(wt, 'src/a.ts'), 'export const mobile = 5\n')
+    writeFileSync(join(t.mobile.main, 'src/a.ts'), 'export const mobile = 9\n'); git(t.mobile.main, 'commit', '-qam', 'same line'); git(t.mobile.main, 'push', '-q', 'origin', 'HEAD:develop')
+    await expect(t.pipe.sync(run)).rejects.toThrow(/mobile: the change conflicts with origin\/develop in src\/a\.ts/)
+    expect(readFileSync(join(wt, 'src/a.ts'), 'utf8')).toBe('export const mobile = 5\n')
+    expect(git(wt, 'stash', 'list')).toBe('')
+  })
+})

@@ -155,6 +155,16 @@ Some products ship per-customer variants as a patch on top of a release. A run s
   `patch-report.txt`; the second `ship` runs it for real and the run is done. For the write-back flow moves HEAD back
   off the local commit and puts the worktree back exactly afterwards.
 
+### Adding a repo, syncing with the base
+
+`flow add <run> <repo> [--base <ref>]` (or Add repo in a run's commands) gives a run a repo it lacks while it waits
+for you: its own worktree on the run's branch beside the others, from the repo's default base unless given, with the
+app env and git-excludes as at setup. The agent's next turn is a new process resuming its session in the same
+folder, its brief and settings with the new repo. The brief names the project's other repos, and an agent that needs
+one asks for it rather than reading another checkout. `flow sync <run>` (Sync with the base) fetches and merges each
+repo's base under the agent's change, which stays uncommitted; a change that conflicts with the new base is left
+exactly as it was, the files named.
+
 ### A run's own dev server
 
 A run started with `--dev-server` (or Dev server in the form) gets its own dev server for the repo that has one

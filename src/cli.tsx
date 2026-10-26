@@ -11,6 +11,8 @@
  *   flow ship <run>                                                 commit, push, draft PR (after verify); stops the run's device;
  *                                                                   a patch run: the write-back's dry run, then (again) the write-back
  *   flow release <run>                                              stop the run's device now and free its slot
+ *   flow add <run> <repo> [--base <ref>]                            a repo the run lacks: its own worktree on the run's branch
+ *   flow sync <run>                                                 the run's repos brought up to their bases (the change kept)
  *   flow code <run>                                                 the run's worktree in VS Code (FLOW_EDITOR to use another)
  *   flow device <run>                                               the run's device in the browser: see it, tap, swipe, type
  *   flow stop <run>                                                 end the agent's turn now; the run waits for a message
@@ -180,7 +182,7 @@ async function main(argv: string[]) {
   const [cmd, ...args] = argv
   const f = flags(args, ['base', 'model', 'cwd', 'kind', 'to', 'repos', 'device', 'patch', 'note', 'logins-file'])
   const repos = f.repos ? f.repos.split(',').map(x => x.trim()).filter(Boolean) : undefined
-  const service = ['start', 'approve', 'message', 'ship', 'port', 'release', 'done', 'rm', 'stop'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
+  const service = ['start', 'approve', 'message', 'ship', 'port', 'release', 'done', 'rm', 'stop', 'add', 'sync'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
   switch (cmd) {
     case undefined: case 'ui': return uiCmd()
     case 'serve': return serveCmd()
@@ -231,6 +233,19 @@ async function main(argv: string[]) {
       if (!run) throw new Error('flow release <run>')
       if (service) return viaService(service, { cmd: 'release', run }).finally(() => service.close())
       return withRun(run, f.model, p => p.releaseDevice(run))
+    }
+    case 'add': {
+      const [run, repo] = args
+      if (!run || !repo) throw new Error('flow add <run> <repo> [--base <ref>]')
+      const c = { cmd: 'addRepo' as const, run, repo, ...(f.base ? { base: f.base } : {}) }
+      if (service) return viaService(service, c).finally(() => service.close())
+      return withRun(run, f.model, async p => { console.log(await p.addRepo(run, repo, f.base)) })
+    }
+    case 'sync': {
+      const [run] = args
+      if (!run) throw new Error('flow sync <run>')
+      if (service) return viaService(service, { cmd: 'sync', run }).finally(() => service.close())
+      return withRun(run, f.model, async p => { for (const l of await p.sync(run)) console.log(l) })
     }
     case 'code': {
       const [run] = args

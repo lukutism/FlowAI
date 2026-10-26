@@ -115,7 +115,9 @@ pushes and opens the draft PR itself after verify and review.
 ${text}`
 
 /** what a run's agent keeps for the whole run (its system prompt), beside each step's message */
-export interface RunBrief extends Brief { run: string; runDir: string; planFile: string; prFile: string; note?: string; logins?: boolean; tools?: { name: string; description: string }[]; browser?: boolean }
+export interface RunBrief extends Brief { run: string; runDir: string; planFile: string; prFile: string; note?: string; logins?: boolean; tools?: { name: string; description: string }[]; browser?: boolean
+  /** the project's other repos, which a run can be given */
+  otherRepos?: string[] }
 
 /**
  * The run's brief, given with --append-system-prompt: unlike a step's message it stays through compactions. The
@@ -142,6 +144,7 @@ export function runBrief(b: RunBrief): string {
     'Before you end a turn, read your last paragraph: if it is a plan, a question or a promise ("next I will…"), do that work now, or ask it with the ask tool.',
     ...(b.device ? [`The run's device is ${b.device.platform} ${b.device.id} (Metro on port ${b.device.metroPort}, the app installed). Drive it with the argent tools on ${b.device.id} only (pass that id); no other device is yours. Screenshots that prove the change (before and after, for anything visible) go in ${b.runDir}/evidence/ and are named in pr.md. Leave the device running.`] : []),
     ...(b.browser && b.devServer ? [`The run's browser shows the app on its dev server: drive it with the browser tool (snapshot for refs, then click, fill, press; screenshot into ${b.runDir}/evidence/ for anything visible, before and after). It is this run's own; flow closes it.`] : []),
+    ...(b.otherRepos?.length ? [`The project's other repos (${b.otherRepos.join(', ')}) can be added to this run, each its own worktree on its branch: if the change needs one, ask for it with the ask tool, rather than reading or changing another checkout.`] : []),
     ...(b.logins ? [`Test logins for this run are in ${b.runDir}/logins.md: for signing in on the device or in the app only, never in code, commits, pr.md, the plan or any other file. flow refuses to ship a change or a PR description that contains them.`] : []),
     ...(b.brief?.length ? [`About this project (from the human who runs flow):\n${b.brief.map(l => `- ${l}`).join('\n')}`] : []),
     ...(b.note?.trim() ? [`Additional instructions from the human:\n${b.note.trim()}`] : []),

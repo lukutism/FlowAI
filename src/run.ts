@@ -10,11 +10,15 @@ export type Actor = 'human' | 'agent' | 'engine'
 export interface Question { id: string; text: string; default: string; held: boolean }
 
 export type EventBody =
-  | { type: 'run.created'; ticket: string; title: string; project: string; base: string }
+  | { type: 'run.created'; ticket: string; title: string; project: string; base: string; repos?: string[] }
   | { type: 'setup.done' }
   | { type: 'setup.failed'; reason: string }
   | { type: 'plan.submitted'; summary: string; questions: Question[]; deadline?: number; targets?: string[] }
   | { type: 'plan.decided'; by: 'human' | 'deadline' | 'advisor'; answers: Record<string, string>; reasons?: Record<string, string> }
+  /** a repo added to the run (its own worktree on the run's branch) */
+  | { type: 'repo.added'; repo: string; base: string }
+  /** the run's repos brought up to their bases */
+  | { type: 'run.synced'; repos: string[] }
   /** at the deadline: questions the agent can look up itself, sent back to it (once) */
   | { type: 'plan.returned'; lookups: string[] }
   | { type: 'agent.asked'; question: string }
@@ -68,6 +72,8 @@ export interface Needs { kind: 'plan' | 'question' | 'blocked' | 'verify' | 'rev
 
 export interface RunState {
   id: string; ticket: string; title: string; project: string; base: string
+  /** the run's repos (runs started before this was recorded: unknown) */
+  repos?: string[]
   stage: Stage; status: Status; needs?: Needs
   plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' | 'advisor'; reasons?: Record<string, string>; returned?: boolean
     /** the plan's Target lines: the other lines the fix is for (none: this base only; unset: the plan didn't say) */
@@ -111,7 +117,7 @@ const go = (s: RunState, e: RunEvent, patch: Partial<RunState>): RunState => {
 export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAULT_RULES): RunState {
   if (e.type === 'run.created') {
     if (s && !s.removed) throw new TransitionError(`run ${e.run} exists already`)
-    return { id: e.run, ticket: e.ticket, title: e.title, project: e.project, base: e.base, stage: 'setup', status: 'running',
+    return { id: e.run, ticket: e.ticket, title: e.title, project: e.project, base: e.base, ...(e.repos ? { repos: e.repos } : {}), stage: 'setup', status: 'running',
       loops: { verify: 0, verifyRuns: 0, review: 0 }, tokens: 0, compactions: 0, createdAt: e.at, updatedAt: e.at }
   }
   if (!s) throw new TransitionError(`${e.type} for run ${e.run}, which was never created`)
@@ -133,6 +139,8 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
       if (e.by !== 'human' && s.needs.held) throw new TransitionError('a held question is decided by the human only')
       return go(s, e, { stage: 'build', plan: { ...s.plan, answers: e.answers, decidedBy: e.by, ...(e.reasons ? { reasons: e.reasons } : {}) }, ...running })
     }
+    case 'repo.added': return go(s, e, s.repos ? { repos: [...s.repos, e.repo] } : {})
+    case 'run.synced': return go(s, e, {})
     case 'plan.returned':
       if (s.needs?.kind !== 'plan' || !s.plan) throw new TransitionError('no plan is waiting for a decision')
       return go(s, e, { plan: { ...s.plan, returned: true }, ...running })
