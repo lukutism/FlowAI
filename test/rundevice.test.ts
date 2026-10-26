@@ -93,3 +93,18 @@ describe('a run with a device', () => {
     await expect(t.pipe.start(5, { device: 'ios' })).rejects.toThrow(/no devices configured/)
   })
 })
+
+describe('restarting a run\'s device', () => {
+  test('stopped and booted again on the same run, with the commands as they are now', async () => {
+    const t = setup({ consoleStart: 25760, metroStart: 28760 })
+    const run = await t.pipe.start(5, { device: 'android' })
+    try {
+      await t.pipe.restartDevice(run)
+      const types = t.store.events(run).map(e => e.type)
+      expect(types.filter(x => x === 'device.ready')).toHaveLength(2)
+      expect(types.lastIndexOf('device.released')).toBeLessThan(types.lastIndexOf('device.ready'))
+      expect(t.store.state(run)!.device).toMatchObject({ platform: 'android' })
+      expect(t.slots.snapshot().holders.devices).toEqual([run])
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})

@@ -319,6 +319,16 @@ export class Pipeline {
   }
 
   /** the run's own device: a device slot, free ports (not another run's), boot, Metro, install; the slot is freed on failure */
+  /** the run's device stopped and booted again with the project's current commands (the app built and installed) */
+  async restartDevice(run: string) {
+    const s = this.must(run), m = this.meta(run)
+    const platform = s.device?.platform ?? m.platform
+    if (!platform) throw new Error(`${run} has no device`)
+    await this.releaseDevice(run)
+    await this.closeAgent(run) // its next turn gets the device's new id in its brief
+    await this.bootDevice(run, platform, m.repos[0]!.worktree)
+  }
+
   private async bootDevice(run: string, platform: 'android' | 'ios', worktree: string) {
     const free = this.d.resources ? await this.d.resources.acquire(run, 'devices') : () => {}
     try {

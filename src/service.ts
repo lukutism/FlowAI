@@ -21,6 +21,8 @@ export type Command =
   | { cmd: 'release'; run: string }
   /** the agent's turn running now ended at once; the run stops for you (a message carries it on) */
   | { cmd: 'stop'; run: string }
+  /** the run's device stopped and booted again (new settings, a stuck emulator) */
+  | { cmd: 'restartDevice'; run: string }
   /** finished (merged, or given up): off the attention list */
   | { cmd: 'done'; run: string }
   /** device, worktrees and local branch removed, the folder archived; work never shipped needs force */
@@ -236,7 +238,7 @@ export class Service {
       }
       if (c.cmd === 'done') { p.done(c.run); return { ok: true, run: c.run } }
       const run = c.run
-      const step = c.cmd === 'approve' ? () => p.approve(run, c.answers ?? {}) : c.cmd === 'message' ? () => p.message(run, c.text) : c.cmd === 'release' ? () => p.releaseDevice(run)
+      const step = c.cmd === 'approve' ? () => p.approve(run, c.answers ?? {}) : c.cmd === 'message' ? () => p.message(run, c.text) : c.cmd === 'release' ? () => p.releaseDevice(run) : c.cmd === 'restartDevice' ? () => p.restartDevice(run)
         : c.cmd === 'remove' ? () => p.remove(run, { force: c.force }).then(() => {}) : c.cmd === 'ship' ? () => p.ship(run).then(() => {}) : null
       if (!step) throw new Error(`unknown command ${(c as { cmd: string }).cmd}`)
       this.act(run, step)

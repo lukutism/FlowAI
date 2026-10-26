@@ -174,7 +174,8 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'session.compacted': return go(s, e, { compactions: s.compactions + 1 })
     case 'tokens.used': return go(s, e, { tokens: s.tokens + e.tokens, ...(e.cached ? { cached: (s.cached ?? 0) + e.cached } : {}) })
     case 'tool.denied': return go(s, e, {})
-    case 'device.ready': need(s, 'setup', e); return go(s, e, { device: { platform: e.platform, id: e.id, metroPort: e.metroPort } })
+    // at setup; later when the device is restarted
+    case 'device.ready': if (s.stage === 'done') need(s, 'setup', e); return go(s, e, { device: { platform: e.platform, id: e.id, metroPort: e.metroPort } })
     case 'device.released': return go(s, e, { device: undefined })
     case 'devserver.ready': need(s, 'setup', e); return go(s, e, { devServer: { repo: e.repo, port: e.port, url: e.url } })
     case 'devserver.stopped': return go(s, e, { devServer: undefined })
