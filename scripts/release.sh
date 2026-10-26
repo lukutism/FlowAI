@@ -4,6 +4,9 @@
 #   scripts/release.sh          typecheck, build, check the binary, install, restart the service
 #   scripts/release.sh --test   the whole test suite first (heavy: not while emulators are busy)
 set -eu
+# run from a git hook (the post-commit release), git's own variables are set: the service must not inherit them (an
+# index path that breaks every worktree, an author that overrides a project's identity)
+for v in $(env | sed -n 's/^\(GIT_[A-Z_]*\)=.*/\1/p'); do unset "$v"; done
 cd "$(dirname "$0")/.."
 bin="${FLOW_BIN:-$HOME/.local/bin/flow}"
 data="${FLOW_DATA:-$HOME/.local/share/flow}"
