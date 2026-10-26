@@ -133,8 +133,24 @@ export function sessionLines(entries: Entry[], width: number, full = false): Lin
     if (more) out.push([[`    … +${more} line${more === 1 ? '' : 's'}${hint}`, C.faint]])
   }
   const gap = () => { if (out.length && out[out.length - 1]!.length) out.push([]) }
+  // the reviewer's turn gets its own heading; its answer (findings as JSON) is said in words
+  let inReview = false
+  const reviewHead = () => { if (!inReview) { gap(); out.push([['⏺ ', C.muted], ['reviewer', C.muted], [' · reads, never edits', C.faint]]); inReview = true } }
+  const reviewerText = (t: string) => {
+    reviewHead()
+    const m = /```json\s*([\s\S]*?)```\s*$/.exec(t)
+    markdown(m ? t.slice(0, m.index) : t, w - 4, C.secondary).forEach(l => out.push([['  ', ''], ...l]))
+    if (!m) return
+    let found: { severity?: string; file?: string; line?: number; problem?: string; confidence?: number }[] = []
+    try { const v = JSON.parse(m[1]!); found = Array.isArray(v) ? v : v.findings ?? [] } catch { return }
+    out.push(found.length
+      ? [['  ⎿ ', C.faint], [`${found.length} finding${found.length === 1 ? '' : 's'}: ${found.map(f => `[${f.severity}] ${f.file}${f.line ? `:${f.line}` : ''} ${f.problem}${f.confidence ? ` (${f.confidence}%)` : ''}`).join('; ')}`.slice(0, w * 3), C.warning]]
+      : [['  ⎿ ', C.faint], ['found nothing at 80% or more', C.success]])
+  }
   for (const e of entries) {
     const reviewer = !e.own
+    if (!reviewer) inReview = false
+    else if (e.kind === 'tool') reviewHead()
     if (e.kind === 'prompt') {
       gap()
       if (e.from === 'you') {
@@ -149,6 +165,7 @@ export function sessionLines(entries: Entry[], width: number, full = false): Lin
       gap()
     } else if (e.kind === 'session') out.push([[`${reviewer ? 'reviewer' : 'claude'} · ${e.model} · session ${e.session.slice(0, 6)}`, C.faint]])
     else if (e.kind === 'text') {
+      if (reviewer) { reviewerText(e.text); continue }
       const md = markdown(e.text, w - 2, reviewer ? C.secondary : C.text)
       md.forEach((l, i) => out.push([[i ? '  ' : '⏺ ', reviewer ? C.muted : C.text], ...l]))
     } else if (e.kind === 'tool') {
