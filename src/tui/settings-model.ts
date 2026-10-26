@@ -53,6 +53,7 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
       { kind: 'list', label: 'Brief', path: ['brief'], hint: 'what agents should know: tools to check data with, where things are (a line each)' },
       { kind: 'list', label: 'Local files', path: ['localFiles'], hint: "the main checkout's ignored files each worktree gets: .claude, .mcp.json, .npmrc" },
       { kind: 'list', label: 'Not loaded', path: ['claudeMdExcludes'], hint: "CLAUDE.md files agents skip: another tool's, in a folder above" },
+      { kind: 'toggle', label: 'License', path: ['login', 'license'], fallback: false, hint: "the new run's Login step asks for a license too (the app's)" },
     ]
     case 'Tickets & PRs': return [
       { kind: 'heading', label: 'Tickets', hint: tracker === 'jira' ? 'Jira' : 'Azure DevOps' },

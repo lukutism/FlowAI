@@ -18,7 +18,9 @@ export interface Lookup {
   area?: string; platform?: string
 }
 
-type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'note' | 'logins'
+type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'email' | 'password' | 'license'
+/** how many lines of the notes show at once (the last ones, as you type) */
+const NOTE_ROWS = 8
 const MODELS = ['default', 'opus', 'sonnet']
 
 /** the base a ticket's release tag points at (3.18 → the newest patch/3.18.x), else none */
@@ -80,9 +82,10 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const [ticket, setTicket] = useState('')
   /** no ticket: what to do, in your words (its first line names the run and the branch) */
   const [task, setTask] = useState('')
-  // what you add for this run: a note for the agent's brief, and test logins (kept apart, never shown)
+  // three steps: the run, notes for the agent (as long as you like), test logins (kept apart, never shown)
+  const [step, setStep] = useState<1 | 2 | 3>(1)
   const [note, setNote] = useState('')
-  const [logins, setLogins] = useState('')
+  const [login, setLogin] = useState({ email: '', password: '', license: '' })
   const [look, setLook] = useState<{ state: 'idle' | 'loading' | 'ok' | 'error'; data?: Lookup; error?: string }>({ state: 'idle' })
   const [bases, setBases] = useState<Record<string, string[]>>({})
   const [refs, setRefs] = useState<string[]>([])
@@ -160,12 +163,31 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
 
   const devRepos = (p?.devServers ?? []).filter(r => repos.includes(r))
   const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', ...(ticket.trim() ? [] : ['task' as const]), 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
-    ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model', 'note', 'logins']
-  const move = (d: number) => setField(f => fields[(fields.indexOf(f) + d + fields.length) % fields.length]!)
+    ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
+  const loginFields: ('email' | 'password' | 'license')[] = ['email', 'password', ...(p?.license ? ['license' as const] : [])]
+  const move = (d: number) => { const list: Field[] = step === 3 ? loginFields : fields; setField(f => list[(list.indexOf(f) + d + list.length) % list.length]!) }
   const cycle = <T,>(list: T[], cur: T, d: number): T => list[(list.indexOf(cur) + d + list.length) % list.length] ?? cur
 
+  // the run's own checks: the ticket can be started (or the task is described), repos, a patch that fits
+  const ready = (): boolean => {
+    if (!p) { setProblem('no project: add one in ~/.config/flow/projects'); return false }
+    if (!ticket.trim()) {
+      if (!task.trim()) { setStep(1); setField('task'); setProblem('type the ticket, or leave it empty and describe the task'); return false }
+      if (!slug(task.split('\n')[0]!)) { setStep(1); setField('task'); setProblem('describe the task in a few words: they name the run and the branch'); return false }
+    } else {
+      if (look.state === 'loading') { setProblem('still looking the ticket up'); return false }
+      if (look.state === 'error') { setProblem(look.error ?? 'the ticket could not be read'); return false }
+      if (look.data?.exists) { setProblem(`${look.data.run} exists already: open it from the runs`); return false }
+    }
+    if (!repos.length) { setStep(1); setField('repos'); setProblem('choose at least one repo'); return false }
+    if (patch && check && !check.ok) { setStep(1); setField('patch'); setProblem('the customer patch does not fit this base: choose another base or no patch'); return false }
+    return true
+  }
+  const go = (to: 1 | 2 | 3) => { if (to > 1 && step === 1 && !ready()) return; setProblem(''); setStep(to); if (to === 3) setField('email') }
   const start = () => {
-    const extra = { ...(note.trim() ? { note: note.trim() } : {}), ...(logins.trim() ? { logins: logins.trim() } : {}) }
+    const logins = loginFields.filter(k => login[k].trim()).map(k => `${k}: ${login[k].trim()}`).join('\n')
+    const extra = { ...(note.trim() ? { note: note.trim() } : {}), ...(logins ? { logins } : {}) }
+    if (!ready()) return
     if (!p) return setProblem('no project: add one in ~/.config/flow/projects')
     if (!ticket.trim()) {
       // no ticket: a task described instead
@@ -208,7 +230,26 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       return true
     }
     if (n === 'escape') { onCancel(); return true }
-    if (n === 'return') { start(); return true }
+    if (key.ctrl && n === 's') { start(); return true }
+    if (step === 2) {
+      // the notes: a box you type into; enter is a new line, tab goes on to the logins
+      if (n === 'tab') { go(key.shift ? 1 : 3); return true }
+      if (n === 'return') setNote(x => x + '\n')
+      else if (n === 'backspace') setNote(x => x.slice(0, -1))
+      else if (typed) setNote(x => x + typed)
+      return true
+    }
+    if (step === 3) {
+      if (n === 'return') { start(); return true }
+      if (n === 'tab' && key.shift && field === loginFields[0]) { go(2); return true }
+      if ((n === 'tab' && !key.shift) || n === 'down') { move(1); return true }
+      if ((n === 'tab' && key.shift) || n === 'up') { move(-1); return true }
+      const k = field as 'email' | 'password' | 'license'
+      if (n === 'backspace') setLogin(l => ({ ...l, [k]: l[k].slice(0, -1) }))
+      else if (typed && typed !== ' ') setLogin(l => ({ ...l, [k]: l[k] + typed }))
+      return true
+    }
+    if (n === 'return') { go(2); return true }
     if ((n === 'tab' && !key.shift) || n === 'down') { move(1); return true }
     if ((n === 'tab' && key.shift) || n === 'up') { move(-1); return true }
     const d = n === 'right' ? 1 : n === 'left' ? -1 : 0
@@ -220,12 +261,6 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (field === 'task') {
       if (n === 'backspace') setTask(x => x.slice(0, -1))
       else if (typed) setTask(x => x + typed)
-      return true
-    }
-    if (field === 'note' || field === 'logins') {
-      const set = field === 'note' ? setNote : setLogins
-      if (n === 'backspace') set(x => x.slice(0, -1))
-      else if (typed) set(x => x + typed)
       return true
     }
     // base and patch: any key opens the list (a letter starts the search)
@@ -247,10 +282,10 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const paste = (text: string) => {
     const one = text.replace(/\r?\n/g, ' ').trim()
     if (picking) return setPicking(x => x && { ...x, query: x.query + one, index: 0 })
+    if (step === 2) return setNote(x => x + text.replace(/\r\n/g, '\n'))
+    if (step === 3) { const k = field as 'email' | 'password' | 'license'; return setLogin(l => ({ ...l, [k]: l[k] + one.replace(/\s+/g, '') })) }
     if (field === 'ticket') return setTicket(x => x + one.replace(/\s+/g, ''))
     if (field === 'task') return setTask(x => x + text.trim())
-    if (field === 'note') return setNote(x => x + text.trim())
-    if (field === 'logins') return setLogins(x => (x ? `${x}\n` : '') + text.trim())
     if (field === 'base' || field === 'patch') return open(field, one)
   }
   useEffect(() => { bindPaste?.(paste); return () => bindPaste?.(null) })
@@ -272,7 +307,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   // a field chosen from a list: its value, and when focused how to open the list
   const pickRow = (f: 'base' | 'patch', label: string, value: string, hint: string) => row(f, label,
     <Click on={() => open(f)}><text><strong fg={value ? C.text : C.secondary}>{value || 'none'}</strong><span fg={C.muted}>{' ▾'}</span></text></Click>,
-    field === f && !picking ? 'type to search · ↵ start' : hint)
+    field === f && !picking ? 'type to search · ↵ next' : hint)
   const picker = (f: 'base' | 'patch') => picking?.field === f ? (
     <box flexDirection="column" backgroundColor={C.selected} paddingLeft={13}>
       <text><span fg={C.accent}>{'› '}</span><span fg={C.text}>{picking.query}</span><span fg={C.accent}>▏</span><span fg={C.faint}>{`   ${shown.length} of ${(f === 'base' ? baseItems : patchItems).length} · ↑↓ choose · ↵ pick · esc close`}</span></text>
@@ -300,6 +335,16 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   return (
     <box position="absolute" top={3} left={Math.max(2, Math.floor((width - W) / 2))} width={W} zIndex={20} flexDirection="column" border borderStyle="rounded" borderColor={C.faint} backgroundColor={C.panel} paddingTop={1} paddingBottom={1}>
       <text><strong>{'  New run'}</strong>{fixed && p ? <span fg={C.accent}>{` · ${p.name}`}</span> : null}<span fg={C.faint}>{'   a ticket to a draft PR'}</span></text>
+      <box flexDirection="row">
+        <text>{'  '}</text>
+        {([[1, 'Run'], [2, 'Notes'], [3, 'Login']] as const).map(([n, label]) => (
+          <Click key={n} on={() => go(n)}><text>
+            <span fg={step === n ? C.accent : C.muted}>{step === n ? `▸ ${n} ` : `  ${n} `}</span><span fg={step === n ? C.text : C.secondary}>{step === n ? <strong>{label}</strong> : label}</span>
+            <span fg={C.faint}>{n === 2 && note.trim() ? ` · ${note.trim().split('\n').length} line${note.trim().split('\n').length === 1 ? '' : 's'}` : n === 3 && loginFields.some(k => login[k]) ? ` · ${loginFields.filter(k => login[k]).length} set` : ''}{'      '}</span>
+          </text></Click>
+        ))}
+      </box>
+      {step === 1 ? <>
       {blank}
       {fixed ? null : row('project', 'Project', <>{radio(projects.map(x => ({ v: x.key, label: x.key })), project, setProject)}</>, p ? `${p.name} · ${p.tracker === 'jira' ? 'Jira' : 'Azure DevOps'} · ${p.repos.length} repos` : 'no projects configured')}
       {row('ticket', 'Ticket', <text fg={C.text}><strong>{ticket}</strong>{field === 'ticket' ? <span fg={C.accent}>▏</span> : ''}{ticket ? '' : <span fg={C.faint}>{p?.tracker === 'jira' ? 'a key or its link · empty: describe a task' : 'a number or its link · empty: describe a task'}</span>}</text>,
@@ -325,17 +370,44 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       {patch && check && !check.ok ? <text fg={C.warning} bg="#2A2416">{`             ⚠ ${fit(check.text || 'no patch for this base', W - 18)}`}</text> : null}
       {patch && check?.ok ? <text fg={C.success}>{`             ✓ ${fit(check.text, W - 18)}`}</text> : null}
       {row('model', 'Model', <>{radio(MODELS.map(m => ({ v: m, label: m })), model, setModel)}</>)}
-      {row('note', 'Note', <text fg={C.text}>{note.length > W - 18 ? `…${note.slice(-(W - 19))}` : note}{field === 'note' ? <span fg={C.accent}>▏</span> : ''}{note ? '' : <span fg={C.faint}>for the agent: how to test, which order or tenant, what not to touch</span>}</text>)}
-      {row('logins', 'Logins', <text fg={C.text}>{logins ? '•'.repeat(Math.min(logins.length, 24)) : ''}{field === 'logins' ? <span fg={C.accent}>▏</span> : ''}<span fg={C.faint}>{logins ? '   kept in a file only you can read; never in the change or the PR' : 'user and password for the device: kept apart, never shown'}</span></text>)}
       {blank}
       {wrap(will, W - 16).slice(0, 3).map((l, i) => <text key={i}>{'  '}<span fg={C.muted}>{i ? '          ' : 'Will      '}</span><span fg={C.secondary}>{l}</span></text>)}
       {used && limits ? <text>{'  '}<span fg={C.muted}>{'Slots     '}</span><span fg={buildsFull ? C.warning : C.secondary}>{`agents ${limits.agents - used.agents}/${limits.agents} free · builds ${used.builds}/${limits.builds}${buildsFull ? ' full → the install waits for a slot' : ''}`}</span></text> : null}
+      </> : null}
+      {step === 2 ? <>
+        {blank}
+        <text fg={C.muted}>{'  For the agent, as long as you like: how to test, which order, tenant or cloud, what not to touch.'}</text>
+        <text fg={C.faint}>{'  It goes into the agent\'s brief for the whole run.'}</text>
+        {blank}
+        <box flexDirection="column" marginLeft={2} marginRight={2} backgroundColor={C.selected} paddingLeft={1} paddingRight={1} height={NOTE_ROWS + 2} paddingTop={1}>
+          {(() => {
+            const lines = note.split('\n').flatMap(l => (l ? wrap(l, W - 10) : ['']))
+            const shown = lines.slice(-NOTE_ROWS)
+            return note ? shown.map((l, i) => <text key={i} fg={C.text}>{l}{i === shown.length - 1 ? <span fg={C.accent}>▏</span> : ''}</text>)
+              : <text><span fg={C.accent}>▏</span><span fg={C.faint}>e.g. Test on order 700216740 in the qa cloud; the tablet layout too; leave the sync code alone.</span></text>
+          })()}
+        </box>
+        {blank}
+      </> : null}
+      {step === 3 ? <>
+        {blank}
+        <text fg={C.muted}>{'  Test logins for the device, all optional.'}</text>
+        <text fg={C.faint}>{'  Kept in a file only you can read; the agent is pointed at it, and ship refuses a change or PR that contains them.'}</text>
+        {blank}
+        {row('email', 'Email', <text fg={C.text}>{login.email}{field === 'email' ? <span fg={C.accent}>▏</span> : ''}{login.email ? '' : <span fg={C.faint}>the test user</span>}</text>)}
+        {row('password', 'Password', <text fg={C.text}>{'•'.repeat(Math.min(login.password.length, 32))}{field === 'password' ? <span fg={C.accent}>▏</span> : ''}{login.password ? '' : <span fg={C.faint}>never shown</span>}</text>)}
+        {p?.license ? row('license', 'License', <text fg={C.text}>{'•'.repeat(Math.min(login.license.length, 32))}{field === 'license' ? <span fg={C.accent}>▏</span> : ''}{login.license ? '' : <span fg={C.faint}>the app's license, if it asks for one</span>}</text>) : null}
+        {blank}
+      </> : null}
       {blank}
       {problem ? <text fg={C.danger}>{`  ${problem}`}</text> : null}
       <box flexDirection="row">
         <text>{'  '}</text>
-        <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Start run '}</strong></text></box></Click>
-        <text fg={C.muted}>{'   ⇥ next field   ←→ choose   space toggle   '}</text>
+        {step === 1 ? <Click on={() => go(2)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Next: Notes '}</strong></text></box></Click> : null}
+        {step === 3 ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Start run '}</strong></text></box></Click> : null}
+        {step === 2 ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ⇥ Next: Login '}</strong></text></box></Click> : null}
+        <text fg={C.muted}>{step === 1 ? '   ⇥ next field   ←→ choose   space toggle   ' : step === 2 ? '   ↵ new line   ⇧⇥ back   ' : '   ⇥ next field   ⇧⇥ back   '}</text>
+        {step !== 3 ? <Click on={start}><text fg={C.muted}>{'ctrl+s start now   '}</text></Click> : null}
         <Click on={onCancel}><text fg={C.muted}>esc cancel</text></Click>
       </box>
     </box>

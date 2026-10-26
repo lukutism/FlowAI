@@ -684,7 +684,7 @@ describe('the new-run form', () => {
     return o.lookup ?? found
   }
   const typeIn = async (t: Awaited<ReturnType<typeof screen>>, text: string) => { for (const k of text) await act(async () => { t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(400) }) }
-  const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
+  const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : k === 'ctrl+s' ? t.s.mockInput.pressKey('s', { ctrl: true }) : k === 'shift+tab' ? t.s.mockInput.pressKey('\t', { shift: true }) : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
   test('n opens it; the ticket is looked up as you type: its title, type, board, customer; the base and patch it points at', async () => {
     const t = await screen(runs, undefined, { projects: [fso, shop], query: query() as FlowApi['query'] })
     try {
@@ -719,7 +719,7 @@ describe('the new-run form', () => {
       expect(await t.frame()).toContain('✓ acme/product 3.20.7')
       // a device: down to Device, → android
       await keys(t, 'down', 'down', 'down', 'right')
-      await keys(t, 'enter')
+      await keys(t, 'ctrl+s') // start now, past Notes and Login
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.20.7', kind: 'feature', repos: ['mobile'], device: 'android', patch: 'acme/product' }])
     } finally { t.s.renderer.destroy() }
   })
@@ -731,7 +731,7 @@ describe('the new-run form', () => {
       const f = await t.frame()
       expect(f).toMatch(/\[x\] mobile +\[x\] portal/)
       expect(f).toMatch(/Dev server +\(•\) none +\( \) portal/)
-      await keys(t, 'tab', 'tab', 'right', 'tab', 'tab', 'right', 'enter')
+      await keys(t, 'tab', 'tab', 'right', 'tab', 'tab', 'right', 'ctrl+s')
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/develop', kind: 'feature', repos: ['mobile', 'portal'], devServer: true, model: 'opus' }])
     } finally { t.s.renderer.destroy() }
   })
@@ -788,21 +788,40 @@ describe('the new-run form', () => {
       expect(f).not.toMatch(/Project +\(/)
     } finally { t.s.renderer.destroy() }
   })
-  test('a note for the agent and test logins go with the run; the logins never show on the screen', async () => {
-    const t = await screen(runs, undefined, { projects: [fso], query: query() as FlowApi['query'] })
+  test('three steps: the run, notes as long as you like (enter is a new line), then logins; the password never shows', async () => {
+    const t = await screen(runs, undefined, { projects: [{ ...fso, license: true }], query: query() as FlowApi['query'] })
     try {
       await t.press('n', 'enter')
       await typeIn(t, 'Fix the walk')
-      for (let i = 0; i < 12 && !(await t.frame()).includes('▌ Note'); i++) await keys(t, 'tab')
+      expect(await keys(t, 'enter')).toContain('▸ 2 Notes')
       await typeIn(t, 'Use order 700216740')
-      await keys(t, 'tab')
-      await typeIn(t, 'tester / s3cret-pass')
-      const f = await t.frame()
-      expect(f).toContain('Use order 700216740')
-      expect(f).not.toContain('s3cret-pass')
-      expect(f).toContain('kept in a file only you can read')
       await keys(t, 'enter')
-      expect(t.f.sent[0]).toMatchObject({ cmd: 'start', task: 'Fix the walk', note: 'Use order 700216740', logins: 'tester / s3cret-pass' })
+      await typeIn(t, 'tablet layout too')
+      const n = await t.frame()
+      expect(n).toContain('Use order 700216740')
+      expect(n).toContain('tablet layout too')
+      expect(n).toContain('2 Notes · 2 lines')
+      expect(await keys(t, 'tab')).toContain('▸ 3 Login')
+      await typeIn(t, 'tester@example.com')
+      await keys(t, 'tab'); await typeIn(t, 's3cret-pass')
+      await keys(t, 'tab'); await typeIn(t, 'LIC-1234')
+      const f = await t.frame()
+      expect(f).toContain('tester@example.com')
+      expect(f).not.toContain('s3cret-pass')
+      expect(f).not.toContain('LIC-1234')
+      await keys(t, 'enter')
+      expect(t.f.sent[0]).toMatchObject({ cmd: 'start', task: 'Fix the walk', note: 'Use order 700216740\ntablet layout too', logins: 'email: tester@example.com\npassword: s3cret-pass\nlicense: LIC-1234' })
+    } finally { t.s.renderer.destroy() }
+  })
+  test('no license field unless the project asks for one; shift+tab goes back a step', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query() as FlowApi['query'] })
+    try {
+      await t.press('n', 'enter'); await typeIn(t, 'Fix the walk')
+      await keys(t, 'enter', 'tab')
+      const f = await t.frame()
+      expect(f).toContain('Password')
+      expect(f).not.toContain('License')
+      expect(await keys(t, 'shift+tab')).toContain('▸ 2 Notes')
     } finally { t.s.renderer.destroy() }
   })
   test('no ticket: leave it empty and describe the task; the branch is named from it', async () => {
@@ -814,17 +833,17 @@ describe('the new-run form', () => {
       const f = await t.frame()
       expect(f).toMatch(/Task +Show the order number on the list▏/)
       expect(f).toContain('create feat/show-the-order-number-on-the-list from origin/develop in mobile')
-      await keys(t, 'enter')
+      await keys(t, 'enter', 'tab', 'enter') // Notes, Login, start
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: '', task: 'Show the order number on the list', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
     } finally { t.s.renderer.destroy() }
   })
-  test('esc closes it; the Start button can be clicked', async () => {
+  test('esc closes it; start now can be clicked', async () => {
     const t = await screen(runs, undefined, { projects: [shop], query: query({ lookup: { ...found, run: 'shop-SGL-692', key: 'SGL-692', tags: [], customer: '', board: 'SGL' } }) as FlowApi['query'] })
     try {
       await t.press('n')
       expect(await t.press('esc')).not.toContain('a ticket to a draft PR')
       await t.press('n'); await typeIn(t, 'SGL-692')
-      const p = at(await t.frame(), '↵ Start run')
+      const p = at(await t.frame(), 'ctrl+s start now')
       await act(async () => { await t.s.mockMouse.click(p.x + 2, p.y) })
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'shop', ticket: 'SGL-692', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
     } finally { t.s.renderer.destroy() }

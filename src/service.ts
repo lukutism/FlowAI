@@ -37,6 +37,8 @@ export interface ProjectSummary {
   repoMatch?: Record<string, string>; patchApps?: Record<string, string>
   /** for the Projects tab */
   maxParallel?: number; usage?: { fiveHour: number; week: number }; review?: boolean
+  /** the new run's Login step asks for a license too */
+  license?: boolean
   sandbox?: { enabled: boolean; writable: number; domains: number; strict: boolean }
 }
 
@@ -156,7 +158,7 @@ export class Service {
       devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes,
       defaults: (p.repos.some(r => r.default) ? p.repos.filter(r => r.default) : p.repos.slice(0, 1)).map(r => r.key), devServers: p.repos.filter(r => r.devServer).map(r => r.key),
       repoMatch: Object.fromEntries(p.repos.filter(r => r.match).map(r => [r.key, r.match!])), patchApps: p.patchApps,
-      maxParallel: p.agent.maxParallel, usage: p.usage, review: p.review.enabled,
+      maxParallel: p.agent.maxParallel, usage: p.usage, review: p.review.enabled, license: p.login.license,
       sandbox: p.sandbox ? (sb => ({ enabled: !!sb.enabled, writable: sb.filesystem?.allowWrite?.length ?? 0, domains: sb.network?.allowedDomains?.length ?? 0, strict: !!sb.network?.strictAllowlist }))(p.sandbox as { enabled?: boolean; filesystem?: { allowWrite?: string[] }; network?: { allowedDomains?: string[]; strictAllowlist?: boolean } }) : undefined }))
   }
 

@@ -97,6 +97,8 @@ const project = z.object({
   claudeMdExcludes: z.array(z.string()).optional(),
   /** the main checkout's git-ignored files linked into each worktree (project skills, .mcp.json, .npmrc, a code index) */
   localFiles: z.array(z.string()).default([]),
+  /** the new run's Login step: email and password always; a license field for projects whose app needs one */
+  login: z.object({ license: z.boolean().default(false) }).default({}),
   /** tools the agents may not call (an MCP server's write tools); permission rules, as in Claude Code's settings */
   denyTools: z.array(z.string()).default([]),
   /** an independent reviewer (a fresh, read-only claude session) before ship */
