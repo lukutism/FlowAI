@@ -226,6 +226,7 @@ describe('Service: draft PRs merged or closed on the host', () => {
     shipped(t, 'ex-1')
     t.svc.tick(); await t.svc.idle()
     expect(t.store.state('ex-1')).toMatchObject({ prDraft: false, needs: { kind: 'pr' } })
+    expect(t.store.state('ex-1')!.needs!.ask).toMatch(/^review PR #\d+$/)
     const d = setup(() => [], args => (args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"active","isDraft":true}', err: '' } : undefined))
     shipped(d, 'ex-1')
     d.svc.tick(); await d.svc.idle()

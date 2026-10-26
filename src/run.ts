@@ -109,7 +109,10 @@ export class TransitionError extends Error {}
 /** verified (and reviewed): publishing is the human's step (flow ship), like merging */
 const READY = { status: 'needs-you' as const, needs: { kind: 'ship' as const, ask: 'verified: publish the draft PR with flow ship' } }
 
-const prAsk = (prs: { number: number }[]) => (prs.length > 1 ? `review draft PRs ${prs.map(p => `#${p.number}`).join(', ')}` : `review draft PR #${prs[0]?.number}`)
+const prAsk = (prs: { number: number }[], draft = true) => {
+  const kind = draft ? 'draft PR' : 'PR'
+  return prs.length > 1 ? `review ${kind}s ${prs.map(p => `#${p.number}`).join(', ')}` : `review ${kind} #${prs[0]?.number}`
+}
 
 const need = (s: RunState, stage: Stage, e: RunEvent) => {
   if (s.stage !== stage) throw new TransitionError(`${e.type} needs the run in ${stage}, it is in ${s.stage}`)
@@ -147,7 +150,8 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     }
     case 'repo.added': return go(s, e, s.repos ? { repos: [...s.repos, e.repo] } : {})
     case 'run.synced': case 'run.note': return go(s, e, {})
-    case 'pr.draft': return go(s, e, { prDraft: e.draft })
+    // the waiting line says what the PR is now
+    case 'pr.draft': return go(s, e, { prDraft: e.draft, ...(s.needs?.kind === 'pr' && s.prs?.length ? { needs: { kind: 'pr', ask: prAsk(s.prs, e.draft) } } : {}) })
     case 'plan.returned':
       if (s.needs?.kind !== 'plan' || !s.plan) throw new TransitionError('no plan is waiting for a decision')
       return go(s, e, { plan: { ...s.plan, returned: true }, ...running })
@@ -188,9 +192,9 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
       if (s.status === 'failed' || s.status === 'done') return go(s, e, {})
       if (s.status !== 'needs-you' && s.status !== 'blocked') return go(s, e, {})
       return go(s, e, { ...running, loops: { ...s.loops, ...(s.needs?.kind === 'verify' ? { verify: 0 } : {}), ...(s.needs?.kind === 'review' ? { review: 0 } : {}) } })
-    case 'run.ready': need(s, 'ship', e); return go(s, e, s.prs?.length ? { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs) } } : READY)
+    case 'run.ready': need(s, 'ship', e); return go(s, e, s.prs?.length ? { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs, s.prDraft ?? true) } } : READY)
     case 'ship.failed': need(s, 'ship', e); return go(s, e, { status: 'needs-you', needs: { kind: s.needs?.kind === 'patch' || s.needs?.kind === 'pr' ? s.needs.kind : 'ship', ask: `ship failed: ${e.reason}; ship again to carry on` } })
-    case 'pr.updated': need(s, 'ship', e); return go(s, e, { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs ?? [{ url: '', number: e.number }]) } })
+    case 'pr.updated': need(s, 'ship', e); return go(s, e, { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs ?? [{ url: '', number: e.number }], s.prDraft ?? true) } })
     case 'run.blocked': return go(s, e, { status: 'blocked', needs: { kind: 'blocked', ask: e.reason } })
     case 'run.waiting': return go(s, e, { status: 'waiting', waitingFor: e.resource })
     case 'run.paused': return go(s, e, { status: 'paused', pausedUntil: e.until })

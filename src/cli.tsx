@@ -79,7 +79,7 @@ function next(s: RunState): string {
   }
   if (n.kind === 'ship') return s.patch ? `verified → flow ship ${s.id} (the write-back's dry run; nothing is written)` : `verified → flow ship ${s.id}`
   if (n.kind === 'patch') return `write-back checked: ${join(DATA, 'runs', s.id, 'patch-report.txt')}\n  → flow ship ${s.id} writes the patch back`
-  if (n.kind === 'pr') return `draft PR #${s.pr?.number}: ${s.pr?.url}`
+  if (n.kind === 'pr') return `${s.prDraft === false ? 'PR ready for review' : 'draft PR'} #${s.pr?.number}: ${s.pr?.url}`
   return `${n.kind}: ${n.ask}\n  → flow message ${s.id} "…"`
 }
 

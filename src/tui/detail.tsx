@@ -355,7 +355,7 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
         {run.device ? <span fg={C.secondary}>{`   ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</span> : null}
         {run.device ? <span fg={C.accent}>{'   b see it'}</span> : null}
         {run.patch ? <span fg={C.secondary}>{`   patch ${run.patch.customer}/${run.patch.app}`}</span> : null}
-        {run.pr ? <span fg={C.success}>{`   draft PR #${run.pr.number}`}</span> : null}
+        {run.pr ? <span fg={C.success}>{`   ${run.prDraft === false ? 'PR' : 'draft PR'} #${run.pr.number}`}</span> : null}
       </text>
       {rule}
       <box flexDirection="row" height={body}>
