@@ -17,6 +17,8 @@ export interface ClaudeOptions {
   appendSystemPrompt?: string
   /** MCP servers added to the user's own (the run's flow tools) */
   mcpConfig?: string
+  /** at most this many agentic turns per message (a reviewer's budget) */
+  maxTurns?: number
   /** the CLI to run; tests pass a stand-in */
   bin?: string[]
   env?: Record<string, string>
@@ -81,7 +83,7 @@ export class ClaudeAgent implements Agent {
 
   private start() {
     if (this.proc) return this.proc
-    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none', '--settings', this.o.settings, ...(this.o.resume ? ['--resume', this.o.resume] : []), ...(this.o.model ? ['--model', this.o.model] : []), ...(this.o.permissionMode ? ['--permission-mode', this.o.permissionMode] : []), ...(this.o.appendSystemPrompt ? ['--append-system-prompt', this.o.appendSystemPrompt] : []), ...(this.o.mcpConfig ? ['--mcp-config', this.o.mcpConfig] : [])]
+    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none', '--settings', this.o.settings, ...(this.o.resume ? ['--resume', this.o.resume] : []), ...(this.o.model ? ['--model', this.o.model] : []), ...(this.o.permissionMode ? ['--permission-mode', this.o.permissionMode] : []), ...(this.o.appendSystemPrompt ? ['--append-system-prompt', this.o.appendSystemPrompt] : []), ...(this.o.mcpConfig ? ['--mcp-config', this.o.mcpConfig] : []), ...(this.o.maxTurns ? ['--max-turns', String(this.o.maxTurns)] : [])]
     const env: Record<string, string | undefined> = { ...process.env, ...this.o.env }
     delete env.CLAUDECODE // flow may itself run inside a Claude session; the agent is not nested in it
     const proc = Bun.spawn([...(this.o.bin ?? ['claude']), ...args], { cwd: this.o.cwd, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' })

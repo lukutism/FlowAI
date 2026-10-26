@@ -18,7 +18,7 @@ const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const result = (text = 'done') => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 's-1', usage: { input_tokens: 1000, output_tokens: 100 } })
 const turn = (effect?: (prompt: string) => void, text?: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), result(text)].join('\n'), effect })
 
-function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources; appEnv?: object } = {}) {
+function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources; appEnv?: object; lenses?: string[] } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-pipe-'))
   const origin = join(root, 'origin.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin])
@@ -32,7 +32,8 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   const project = parseProject({
     key: 'example', name: 'Example', worktrees: join(root, 'worktrees'),
     tracker: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' }, forge: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' },
-    ...(o.reviewOff ? { review: { enabled: false } } : {}),
+    // one lens unless a test asks for the three: each lens is a reviewer turn
+    review: o.reviewOff ? { enabled: false } : { lenses: o.lenses ?? ['correctness'] },
     repos: [{ key: 'mobile', path: main, defaultBase: 'origin/develop', ...(o.appEnv ? { appEnv: o.appEnv } : {}), verify: [
       { name: 'tsc', kind: 'tsc', cmd: `${TOOLS} tsc` },
       { name: 'eslint', kind: 'eslint', cmd: `${TOOLS} eslint {json} {files}`, changedOnly: true, ext: ['ts'] },
@@ -252,6 +253,23 @@ describe('the independent review before ship', () => {
     expect(t.reviewer.prompts[1]).toMatch(/one .*json/i)
     expect(t.store.events(run).find(e => e.type === 'review.skipped')).toMatchObject({ reason: expect.stringMatching(/review unreadable.*no JSON array/) })
     expect(t.store.state(run)).toMatchObject({ needs: { kind: 'ship' } })
+  })
+  test('three lenses: each a fresh reviewer with its own focus, on the plan, the PR description and the change; their findings go to the agent tagged', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+      turn(() => writeFileSync(join(d.run, 'review-answers.md'), 'R1: not a problem because b is used by the next ticket\n')),
+    ], { lenses: ['correctness', 'skeptic', 'simplicity'], review: [review([]), review([finding]), review([]), review([]), review([]), review([])] })
+    const run = await t.pipe.start(186278)
+    const lenses = t.reviewer.prompts.slice(0, 3).map(p => /Your lens: (\w+)/.exec(p)?.[1]).sort()
+    expect(lenses).toEqual(['correctness', 'simplicity', 'skeptic'])
+    expect(t.reviewer.prompts[0]).toContain('Verified: flow verify → no new findings') // the PR description's claims
+    expect(t.reviewers.map(r => r.settings)).toEqual(expect.arrayContaining([expect.stringContaining(join('reviewer', 'skeptic'))]))
+    expect(t.agent.prompts[2]).toMatch(/R1 \[P1, \w+\] src\/b\.ts:1: b is exported but never used/)
+    expect(t.agent.prompts[2]).toContain('review-answers.md')
+    // the second review reads the answer
+    expect(t.reviewer.prompts[3]).toContain('R1: not a problem because b is used by the next ticket')
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship' })
   })
   test('review turned off for the project: skipped, saying so', async () => {
     const t = setup(d => [

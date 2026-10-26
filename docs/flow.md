@@ -119,8 +119,13 @@ words). A turn that ends with a question to you stops the run as "Agent question
    and edited env files; in `pr.md`, a `Verified:` and a `Not verified:` line, no local paths, no mention of the
    agent; `Repro: live` with its `evidence/before-*.png`. The change is the worktree against HEAD, so a customer
    patch committed under it doesn't count.
-6. **Review.** A fresh `claude` session in plan mode (it reads, never edits, never saw the agent's reasoning) gets
-   the ticket, the plan and the change, and answers with findings as JSON. Findings under 80% confidence are left
+6. **Review.** Fresh `claude` sessions in plan mode (they read, never edit, never saw the agent's reasoning), one
+   per lens and in parallel (`review.lenses`, all three by default; at most `review.maxTurns` turns each):
+   correctness (bugs, the repo's rules, the history of the lines), skeptic (is the root cause proven, every
+   criterion met, the plan's and the PR description's claims true; an unproven root cause is a P1) and simplicity
+   (what could be cut or reused). Each gets the ticket, the plan, the PR description, the change and the agent's
+   earlier answers (`review-answers.md`: `R1: fixed — …` or `R1: not a problem because …`, never published), and
+   answers with findings as JSON. Findings under 80% confidence are left
    out; the rest go to the agent to fix or explain. Three reviews with findings stop the run for you.
 7. **Ship (you).** flow commits (your commit hooks run), pushes without force, and opens a draft PR linked to the
    ticket, described by the agent's `pr.md`. Merging stays yours. Code that changed after verify is verified again

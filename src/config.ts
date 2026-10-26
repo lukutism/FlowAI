@@ -132,7 +132,12 @@ const project = z.object({
   /** tools the agents may not call (an MCP server's write tools); permission rules, as in Claude Code's settings */
   denyTools: z.array(z.string()).default([]),
   /** an independent reviewer (a fresh, read-only claude session) before ship */
-  review: z.object({ enabled: z.boolean().default(true) }).default({}),
+  /**
+   * the independent review before ship: lenses run as fresh read-only sessions in parallel (correctness: bugs and
+   * the repo's rules; skeptic: root cause, criteria, the plan's and the PR's claims; simplicity: what could be cut),
+   * each with at most maxTurns turns
+   */
+  review: z.object({ enabled: z.boolean().default(true), lenses: z.array(z.enum(['correctness', 'skeptic', 'simplicity'])).min(1).default(['correctness', 'skeptic', 'simplicity']), maxTurns: z.number().int().positive().default(30) }).default({}),
   /** what the agent should know about this project, from you (tools to check data with, where things are): a line each */
   brief: z.array(z.string()).default([]),
   /** customer patch apps by pattern on a ticket's area and title (picking → product): the form picks the patch's app */

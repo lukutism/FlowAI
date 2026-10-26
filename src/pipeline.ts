@@ -18,7 +18,7 @@ import { advisorPrompt, lookupPrompt, parseAdvice, type Advice } from './advisor
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
 import { memoryDir, saveLearnings } from './learnings.ts'
-import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
+import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding, type Lens } from './review.ts'
 import type { RunState } from './run.ts'
 import type { Resources } from './resources.ts'
 import { Runner, type RunAgent } from './runner.ts'
@@ -54,7 +54,7 @@ export interface PipelineDeps {
   dataDir: string
   makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string; mcpConfig?: string }) => RunAgent
   /** a fresh, read-only reviewer session per review; without it the review is skipped */
-  makeReviewer?: (o: { cwd: string; settings: string; model?: string }) => RunAgent
+  makeReviewer?: (o: { cwd: string; settings: string; model?: string; maxTurns?: number }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   /** sees each agent event as it arrives (live output); own: the run's agent, not the reviewer */
@@ -430,7 +430,7 @@ export class Pipeline {
     const s = this.must(run), m = this.meta(run)
     if (!this.d.makeReviewer || !s.plan?.questions.length) return null
     const settings = writeRunSettings({ dir: join(this.runDir(run), 'advisor'), worktree: m.worktree, allow: m.repos.map(r => r.worktree).filter(w => w !== m.worktree), deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
-    const advisor = this.d.makeReviewer({ cwd: m.worktree, settings, ...(m.model ? { model: m.model } : {}) })
+    const advisor = this.d.makeReviewer({ cwd: m.worktree, settings, maxTurns: this.d.project.review.maxTurns, ...(m.model ? { model: m.model } : {}) })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
       const r = await this.runner.turnWith(run, advisor, advisorPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), questions: s.plan.questions }), { ownSession: false })
@@ -619,7 +619,7 @@ export class Pipeline {
     const dir = this.runDir(run)
     // of the run folder the agent writes only these: the plan, the PR description, how the run ended, its evidence,
     // and the test logins (a password the app made it change; ship checks the change against them all)
-    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence'), join(dir, 'tests'), join(dir, 'logins.md')]
+    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence'), join(dir, 'tests'), join(dir, 'logins.md'), this.answersFile(run)]
     const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')
@@ -908,7 +908,7 @@ export class Pipeline {
         const found = await this.reviewStep(run)
         s = this.must(run)
         if (s.stage !== 'build' || !found) return // clean, skipped, or stopped for the human (review cap)
-        prompt = reviewFixPrompt(found)
+        prompt = reviewFixPrompt(found, this.answersFile(run))
       }
       if (s.stage !== 'build') return // stopped for the human (red too often)
       const r = await this.say(run, prompt)
@@ -918,31 +918,45 @@ export class Pipeline {
   }
 
   /** the independent review; returns its findings when the agent has something to fix */
-  private async reviewStep(run: string): Promise<Finding[] | null> {
-    const m = this.meta(run)
+  /**
+   * The independent review: each of the project's lenses a fresh read-only session, in parallel, on the ticket, the
+   * plan, the PR description, the change and the author's earlier answers. An unreadable answer is asked for once
+   * more; a lens that still can't be read is noted, and the review is skipped only when none could be read.
+   */
+  private async reviewStep(run: string): Promise<(Finding & { lens: Lens })[] | null> {
+    const m = this.meta(run), c = this.d.project.review
     const skip = (reason: string) => { this.d.store.append(run, 'engine', { type: 'review.skipped', reason }); return null }
-    if (!this.d.project.review.enabled) return skip('review is off for this project')
+    if (!c.enabled) return skip('review is off for this project')
     if (!this.d.makeReviewer) return skip('no reviewer configured')
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
-    const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
-    // the run's model for the reviewer too (a run started on sonnet is reviewed on sonnet)
-    const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings, ...(m.model ? { model: m.model } : {}) })
-    try {
-      const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
-      const change = m.repos.length > 1 ? m.repos.map(r => `### ${r.key} (${r.worktree})\n${changeText(r.worktree) || '(no change)'}`).join('\n\n') : changeText(m.repos[0]!.worktree)
-      const prompt = reviewPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change })
-      let r = await this.runner.turnWith(run, reviewer, prompt, { ownSession: false })
-      if (!r.ok) return null
-      let parsed: ReturnType<typeof parseFindings>
-      try { parsed = parseFindings(r.text) } catch (first) {
-        r = await this.runner.turnWith(run, reviewer, 'Answer again with the short note and exactly one ```json block holding the array of findings (an empty array if none).', { ownSession: false })
-        if (!r.ok) return null
-        try { parsed = parseFindings(r.text) } catch (e) { return skip(`review unreadable: ${(e as Error).message} (first answer: ${(first as Error).message})`) }
-      }
-      const n = this.must(run).loops.review + 1
-      writeFileSync(join(this.runDir(run), 'review.json'), JSON.stringify({ review: n, at: this.now(), findings: parsed.findings, dropped: parsed.dropped, below: parsed.below, note: parsed.note }, null, 2) + '\n')
-      this.d.store.append(run, 'engine', { type: 'review.result', findings: parsed.findings.length })
-      return parsed.findings.length ? parsed.findings : null
-    } finally { await reviewer.close?.() }
+    const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
+    const change = m.repos.length > 1 ? m.repos.map(r => `### ${r.key} (${r.worktree})\n${changeText(r.worktree) || '(no change)'}`).join('\n\n') : changeText(m.repos[0]!.worktree)
+    const base = { key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change, pr: read(this.prFile(run)), answers: read(this.answersFile(run)) }
+    const one = async (lens: Lens) => {
+      const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer', lens), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
+      // the run's model for the reviewers too (a run started on sonnet is reviewed on sonnet)
+      const reviewer = this.d.makeReviewer!({ cwd: m.worktree, settings, maxTurns: c.maxTurns, ...(m.model ? { model: m.model } : {}) })
+      try {
+        let r = await this.runner.turnWith(run, reviewer, reviewPrompt({ ...base, ...(c.lenses.length > 1 ? { lens } : {}) }), { ownSession: false })
+        if (!r.ok) return { lens, error: `the ${lens} review did not finish: ${r.text.split('\n')[0]!.slice(0, 200)}` }
+        try { return { lens, ...parseFindings(r.text) } } catch (first) {
+          r = await this.runner.turnWith(run, reviewer, 'Answer again with the short note and exactly one ```json block holding the array of findings (an empty array if none).', { ownSession: false })
+          if (!r.ok) return { lens, error: `the ${lens} review did not finish` }
+          try { return { lens, ...parseFindings(r.text) } } catch (e) { return { lens, error: `the ${lens} review unreadable: ${(e as Error).message} (first answer: ${(first as Error).message})` } }
+        }
+      } finally { await reviewer.close?.() }
+    }
+    const results = await Promise.all(c.lenses.map(one))
+    const read_ = results.filter(x => !('error' in x)) as { lens: Lens; findings: Finding[]; dropped: number; below: Finding[]; note: string }[]
+    const errors = results.filter(x => 'error' in x).map(x => (x as { error: string }).error)
+    if (!read_.length) return skip(errors.join('; '))
+    // tagged by lens only when there are several
+    const findings = read_.flatMap(x => x.findings.map(f => (c.lenses.length > 1 ? { ...f, lens: x.lens } : f))) as (Finding & { lens: Lens })[]
+    const n = this.must(run).loops.review + 1
+    writeFileSync(join(this.runDir(run), 'review.json'), JSON.stringify({ review: n, at: this.now(), findings, dropped: read_.reduce((k, x) => k + x.dropped, 0), below: read_.flatMap(x => x.below), lenses: read_.map(x => ({ lens: x.lens, findings: x.findings.length, dropped: x.dropped, below: x.below, note: x.note })), ...(errors.length ? { errors } : {}), note: read_.map(x => (c.lenses.length > 1 ? `${x.lens}: ${x.note}` : x.note)).join('\n\n') }, null, 2) + '\n')
+    this.d.store.append(run, 'engine', { type: 'review.result', findings: findings.length })
+    return findings.length ? findings : null
   }
+
+  private answersFile(run: string) { return join(this.runDir(run), 'review-answers.md') }
 }
