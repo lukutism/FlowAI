@@ -209,6 +209,11 @@ Apps / Dev menu. An iOS simulator is shown there but not driven (simctl has no i
 `scripts/avd-clone.sh` (an Android AVD cloned copy-on-write from a template) and `scripts/android-dev-host.sh` (a
 React Native debug app pointed at another Metro port) are there for the Android commands.
 
+Headless by default: the emulator boots without its window (`{headless}` in the boot command: `-no-window
+-no-audio`) and the run's browser without its own; you see the device in the browser page (`b` in the run). A run
+can ask for its windows instead: Window: shown in the form, or `flow start … --headed`; `devices.headless` sets
+the project's default.
+
 ## Safety
 
 - **The guard** (a PreToolUse hook flow adds to your settings): refuses commits, pushes, history rewrites, branch

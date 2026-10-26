@@ -4,7 +4,7 @@
  *
  *   flow                                                            the screen (starts the background service if needed)
  *   flow serve                                                      the background service: runs, deadlines, the screen's data
- *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--dev-server] [--patch <customer>/<app>] [--model <name>] [--note "<for the agent>"] [--logins-file <file>] [--var NAME=value …]   worktrees, plan; continues until it needs you
+ *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--dev-server] [--patch <customer>/<app>] [--model <name>] [--note "<for the agent>"] [--logins-file <file>] [--var NAME=value …] [--headed]   worktrees, plan; continues until it needs you
  *   flow approve <run> [Q1=<answer> …]                             answer the plan's questions (defaults for the rest)
  *   flow message <run> "<text>"                                     to the run's agent; the run carries on afterwards
  *   flow port <run> [--to <branch>]                               the shipped fix onto another line (default develop)
@@ -192,14 +192,14 @@ async function main(argv: string[]) {
     case 'serve': return serveCmd()
     case 'start': {
       const [project, ticket] = args
-      if (!project || !ticket) throw new Error('flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--patch <customer>/<app>] [--model <name>] [--note "…"] [--logins-file <file>] [--var NAME=value …]')
+      if (!project || !ticket) throw new Error('flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--patch <customer>/<app>] [--model <name>] [--note "…"] [--logins-file <file>] [--var NAME=value …] [--headed | --headless]')
       const tk = /^\d+$/.test(ticket) ? Number(ticket) : ticket
       if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
       if (f.device && f.device !== 'android' && f.device !== 'ios') throw new Error('--device is android or ios')
       const device = f.device as 'android' | 'ios' | undefined
       // test logins from a file, so they don't stay in the shell's history
       const logins = f['logins-file'] ? readFileSync(f['logins-file'], 'utf8') : undefined
-      const extra = { ...(f.note ? { note: f.note } : {}), ...(logins ? { logins } : {}), ...(Object.keys(vars).length ? { vars } : {}) }
+      const extra = { ...(f.note ? { note: f.note } : {}), ...(logins ? { logins } : {}), ...(Object.keys(vars).length ? { vars } : {}), ...(args.includes('--headed') ? { headless: false } : args.includes('--headless') ? { headless: true } : {}) }
       if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch, devServer: args.includes('--dev-server'), ...(f.model ? { model: f.model } : {}), ...extra }).finally(() => service.close())
       const s = store()
       const p = pipeline(s, project, f.model)

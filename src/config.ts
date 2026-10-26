@@ -80,8 +80,8 @@ const devices = z.object({
   metro: z.string(),
   consolePortStart: z.number().int().default(5700),
   metroPortStart: z.number().int().default(8300),
-  /** the emulator without its window ({headless} in its boot command): less memory and CPU, seen in the browser */
-  headless: z.boolean().default(false),
+  /** the emulator without its window ({headless} in its boot command): less memory and CPU, seen in the browser; a run may choose otherwise */
+  headless: z.boolean().default(true),
   android: deviceCommands.optional(),
   ios: deviceCommands.optional(),
 })

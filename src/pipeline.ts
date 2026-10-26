@@ -41,7 +41,9 @@ interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; rep
   /** a run without a ticket: a task described instead */
   task?: boolean
   /** the run's environment (the project's vars: given, suggested by the ticket, followed or default) */
-  vars?: Record<string, string> }
+  vars?: Record<string, string>
+  /** the run's emulator and browser without their windows (unset: the project's default) */
+  headless?: boolean }
 
 export { slug } from './slug.ts'
 
@@ -208,7 +210,7 @@ export class Pipeline {
     return { ok: res.code === 0, text: tail(res.out || res.err, 1) }
   }
 
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string; note?: string; logins?: string; vars?: Record<string, string> } = {}): Promise<string> {
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string; note?: string; logins?: string; vars?: Record<string, string>; headless?: boolean } = {}): Promise<string> {
     const p = this.d.project
     const run = o.task?.trim() && !String(ticket).trim() ? this.taskRunId(o.task) : this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
@@ -237,7 +239,7 @@ export class Pipeline {
     for (const r of repos) if (!/^[A-Za-z0-9][\w./-]*$/.test(r.base) || r.base.includes('..') || r.base.endsWith('/')) throw new Error(`base "${r.base}" is not a branch name`)
     const branch = task ? `${kind === 'bug' ? 'fix' : 'feat'}/${id}` : p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
     const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(task ? { task: true } : {}),
-      ...(p.vars.length ? { vars: resolveVars(p.vars, { ...detectVars(p.vars, t), ...o.vars }) } : {}) }
+      ...(p.vars.length ? { vars: resolveVars(p.vars, { ...detectVars(p.vars, t), ...o.vars }) } : {}), ...(o.headless !== undefined ? { headless: o.headless } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     // what you add before the start: a note into the agent's brief; test logins in a file only you can read, which
@@ -433,7 +435,7 @@ export class Pipeline {
         const f = join(runs, other, 'device.json')
         if (other !== run && existsSync(f)) { const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState; taken.add(d.consolePort).add(d.consolePort + 1).add(d.metroPort) }
       }
-      const d = await this.building(run, () => startDevice({ spec: this.d.project.devices!, platform, run, runDir: this.runDir(run), worktree, taken, readyTimeoutMs: this.d.deviceReadyTimeoutMs, log: join(this.runDir(run), 'setup.log') }))
+      const d = await this.building(run, () => startDevice({ spec: { ...this.d.project.devices!, headless: this.meta(run).headless ?? this.d.project.devices!.headless }, platform, run, runDir: this.runDir(run), worktree, taken, readyTimeoutMs: this.d.deviceReadyTimeoutMs, log: join(this.runDir(run), 'setup.log') }))
       this.deviceSlots.set(run, free)
       this.d.store.append(run, 'engine', { type: 'device.ready', platform, id: d.id, metroPort: d.metroPort })
     } catch (e) { free(); throw e }
@@ -844,8 +846,8 @@ export class Pipeline {
     const s = this.must(run)
     const b = s.devServer ? this.repoConfig(s.devServer.repo).devServer?.browser : undefined
     if (!b) return undefined
-    const start = b.start ? fillVars(b.start, this.meta(run).vars ?? {}) : ''
-    return { ...b, start: start || undefined }
+    const m = this.meta(run), start = b.start ? fillVars(b.start, m.vars ?? {}) : ''
+    return { ...b, start: start || undefined, headed: m.headless === undefined ? b.headed : !m.headless }
   }
 
   /** a repo's app env with the run's values filled in; a value whose variables are all empty is not set */

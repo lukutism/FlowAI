@@ -750,7 +750,7 @@ describe('the new-run form', () => {
       const f = await t.frame()
       expect(f).toMatch(/\[x\] mobile +\[x\] portal/)
       expect(f).toMatch(/Dev server +\(•\) none +\( \) portal/)
-      await keys(t, 'tab', 'tab', 'right', 'tab', 'tab', 'right', 'ctrl+s')
+      await keys(t, 'tab', 'tab', 'right', 'tab', 'tab', 'tab', 'right', 'ctrl+s') // past Window (headless, the default)
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/develop', kind: 'feature', repos: ['mobile', 'portal'], devServer: true, model: 'opus' }])
     } finally { t.s.renderer.destroy() }
   })
@@ -854,6 +854,21 @@ describe('the new-run form', () => {
       await keys(t, 'tab'); await typeIn(t, '12')
       await keys(t, 'enter')
       expect(t.f.sent[0]).toMatchObject({ cmd: 'start', ticket: 204598, vars: { CLOUD: 'https://demo.example.cloud', APP_ID: '12' } })
+    } finally { t.s.renderer.destroy() }
+  })
+  test('a device run: Window is headless by default; shown is sent as headless: false', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query({ lookup: { ...found, customer: '', tags: [] } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      expect(await t.frame()).not.toContain('Window')
+      for (let i = 0; i < 12 && !(await t.frame()).match(/▌ Device/); i++) await keys(t, 'tab')
+      await keys(t, 'right') // android
+      const f = await t.frame()
+      expect(f).toMatch(/Window +\(•\) headless +\( \) shown/)
+      await keys(t, 'tab', 'right')
+      expect(await t.frame()).toMatch(/Window +\( \) headless +\(•\) shown/)
+      await keys(t, 'ctrl+s')
+      expect(t.f.sent[0]).toMatchObject({ cmd: 'start', device: 'android', headless: false })
     } finally { t.s.renderer.destroy() }
   })
   test('no license field unless the project asks for one; shift+tab goes back a step', async () => {

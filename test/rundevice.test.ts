@@ -17,7 +17,7 @@ const METRO = join(import.meta.dir, 'fake-metro-server.ts')
 const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', apiKeySource: 'none' })
 const turn = (effect?: () => void): FakeTurn => ({ stream: `${init}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 1, session_id: 's', usage: {} })}`, effect })
 
-function setup(o: { ready?: string; consoleStart?: number; metroStart?: number } = {}) {
+function setup(o: { ready?: string; consoleStart?: number; metroStart?: number; headless?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-rundev-'))
   const origin = join(root, 'o.git'), main = join(root, 'main'), marks = join(root, 'marks')
   mkdirSync(marks)
@@ -27,8 +27,8 @@ function setup(o: { ready?: string; consoleStart?: number; metroStart?: number }
     key: 'ex', name: 'Ex', worktrees: join(root, 'wt'), tracker: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' }, forge: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' },
     repos: [{ key: 'mobile', path: main, defaultBase: 'origin/develop', verify: [] }], review: { enabled: false },
     devices: {
-      metro: `${process.execPath} ${METRO} {metroPort}`, consolePortStart: o.consoleStart ?? 25720, metroPortStart: o.metroStart ?? 28720,
-      android: { id: 'emulator-{consolePort}', boot: `sh -c 'touch ${marks}/booted-{consolePort}; exec sleep 300'`, bootStays: true,
+      metro: `${process.execPath} ${METRO} {metroPort}`, ...(o.headless !== undefined ? { headless: o.headless } : {}), consolePortStart: o.consoleStart ?? 25720, metroPortStart: o.metroStart ?? 28720,
+      android: { id: 'emulator-{consolePort}', boot: `sh -c 'echo "{headless}" > ${marks}/window; touch ${marks}/booted-{consolePort}; exec sleep 300'`, bootStays: true,
         ready: o.ready ?? `test -f ${marks}/booted-{consolePort}`, install: `echo {id} > ${marks}/installed`, stop: `echo {id} > ${marks}/stopped` },
     },
   }, 't')
@@ -107,5 +107,16 @@ describe('restarting a run\'s device', () => {
       expect(t.store.state(run)!.device).toMatchObject({ platform: 'android' })
       expect(t.slots.snapshot().holders.devices).toEqual([run])
     } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})
+
+describe("a run's window", () => {
+  test('headless by default (the emulator without its window); a run that asks for its window gets it', async () => {
+    const t = setup({ consoleStart: 25780, metroStart: 28780 })
+    const run = await t.pipe.start(5, { device: 'android' })
+    try { expect(readFileSync(join(t.marks, 'window'), 'utf8').trim()).toBe('-no-window -no-audio') } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+    const u = setup({ consoleStart: 25800, metroStart: 28800 })
+    const shown = await u.pipe.start(5, { device: 'android', headless: false })
+    try { expect(readFileSync(join(u.marks, 'window'), 'utf8').trim()).toBe('') } finally { await u.pipe.releaseDevice(shown).catch(() => {}) }
   })
 })

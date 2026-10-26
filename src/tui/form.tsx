@@ -20,7 +20,7 @@ export interface Lookup {
   vars?: Record<string, string>
 }
 
-type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'email' | 'password' | 'license' | `var:${string}`
+type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'email' | 'password' | 'license' | 'headless' | `var:${string}`
 /** how many lines of the notes show at once (the last ones, as you type) */
 const NOTE_ROWS = 8
 const MODELS = ['default', 'opus', 'sonnet']
@@ -100,6 +100,8 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const [repoAt, setRepoAt] = useState(0)
   const [device, setDevice] = useState<'none' | 'android' | 'ios'>('none')
   const [dev, setDev] = useState(false)
+  // the run's emulator and browser without their windows: the project's default unless you choose
+  const [headless, setHeadless] = useState(p?.headless ?? true)
   const [choices, setChoices] = useState<string[]>([])
   const [patch, setPatch] = useState('')
   const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null)
@@ -114,7 +116,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   // a project's own answers: its repos, bases, branches and customer patches
   useEffect(() => {
     if (!p) return
-    setRepos(p.defaults ?? p.repos.slice(0, 1)); setDevice('none'); setDev(false); setPatch(''); setRepoAt(0)
+    setRepos(p.defaults ?? p.repos.slice(0, 1)); setDevice('none'); setDev(false); setHeadless(p.headless ?? true); setPatch(''); setRepoAt(0)
     void api.query?.<Record<string, string[]>>({ q: 'bases', project }).then(b => { setBases(b); setBase(b[(p.defaults ?? p.repos)[0]!]?.[0] ?? '') }).catch(() => setBases({}))
     void (p.patches.length ? api.query?.<string[]>({ q: 'patches', project }).then(setChoices).catch(() => setChoices([])) : setChoices([]))
   }, [project])
@@ -169,7 +171,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
 
   const devRepos = (p?.devServers ?? []).filter(r => repos.includes(r))
   const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', ...(ticket.trim() ? [] : ['task' as const]), 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
-    ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
+    ...(devRepos.length ? ['dev' as const] : []), ...(device !== 'none' || dev ? ['headless' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
   const loginFields: ('email' | 'password' | 'license')[] = ['email', 'password', ...(p?.license ? ['license' as const] : [])]
   const envVars = (p?.vars ?? []).filter(v => !v.repos || v.repos.some(r => repos.includes(r)))
   const stepThree: Field[] = [...loginFields, ...envVars.map(v => `var:${v.name}` as const)]
@@ -205,7 +207,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       if (!slug(task.split('\n')[0]!)) { setField('task'); return setProblem('describe the task in a few words: they name the run and the branch') }
       if (!repos.length) { setField('repos'); return setProblem('choose at least one repo') }
       return onStart({ cmd: 'start', project, ticket: '', task: task.trim(), ...(base ? { base } : {}), kind, repos,
-        ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...extra })
+        ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...(headless !== (p?.headless ?? true) ? { headless } : {}), ...extra })
     }
     if (look.state === 'loading') return setProblem('still looking the ticket up')
     if (look.state === 'error') return setProblem(look.error ?? 'the ticket could not be read')
@@ -213,7 +215,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (!repos.length) { setField('repos'); return setProblem('choose at least one repo') }
     if (patch && check && !check.ok) { setField('patch'); return setProblem('the customer patch does not fit this base: choose another base or no patch') }
     onStart({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), kind, repos,
-      ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...extra })
+      ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...(headless !== (p?.headless ?? true) ? { headless } : {}), ...extra })
   }
   const choose = (f: 'base' | 'patch', v: string) => { touch(f); if (f === 'base') setBase(v); else setPatch(v); setPicking(null) }
   const open = (f: 'base' | 'patch', query = '') => {
@@ -291,6 +293,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       return true
     }
     if (field === 'dev' && (d || typed === ' ')) { setDev(x => !x); return true }
+    if (field === 'headless' && (d || typed === ' ')) { setHeadless(x => !x); return true }
     if (!d) return true
     if (field === 'project') setProject(cycle(projects.map(x => x.key), project, d))
     if (field === 'kind') { touch('kind'); setKind(k => (k === 'bug' ? 'feature' : 'bug')) }
@@ -386,6 +389,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       {fields.includes('device') ? row('device', 'Device', <>{radio([{ v: 'none', label: 'none' }, ...(p?.devices ?? []).map(d => ({ v: d, label: d }))], device, v => setDevice(v as 'none'))}</>,
         device !== 'none' && used && limits ? `emulator + Metro, ${used.devices} of ${limits.devices} in use` : '') : null}
       {fields.includes('dev') ? row('dev', 'Dev server', <>{radio([{ v: '', label: 'none' }, { v: 'on', label: devRepos[0]! }], dev ? 'on' : '', v => setDev(!!v))}</>, dev ? 'its own port' : '') : null}
+      {fields.includes('headless') ? row('headless', 'Window', <>{radio([{ v: 'on', label: 'headless' }, { v: '', label: 'shown' }], headless ? 'on' : '', v => setHeadless(!!v))}</>, headless ? 'seen in the browser page (b in the run)' : 'the emulator and browser windows open') : null}
       {fields.includes('patch') ? pickRow('patch', 'Patch', patch, patch && patch === ticketPatch && !touched.has('patch') ? `the ticket points at it (${t?.customer || t?.board})` : `${choices.length} customer patches`) : null}
       {fields.includes('patch') ? picker('patch') : null}
       {patch && check && !check.ok ? <text fg={C.warning} bg="#2A2416">{`             ⚠ ${fit(check.text || 'no patch for this base', W - 18)}`}</text> : null}
