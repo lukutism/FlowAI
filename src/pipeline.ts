@@ -238,7 +238,7 @@ export class Pipeline {
     try {
       for (const r of m.repos) {
         const c = this.repoConfig(r.key)
-        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles, ignore: this.d.project.ignore }))
+        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles, ignore: this.d.project.ignore, log: join(this.runDir(run), 'setup.log') }))
         notes.push(...w.notes.map(n => `${r.key}: ${n}`))
       }
     } catch (e) {
@@ -338,7 +338,7 @@ export class Pipeline {
         const f = join(runs, other, 'device.json')
         if (other !== run && existsSync(f)) { const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState; taken.add(d.consolePort).add(d.consolePort + 1).add(d.metroPort) }
       }
-      const d = await this.building(run, () => startDevice({ spec: this.d.project.devices!, platform, run, runDir: this.runDir(run), worktree, taken, readyTimeoutMs: this.d.deviceReadyTimeoutMs }))
+      const d = await this.building(run, () => startDevice({ spec: this.d.project.devices!, platform, run, runDir: this.runDir(run), worktree, taken, readyTimeoutMs: this.d.deviceReadyTimeoutMs, log: join(this.runDir(run), 'setup.log') }))
       this.deviceSlots.set(run, free)
       this.d.store.append(run, 'engine', { type: 'device.ready', platform, id: d.id, metroPort: d.metroPort })
     } catch (e) { free(); throw e }

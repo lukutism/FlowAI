@@ -1,6 +1,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
+import { logLine, shLogged } from './sh.ts'
 import { changedFiles } from './verify.ts'
 
 type Env = Record<string, string | undefined>
@@ -16,12 +17,15 @@ const tail = (s: string, n = 6) => s.split('\n').slice(-n).join('\n')
  * The run's own git worktree on a new branch from its base. node_modules is cloned from the user's main checkout
  * (copy-on-write on APFS, so instant and separate), then the project's install brings it in line with the base.
  */
-export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[]; ignore?: string[] }): Promise<{ notes: string[] }> {
+export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[]; ignore?: string[]; log?: string }): Promise<{ notes: string[] }> {
   const notes: string[] = []
+  const started = Date.now(), secs = (t: number) => `${Math.round((Date.now() - t) / 1000)}s`
+  logLine(o.log, `fetching origin in ${o.repo}`)
   const fetch = await run(['git', 'fetch', '--prune', '--quiet', 'origin'], o.repo)
   if (fetch.code !== 0) notes.push(`fetch failed, using local refs: ${tail(fetch.err, 1)}`)
   if ((await run(['git', 'rev-parse', '--verify', '--quiet', `${o.base}^{commit}`], o.repo)).code !== 0) throw new Error(`base ${o.base} not found in ${o.repo}`)
   if ((await run(['git', 'rev-parse', '--verify', '--quiet', `refs/heads/${o.branch}`], o.repo)).code === 0) throw new Error(`branch ${o.branch} exists already in ${o.repo} (another run of this ticket?)`)
+  logLine(o.log, `worktree ${o.worktree} on ${o.branch}, from ${o.base}`)
   mkdirSync(dirname(o.worktree), { recursive: true })
   const add = await run(['git', 'worktree', 'add', '--quiet', '--no-track', '-b', o.branch, o.worktree, o.base], o.repo)
   if (add.code !== 0) throw new Error(`git worktree add failed: ${tail(add.err)}`)
@@ -36,6 +40,8 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   if (linked.length) notes.push(`linked ${linked.join(', ')} from the main checkout`)
   const nm = join(o.repo, 'node_modules')
   if (existsSync(nm)) {
+    const t = Date.now()
+    logLine(o.log, 'node_modules: cloning the main checkout\'s (copy-on-write)')
     // macOS: cp -c clones the whole tree in one call (APFS clonefile); elsewhere a per-file copy-on-write copy
     const dst = join(o.worktree, 'node_modules')
     const cloned = process.platform === 'darwin' && (await run(['cp', '-c', '-R', nm, dst], o.worktree)).code === 0
@@ -43,11 +49,16 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
       try { cpSync(nm, dst, { recursive: true, mode: 2 /* COPYFILE_FICLONE */, verbatimSymlinks: true }) }
       catch (e) { notes.push(`node_modules not cloned (${(e as Error).message}); the install starts from nothing`) }
     }
+    logLine(o.log, `node_modules cloned in ${secs(t)}`)
   }
   if (o.install) {
-    const i = await run(['sh', '-c', o.install], o.worktree)
-    if (i.code !== 0) throw new Error(`install failed (${o.install}):\n${tail(i.err || i.out)}`)
+    const t = Date.now()
+    logLine(o.log, 'install')
+    const i = o.log ? await shLogged(o.install, o.worktree, o.log) : await run(['sh', '-c', o.install], o.worktree).then(r => ({ code: r.code, out: r.err || r.out }))
+    if (i.code !== 0) { logLine(o.log, `install failed after ${secs(t)}`); throw new Error(`install failed (${o.install}):\n${tail(i.out)}`) }
+    logLine(o.log, `installed in ${secs(t)}`)
   }
+  logLine(o.log, `${o.worktree} ready in ${secs(started)}`)
   return { notes }
 }
 

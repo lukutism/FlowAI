@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process'
 import { existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { fill, fillSh, livePids, sh, tail } from './sh.ts'
+import { fill, fillSh, livePids, logLine, sh, shLogged, tail } from './sh.ts'
 
 /**
  * A run's own device (emulator or simulator) and its Metro, from the project's commands. flow owns the lifecycle:
@@ -33,7 +33,13 @@ export interface DeviceSpec { metro: string; consolePortStart: number; metroPort
 /** app: the app's id on it, when the project names it (its log, its relaunch) */
 export interface DeviceState { run: string; platform: 'android' | 'ios'; id: string; consolePort: number; metroPort: number; pids: number[]; app?: string }
 
-async function must(what: string, cmd: string, cwd: string) {
+async function must(what: string, cmd: string, cwd: string, log?: string) {
+  logLine(log, what)
+  if (log) {
+    const r = await shLogged(cmd, cwd, log)
+    if (r.code !== 0) throw new Error(`${what} failed (${cmd}):\n${tail(r.out)}`)
+    return r.out.trim()
+  }
   const r = await sh(cmd, cwd)
   if (r.code !== 0) throw new Error(`${what} failed (${cmd}):\n${tail(r.err || r.out)}`)
   return r.out
@@ -61,7 +67,7 @@ export async function until(ok: () => Promise<boolean>, timeoutMs: number): Prom
   return ok()
 }
 
-export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | 'ios'; run: string; runDir: string; worktree: string; taken?: Set<number>; readyTimeoutMs?: number }): Promise<DeviceState> {
+export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | 'ios'; run: string; runDir: string; worktree: string; taken?: Set<number>; readyTimeoutMs?: number; log?: string }): Promise<DeviceState> {
   const cmds = o.spec[o.platform]
   if (!cmds) throw new Error(`the project has no ${o.platform} device commands`)
   const consolePort = await freePort(o.spec.consolePortStart, 2, o.taken)
@@ -75,22 +81,24 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
   const timeout = o.readyTimeoutMs ?? 180_000
   const deviceLog = join(o.runDir, 'device.log'), metroLog = join(o.runDir, 'metro.log')
   try {
-    if (cmds.prepare) await must('prepare', filled(cmds.prepare), o.worktree)
+    if (cmds.prepare) await must('prepare', filled(cmds.prepare), o.worktree, o.log)
     if (cmds.create) {
-      const out = await must('creating the device', filled(cmds.create), o.runDir)
+      const out = await must('creating the device', filled(cmds.create), o.runDir, o.log)
       if (!state.id) state.id = out.trim().split('\n').filter(Boolean).pop() ?? ''
     }
     if (!state.id) throw new Error('the device has no id: give "id" or a "create" that prints it')
     vars.id = state.id
-    if (cmds.bootStays) state.pids.push(background(filled(cmds.boot), o.runDir, deviceLog))
-    else await must('booting the device', filled(cmds.boot), o.runDir)
+    if (cmds.bootStays) { logLine(o.log, `booting ${state.id || 'the device'} (its output in device.log)`); state.pids.push(background(filled(cmds.boot), o.runDir, deviceLog)) }
+    else await must('booting the device', filled(cmds.boot), o.runDir, o.log)
+    logLine(o.log, `waiting for it to be ready (up to ${Math.round(timeout / 1000)}s)`)
     if (!(await until(async () => (await sh(filled(cmds.ready), o.runDir)).code === 0, timeout)))
       throw new Error(`device ${state.id} not ready after ${Math.round(timeout / 1000)} s:\n${existsSync(deviceLog) ? tail(readFileSync(deviceLog, 'utf8')) : '(no device log)'}`)
+    logLine(o.log, `ready; Metro on :${metroPort} (its output in metro.log)`)
     state.pids.push(background(filled(o.spec.metro), o.worktree, metroLog))
     const metroUp = () => fetch(`http://127.0.0.1:${metroPort}/status`).then(r => r.text()).then(t => t.includes('packager-status:running'), () => false)
     if (!(await until(metroUp, Math.max(timeout, 60_000))))
       throw new Error(`Metro did not answer on :${metroPort}:\n${existsSync(metroLog) ? tail(readFileSync(metroLog, 'utf8')) : '(no Metro log)'}`)
-    if (cmds.install) await must('installing the app', filled(cmds.install), o.worktree)
+    if (cmds.install) await must('installing the app (build and install)', filled(cmds.install), o.worktree, o.log)
     writeFileSync(join(o.runDir, 'device.json'), JSON.stringify(state, null, 2) + '\n')
     return state
   } catch (e) {

@@ -112,7 +112,7 @@ export function openEditor(dir: string) {
   try { Bun.spawn([process.env.FLOW_EDITOR ?? 'code', dir], { stdout: 'ignore', stderr: 'ignore' }) } catch {}
 }
 
-export type Pane = 'agent' | 'metro' | 'devserver' | 'shell'
+export type Pane = 'agent' | 'setup' | 'metro' | 'devserver' | 'shell'
 
 /** a command of the palette: what it says, and what choosing it does */
 export interface PaletteAction { label: string; hint?: string; run: () => void }
@@ -136,7 +136,9 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   bind: (keys: DetailKeys | null) => void
   onMessage: (text: string) => Promise<boolean> | void
 }) {
-  const [pane, setPane] = useState<Pane>('agent')
+  // a run setting up (or whose setup failed) opens on its Setup pane: what it is doing, step by step
+  const settingUp = run.stage === 'setup'
+  const [pane, setPane] = useState<Pane>(settingUp ? 'setup' : 'agent')
   /** a pop-up over the detail: a file as Markdown, or the change to comment on */
   const [popup, setPopup] = useState<Target | null>(null)
   // the pop-up's keys: a ref (it hands them over on each draw; a state would draw again, without end)
@@ -189,7 +191,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
 
   // a log pane polls its file while it is shown
   useEffect(() => {
-    if (top !== 'metro' && top !== 'devserver') return
+    if (top !== 'metro' && top !== 'devserver' && top !== 'setup') return
     let live = true
     const get = () => void api.log?.(run.id, top, 400).then(l => { if (live) setLogs(l) }).catch(() => {})
     get()
@@ -215,7 +217,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   useEffect(() => { if (shell && !shell.ended) shell.proc?.terminal?.resize(right - 2, shellRows) }, [shell, right, shellRows])
 
   // the panes this run has: Metro only with a device, the dev server only when it has one (a web or backend run)
-  const panes: { key: Pane; label: string }[] = [{ key: 'agent', label: 'Agent' },
+  const panes: { key: Pane; label: string }[] = [...(settingUp ? [{ key: 'setup' as const, label: 'Setup' }] : []), { key: 'agent', label: 'Agent' },
     ...(run.device ? [{ key: 'metro' as const, label: 'Metro' }] : []), ...(run.devServer ? [{ key: 'devserver' as const, label: 'Dev server' }] : []), { key: 'shell', label: 'Shell' }]
   const order = panes.map(p => p.key)
   const openPane = (k: Pane) => { setPane(k); setFocus(k === 'agent' ? 'message' : 'none') }
@@ -290,13 +292,13 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
       const lines = working ? [...session, [], workingLine(entries, since, now)] : session
       return (
         <box flexDirection="column" height={rows} onMouseScroll={e => wheel(e, lines.length - rows)}>
-          {lines.length ? view(lines, rows).map((l, i) => <Row key={i} l={[[' ', C.text], ...l]} w={right} />) : <text fg={C.muted}> No agent session recorded for this run yet.</text>}
+          {lines.length ? view(lines, rows).map((l, i) => <Row key={i} l={[[' ', C.text], ...l]} w={right} />) : <text fg={C.muted}>{settingUp ? ' The agent starts once the setup is done: the Setup pane shows each step.' : ' No agent session recorded for this run yet.'}</text>}
         </box>
       )
     }
-    if (p === 'metro' || p === 'devserver') {
-      const what = p === 'metro' ? 'Metro' : 'dev server'
-      const empty = p === 'metro' ? (run.device ? `Metro has written nothing yet` : `This run has no device, so no Metro: start a run with a device`) : run.devServer ? 'The dev server has written nothing yet' : 'This run has no dev server: start a run with one'
+    if (p === 'metro' || p === 'devserver' || p === 'setup') {
+      const what = p === 'metro' ? 'Metro' : p === 'setup' ? 'Setup' : 'dev server'
+      const empty = p === 'setup' ? 'Nothing written yet: reading the ticket' : p === 'metro' ? (run.device ? `Metro has written nothing yet` : `This run has no device, so no Metro: start a run with a device`) : run.devServer ? 'The dev server has written nothing yet' : 'This run has no dev server: start a run with one'
       const lines: Line[] = logs.map(l => [[` ${l.slice(0, right - 2)}`, /error|fail/i.test(l) ? C.danger : /warn/i.test(l) ? C.warning : C.secondary]])
       return (
         <box flexDirection="column" height={rows} onMouseScroll={e => wheel(e, lines.length - rows)}>
@@ -319,7 +321,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const tab = (t: { key: Pane; label: string }) => {
     const k = t.key
     const on = top === k || (k === 'shell' && showsShell)
-    const dot = k === 'agent' ? (working ? C.success : '') : k === 'metro' || k === 'devserver' ? C.success : k === 'shell' ? (shell && !shell.ended ? C.success : '') : ''
+    const dot = k === 'setup' ? (run.status === 'failed' ? C.danger : C.success) : k === 'agent' ? (working ? C.success : '') : k === 'metro' || k === 'devserver' ? C.success : k === 'shell' ? (shell && !shell.ended ? C.success : '') : ''
     return <Click key={t.label} on={() => openPane(k)}><box backgroundColor={on ? undefined : C.panel} paddingLeft={1} paddingRight={1}><text>{on ? <strong>{t.label}</strong> : <span fg={C.muted}>{t.label}</span>}{dot ? <span fg={dot}> ●</span> : ''}</text></box></Click>
   }
   // the message box: always right under the agent's session (above the shell when split)
@@ -348,6 +350,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
         <span fg={C.accent}>{` ${track(run)}  `}</span><span fg={C.accent}>{`${run.stage} · ${run.status} ${duration(now - run.updatedAt)}`}</span>
         <span fg={C.muted}>{`   ${tokens(run.tokens)} tokens${run.cached ? ` (+${tokens(run.cached)} from cache)` : ''} · ${run.compactions} compaction${run.compactions === 1 ? '' : 's'}`}</span>
         {run.device ? <span fg={C.secondary}>{`   ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</span> : null}
+        {run.device ? <span fg={C.accent}>{'   b see it'}</span> : null}
         {run.patch ? <span fg={C.secondary}>{`   patch ${run.patch.customer}/${run.patch.app}`}</span> : null}
         {run.pr ? <span fg={C.success}>{`   draft PR #${run.pr.number}`}</span> : null}
       </text>

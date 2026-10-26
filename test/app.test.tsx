@@ -1069,6 +1069,9 @@ describe('the device in the browser', () => {
     try {
       await t.press('enter', 'ctrl+k', ...'browser'.split(''), 'enter')
       expect(opened).toEqual(['http://127.0.0.1:1/device/fso-105?token=t'])
+      expect(await t.frame()).toContain('b see it')
+      await t.press('esc', 'enter', 'b')
+      expect(opened).toHaveLength(2)
     } finally { t.s.renderer.destroy() }
   })
 })
@@ -1110,5 +1113,19 @@ describe('the worktree in the editor', () => {
       for (let i = 0; i < 40 && !require('node:fs').existsSync(mark); i++) await Bun.sleep(25)
       expect(require('node:fs').readFileSync(mark, 'utf8').trim()).toBe(dir)
     } finally { process.env.FLOW_EDITOR = old; t.s.renderer.destroy() }
+  })
+})
+
+describe('a run setting up', () => {
+  test('opens on its Setup pane: each step as it happens, from the run\'s setup.log', async () => {
+    const asked: string[] = []
+    const t = await screen([base('fso-106', { stage: 'setup', status: 'running' })], undefined, { log: async (_r: string, name: string) => { asked.push(name); return ['10:59:01 fetching origin in ~/fso/m', '10:59:40 install', '$ yarn install --frozen-lockfile', '[2/4] Fetching packages...'] } })
+    try {
+      await t.press('enter'); await act(async () => { await Bun.sleep(50) })
+      const f = await t.frame()
+      expect(f).toMatch(/Setup ●? *Agent/)
+      expect(f).toContain('[2/4] Fetching packages...')
+      expect(asked).toContain('setup')
+    } finally { t.s.renderer.destroy() }
   })
 })

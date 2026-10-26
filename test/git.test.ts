@@ -127,3 +127,14 @@ describe('createWorktree: files tools write', () => {
     expect(git(p.wt, 'status', '--porcelain')).toBe('')
   })
 })
+
+describe('createWorktree: the setup log', () => {
+  test('each step with its time, and the install\'s own output as it comes', async () => {
+    const p = project(), log = join(p.root, 'setup.log')
+    writeFileSync(log, '')
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/8', base: 'origin/develop', install: 'echo resolving packages; echo done', log })
+    const text = readFileSync(log, 'utf8')
+    for (const l of ['fetching origin', 'worktree', 'node_modules cloned in', '$ echo resolving packages; echo done', 'resolving packages', 'installed in', 'ready in']) expect(text).toContain(l)
+    expect(text).toMatch(/^\d\d:\d\d:\d\d fetching origin/)
+  })
+})

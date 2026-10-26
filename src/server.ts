@@ -80,7 +80,7 @@ export async function diffs(dataDir: string, run: string, maxLines = 1500, patch
 }
 
 /** the logs of a run the screen may read: Metro's, the dev server's, the device's */
-export const RUN_LOGS = ['metro', 'devserver', 'device'] as const
+export const RUN_LOGS = ['metro', 'devserver', 'device', 'setup'] as const
 export type RunLog = (typeof RUN_LOGS)[number]
 export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'file'; run: string; name: RunFile } | { cmd: 'transcript'; run: string } | { cmd: 'changes'; run: string } | { cmd: 'diff'; run: string } | { cmd: 'query'; query: Query } | { cmd: 'log'; run: string; name: RunLog; lines: number } | { cmd: 'tools'; run: string } | { cmd: 'tool'; run: string; name: string; args: Record<string, unknown> }
 export type Request = RequestBody & { id: number }

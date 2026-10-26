@@ -266,6 +266,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (typed === 'a') return ask.approve(state)
       if (typed === 'S') return ask.ship(state)
       if (typed === 'p') return ask.port(state)
+      if (typed === 'b' && state.device && api.pageUrl) { (api.openUrl ?? openUrl)(api.pageUrl(`/device/${state.id}`)); return setNotice(`${state.ticket}: the device opened in the browser`) }
       return
     }
     if (tab !== 'Runs') return
