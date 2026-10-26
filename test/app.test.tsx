@@ -794,7 +794,9 @@ describe('the new-run form', () => {
       await t.press('n', 'enter')
       await typeIn(t, 'Fix the walk')
       expect(await keys(t, 'enter')).toContain('▸ 2 Notes')
-      await typeIn(t, 'Use order 700216740')
+      await typeIn(t, 'Use order ')
+      expect(await t.frame()).toContain('Use order ▏') // the space shows as soon as it is typed
+      await typeIn(t, '700216740')
       await keys(t, 'enter')
       await typeIn(t, 'tablet layout too')
       const n = await t.frame()

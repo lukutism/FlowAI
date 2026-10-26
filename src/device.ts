@@ -7,7 +7,7 @@ import { fill, fillSh, livePids, sh, tail } from './sh.ts'
  * A run's own device (emulator or simulator) and its Metro, from the project's commands. flow owns the lifecycle:
  * free ports, background processes (each in its own process group, so stopping takes their children too),
  * readiness, the state file, and cleanup on failure and at the end. Placeholders in the commands: {run}, {id},
- * {consolePort}, {metroPort}, {worktree}, {runDir}, {template}, {headless} (the emulator's no-window flags when headless).
+ * {consolePort}, {grpcPort} (the emulator's gRPC, which argent reads: consolePort + 3000), {metroPort}, {worktree}, {runDir}, {template}, {headless} (the emulator's no-window flags when headless).
  */
 export interface DeviceCommands {
   template?: string
@@ -67,7 +67,7 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
   const metroPort = await freePort(o.spec.metroPortStart, 1, o.taken)
   // a simulator has no window unless Simulator.app is opened; the emulator needs its flags
   const headless = o.spec.headless && o.platform === 'android' ? '-no-window -no-audio' : ''
-  const vars: Record<string, string | number | undefined> = { run: o.run, consolePort, metroPort, worktree: o.worktree, runDir: o.runDir, template: cmds.template }
+  const vars: Record<string, string | number | undefined> = { run: o.run, consolePort, metroPort, worktree: o.worktree, runDir: o.runDir, template: cmds.template, grpcPort: consolePort + 3000 }
   // flow's own flags, several words: put in as they are (other values are quoted as one word each)
   const filled = (c: string) => fillSh(c.replaceAll('{headless}', headless), vars)
   const state: DeviceState = { run: o.run, platform: o.platform, id: cmds.id ? fill(cmds.id, vars) : '', consolePort, metroPort, pids: [] }

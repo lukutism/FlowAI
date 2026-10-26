@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, symlinkSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { changedFiles } from './verify.ts'
@@ -16,7 +16,7 @@ const tail = (s: string, n = 6) => s.split('\n').slice(-n).join('\n')
  * The run's own git worktree on a new branch from its base. node_modules is cloned from the user's main checkout
  * (copy-on-write on APFS, so instant and separate), then the project's install brings it in line with the base.
  */
-export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[] }): Promise<{ notes: string[] }> {
+export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[]; ignore?: string[] }): Promise<{ notes: string[] }> {
   const notes: string[] = []
   const fetch = await run(['git', 'fetch', '--prune', '--quiet', 'origin'], o.repo)
   if (fetch.code !== 0) notes.push(`fetch failed, using local refs: ${tail(fetch.err, 1)}`)
@@ -25,6 +25,13 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   mkdirSync(dirname(o.worktree), { recursive: true })
   const add = await run(['git', 'worktree', 'add', '--quiet', '--no-track', '-b', o.branch, o.worktree, o.base], o.repo)
   if (add.code !== 0) throw new Error(`git worktree add failed: ${tail(add.err)}`)
+  // what tools write into a worktree (argent's .argent/) stays out of the change: git's local exclude list
+  if (o.ignore?.length) {
+    const ex = resolve(o.worktree, (await run(['git', 'rev-parse', '--git-path', 'info/exclude'], o.worktree)).out)
+    const have = existsSync(ex) ? readFileSync(ex, 'utf8') : ''
+    const add = o.ignore.filter(p => !have.split('\n').includes(p))
+    if (add.length) { mkdirSync(dirname(ex), { recursive: true }); writeFileSync(ex, `${have}${have && !have.endsWith('\n') ? '\n' : ''}${add.join('\n')}\n`) }
+  }
   const linked = await linkLocal(o.repo, o.worktree, o.localFiles ?? [])
   if (linked.length) notes.push(`linked ${linked.join(', ')} from the main checkout`)
   const nm = join(o.repo, 'node_modules')

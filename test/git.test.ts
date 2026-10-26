@@ -118,3 +118,12 @@ describe('createWorktree: the main checkout\'s local files the agent needs', () 
     expect(r.notes.join(' ')).toContain('linked .claude/settings.local.json, .claude/skills, .mcp.json')
   })
 })
+
+describe('createWorktree: files tools write', () => {
+  test("argent's .argent/ is ignored in the worktree: not a change, not shipped", async () => {
+    const p = project()
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/7', base: 'origin/develop', ignore: ['.argent/'] })
+    mkdirSync(join(p.wt, '.argent'), { recursive: true }); writeFileSync(join(p.wt, '.argent', 'x.json'), '{}')
+    expect(git(p.wt, 'status', '--porcelain')).toBe('')
+  })
+})

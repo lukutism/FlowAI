@@ -238,7 +238,7 @@ export class Pipeline {
     try {
       for (const r of m.repos) {
         const c = this.repoConfig(r.key)
-        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles }))
+        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles, ignore: this.d.project.ignore }))
         notes.push(...w.notes.map(n => `${r.key}: ${n}`))
       }
     } catch (e) {

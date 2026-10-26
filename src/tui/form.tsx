@@ -381,7 +381,9 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         {blank}
         <box flexDirection="column" marginLeft={2} marginRight={2} backgroundColor={C.selected} paddingLeft={1} paddingRight={1} height={NOTE_ROWS + 2} paddingTop={1}>
           {(() => {
-            const lines = note.split('\n').flatMap(l => (l ? wrap(l, W - 10) : ['']))
+            // cut at the width as typed (spaces kept: a word-wrap would drop the space you just typed)
+            const w = W - 10
+            const lines = note.split('\n').flatMap(l => (l ? Array.from({ length: Math.ceil(l.length / w) }, (_, i) => l.slice(i * w, (i + 1) * w)) : ['']))
             const shown = lines.slice(-NOTE_ROWS)
             return note ? shown.map((l, i) => <text key={i} fg={C.text}>{l}{i === shown.length - 1 ? <span fg={C.accent}>▏</span> : ''}</text>)
               : <text><span fg={C.accent}>▏</span><span fg={C.faint}>e.g. Test on order 700216740 in the qa cloud; the tablet layout too; leave the sync code alone.</span></text>

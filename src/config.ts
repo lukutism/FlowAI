@@ -99,6 +99,8 @@ const project = z.object({
   claudeMdExcludes: z.array(z.string()).optional(),
   /** the main checkout's git-ignored files linked into each worktree (project skills, .mcp.json, .npmrc, a code index) */
   localFiles: z.array(z.string()).default([]),
+  /** what tools write into a worktree and must not ship (git's local exclude list) */
+  ignore: z.array(z.string()).default(['.argent/']),
   /** the new run's Login step: email and password always; a license field for projects whose app needs one */
   login: z.object({ license: z.boolean().default(false) }).default({}),
   /** the project's own commands, as tools the agents call by name ({worktree} {runDir} {run} {base} {id} {metroPort} and each argument; arguments are quoted) */

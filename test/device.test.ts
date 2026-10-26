@@ -17,7 +17,7 @@ function spec(dir: string, over: Partial<DeviceSpec['android'] & object> = {}): 
       prepare: `echo prepared > ${dir}/prepared`,
       create: `echo created-{run} > ${dir}/created`,
       id: 'emulator-{consolePort}',
-      boot: `sh -c 'touch ${dir}/booted-{consolePort}; exec sleep 300'`,
+      boot: `sh -c 'echo {grpcPort} > ${dir}/grpc; touch ${dir}/booted-{consolePort}; exec sleep 300'`,
       bootStays: true,
       ready: `test -f ${dir}/booted-{consolePort}`,
       install: `echo {id} {metroPort} > ${dir}/installed`,
@@ -40,6 +40,7 @@ describe('a run\'s device', () => {
     try {
       expect(s).toMatchObject({ platform: 'android', id: 'emulator-25700', consolePort: 25700, metroPort: 28700 })
       expect(readFileSync(join(d.dir, 'prepared'), 'utf8')).toBe('prepared\n')
+      expect(readFileSync(join(d.dir, 'grpc'), 'utf8')).toBe('28700\n') // console + 3000, for argent
       expect(readFileSync(join(d.dir, 'installed'), 'utf8')).toBe('emulator-25700 28700\n')
       expect(await (await fetch('http://127.0.0.1:28700/status')).text()).toBe('packager-status:running')
       expect(JSON.parse(readFileSync(join(d.runDir, 'device.json'), 'utf8'))).toMatchObject({ id: 'emulator-25700', metroPort: 28700 })
