@@ -163,3 +163,17 @@ describe('createWorktree: indexes the run gets its own copy of', () => {
     expect(existsSync(join(p.wt, 'made'))).toBe(false)
   })
 })
+
+describe('cloneTree', () => {
+  test('a folder cloned whole (macOS): same files, and a write to the clone leaves the source as it was', () => {
+    const { cloneTree } = require('../src/git.ts') as typeof import('../src/git.ts')
+    const root = mkdtempSync(join(tmpdir(), 'flow-clone-')), src = join(root, 'src'), dst = join(root, 'dst')
+    mkdirSync(join(src, 'a', 'b'), { recursive: true }); writeFileSync(join(src, 'a', 'b', 'f.js'), 'one')
+    if (process.platform !== 'darwin') { expect(cloneTree(src, dst)).toBe(false); return }
+    expect(cloneTree(src, dst)).toBe(true)
+    expect(readFileSync(join(dst, 'a', 'b', 'f.js'), 'utf8')).toBe('one')
+    writeFileSync(join(dst, 'a', 'b', 'f.js'), 'two')
+    expect(readFileSync(join(src, 'a', 'b', 'f.js'), 'utf8')).toBe('one')
+    expect(cloneTree(src, dst)).toBe(false) // the target is there already
+  })
+})

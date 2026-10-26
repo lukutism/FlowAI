@@ -456,7 +456,7 @@ export class Pipeline {
         const f = join(runs, other, 'device.json')
         if (other !== run && existsSync(f)) { const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState; taken.add(d.consolePort).add(d.consolePort + 1).add(d.metroPort) }
       }
-      const d = await this.building(run, () => startDevice({ spec: { ...this.d.project.devices!, headless: this.meta(run).headless ?? this.d.project.devices!.headless }, platform, run, runDir: this.runDir(run), worktree, taken, readyTimeoutMs: this.d.deviceReadyTimeoutMs, log: join(this.runDir(run), 'setup.log') }))
+      const d = await this.building(run, () => startDevice({ spec: { ...this.d.project.devices!, headless: this.meta(run).headless ?? this.d.project.devices!.headless }, platform, run, runDir: this.runDir(run), worktree, taken, readyTimeoutMs: this.d.deviceReadyTimeoutMs, log: join(this.runDir(run), 'setup.log'), cacheDir: join(this.d.dataDir, 'app-cache', this.d.project.key), mainCheckout: this.repoConfig(this.meta(run).repos[0]!.key).path }))
       this.deviceSlots.set(run, free)
       this.d.store.append(run, 'engine', { type: 'device.ready', platform, id: d.id, metroPort: d.metroPort })
     } catch (e) { free(); throw e }

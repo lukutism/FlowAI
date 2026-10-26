@@ -216,6 +216,13 @@ Apps / Dev menu. An iOS simulator is shown there but not driven (simctl has no i
 `scripts/avd-clone.sh` (an Android AVD cloned copy-on-write from a template) and `scripts/android-dev-host.sh` (a
 React Native debug app pointed at another Metro port) are there for the Android commands.
 
+The app is built once per set of native inputs: a device's `cache` (`{ "inputs": ["android", "package.json",
+"yarn.lock", ".env"], "artifact": "android/app/build/outputs/apk/debug/app-debug.apk", "installFrom": "adb … install
+-r -t -d {artifact} && …" }`) keeps the built app under `app-cache/<project>/` keyed by a fingerprint of those inputs
+(an env file compiled into the app counts), and a run with the same fingerprint installs it in seconds instead of
+building for minutes (a run's JS comes from its own Metro). The first run can take the main checkout's own build
+when it was built from the same inputs and is newer than any change to them. A few builds per platform are kept.
+
 Headless by default: the emulator boots without its window (`{headless}` in the boot command: `-no-window
 -no-audio`) and the run's browser without its own; you see the device in the browser page (`b` in the run). A run
 can ask for its windows instead: Window: shown in the form, or `flow start … --headed`; `devices.headless` sets

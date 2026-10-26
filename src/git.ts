@@ -46,7 +46,7 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   for (const x of indexes) {
     const src = join(o.repo, x.dir), dst = join(o.worktree, x.dir)
     if (existsSync(dst)) continue // tracked on this branch
-    const cloned = process.platform === 'darwin' && (await run(['cp', '-c', '-R', src, dst], o.worktree)).code === 0
+    const cloned = cloneTree(src, dst) || (process.platform === 'darwin' && (await run(['cp', '-c', '-R', src, dst], o.worktree)).code === 0)
     if (!cloned) { try { cpSync(src, dst, { recursive: true, mode: 2 /* COPYFILE_FICLONE */ }) } catch (e) { notes.push(`${x.dir} not copied: ${(e as Error).message}`); continue } }
     logLine(o.log, `${x.dir}: copied from the main checkout${x.sync ? `; ${x.sync} in the background` : ''}`)
     if (x.sync) {
@@ -58,9 +58,10 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   if (existsSync(nm)) {
     const t = Date.now()
     logLine(o.log, 'node_modules: cloning the main checkout\'s (copy-on-write)')
-    // macOS: cp -c clones the whole tree in one call (APFS clonefile); elsewhere a per-file copy-on-write copy
+    // macOS: the whole folder cloned in one call (APFS clonefile: ~2 s for 120k files, where cp -c takes ~25 s);
+    // else cp -c file by file; elsewhere a per-file copy-on-write copy
     const dst = join(o.worktree, 'node_modules')
-    const cloned = process.platform === 'darwin' && (await run(['cp', '-c', '-R', nm, dst], o.worktree)).code === 0
+    const cloned = cloneTree(nm, dst) || (process.platform === 'darwin' && (await run(['cp', '-c', '-R', nm, dst], o.worktree)).code === 0)
     if (!cloned) {
       try { cpSync(nm, dst, { recursive: true, mode: 2 /* COPYFILE_FICLONE */, verbatimSymlinks: true }) }
       catch (e) { notes.push(`node_modules not cloned (${(e as Error).message}); the install starts from nothing`) }
@@ -153,4 +154,17 @@ async function linkLocal(repo: string, worktree: string, names: string[]): Promi
   }
   for (const n of names) await one(n)
   return out
+}
+
+/**
+ * A folder cloned whole in one call (macOS APFS clonefile): copy-on-write, no extra disk until either side writes.
+ * false when it can't be (another platform or volume, the target there already): the caller copies another way.
+ */
+export function cloneTree(src: string, dst: string): boolean {
+  if (process.platform !== 'darwin' || existsSync(dst)) return false
+  try {
+    const { dlopen, FFIType, ptr } = require('bun:ffi') as typeof import('bun:ffi')
+    const lib = dlopen('/usr/lib/libSystem.B.dylib', { clonefile: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32], returns: FFIType.i32 } })
+    try { return lib.symbols.clonefile(ptr(Buffer.from(`${src}\0`)), ptr(Buffer.from(`${dst}\0`)), 0) === 0 } finally { lib.close() }
+  } catch { return false }
 }

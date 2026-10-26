@@ -84,9 +84,71 @@ describe('a run\'s device', () => {
 
 describe('freePort', () => {
   test('the first port from the start that is free and not taken by another run', async () => {
-    const busy = Bun.listen({ hostname: '127.0.0.1', port: 8800, socket: { data() {} } })
+    // a range no emulator or Metro of the user's uses (8800 is an emulator's gRPC: 5800 + 3000)
+    const busy = Bun.listen({ hostname: '127.0.0.1', port: 39800, socket: { data() {} } })
     try {
-      expect(await freePort(8800, 1, new Set([8801]))).toBe(8802)
+      expect(await freePort(39800, 1, new Set([39801]))).toBe(39802)
     } finally { busy.stop(true) }
+  })
+})
+
+describe('the app built once, installed again while its native inputs are the same', () => {
+  const cached = (dir: string) => spec(dir, {
+    install: `mkdir -p out && echo built-{id} > out/app.apk && echo built >> ${dir}/builds`,
+    cache: { inputs: ['native', 'lock.txt', '.env'], artifact: 'out/app.apk', installFrom: `echo {artifact} > ${dir}/reinstalled` },
+  })
+  const worktree = (env: string) => {
+    const d = dirs()
+    Bun.spawnSync(['git', 'init', '-q'], { cwd: d.wt })
+    mkdirSync(join(d.wt, 'native')); writeFileSync(join(d.wt, 'native', 'Main.kt'), 'class Main\n'); writeFileSync(join(d.wt, 'lock.txt'), 'deps 1\n'); writeFileSync(join(d.wt, '.env'), env)
+    Bun.spawnSync(['git', 'add', 'native', 'lock.txt'], { cwd: d.wt })
+    return d
+  }
+  test('the first run builds and keeps the app; the next with the same inputs installs it without building; a changed input builds again', async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'flow-appcache-')), shared = mkdtempSync(join(tmpdir(), 'flow-dev-marks-'))
+    const go = async (env: string, change?: (wt: string) => void) => {
+      const d = worktree(env); change?.(d.wt)
+      const s = await startDevice({ spec: cached(shared), platform: 'android', run: 'r', runDir: d.runDir, worktree: d.wt, readyTimeoutMs: 5000, cacheDir })
+      await stopDevice(s, cached(shared), d.runDir)
+    }
+    await go('HOST=qa\n')
+    expect(readFileSync(join(shared, 'builds'), 'utf8')).toBe('built\n')
+    await go('HOST=qa\n')
+    expect(readFileSync(join(shared, 'builds'), 'utf8')).toBe('built\n') // not built again
+    expect(readFileSync(join(shared, 'reinstalled'), 'utf8')).toMatch(new RegExp(`^${cacheDir}/android-[0-9a-f]{16}/app\\.apk\\n$`))
+    await go('HOST=demo\n') // the env compiled into the app differs
+    await go('HOST=qa\n', wt => writeFileSync(join(wt, 'native', 'Main.kt'), 'class Main2\n')) // native code changed
+    expect(readFileSync(join(shared, 'builds'), 'utf8')).toBe('built\nbuilt\nbuilt\n')
+  })
+})
+
+describe("the main checkout's own build", () => {
+  test('used for the first run when its native inputs are the same; not when they differ', async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'flow-appcache-')), marks = mkdtempSync(join(tmpdir(), 'flow-dev-marks-'))
+    const sp = spec(marks, { install: `echo built >> ${marks}/builds`, cache: { inputs: ['lock.txt'], artifact: 'out/app.apk', installFrom: `echo {artifact} > ${marks}/reinstalled` } })
+    const main = mkdtempSync(join(tmpdir(), 'flow-main-'))
+    writeFileSync(join(main, 'lock.txt'), 'deps 1\n'); await Bun.sleep(20); mkdirSync(join(main, 'out')); writeFileSync(join(main, 'out', 'app.apk'), 'main build')
+    const d = dirs(); writeFileSync(join(d.wt, 'lock.txt'), 'deps 1\n')
+    const s = await startDevice({ spec: sp, platform: 'android', run: 'r', runDir: d.runDir, worktree: d.wt, readyTimeoutMs: 5000, cacheDir, mainCheckout: main })
+    await stopDevice(s, sp, d.runDir)
+    expect(existsSync(join(marks, 'builds'))).toBe(false)
+    expect(readFileSync(readFileSync(join(marks, 'reinstalled'), 'utf8').trim(), 'utf8')).toBe('main build')
+    const e = dirs(); writeFileSync(join(e.wt, 'lock.txt'), 'deps 2\n')
+    const t = await startDevice({ spec: sp, platform: 'android', run: 'r', runDir: e.runDir, worktree: e.wt, readyTimeoutMs: 5000, cacheDir, mainCheckout: main })
+    await stopDevice(t, sp, e.runDir)
+    expect(readFileSync(join(marks, 'builds'), 'utf8')).toBe('built\n')
+  })
+})
+
+describe("a main checkout build older than its inputs", () => {
+  test('is not used (its sources changed after it was built)', async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), 'flow-appcache-')), marks = mkdtempSync(join(tmpdir(), 'flow-dev-marks-'))
+    const sp = spec(marks, { install: `echo built >> ${marks}/builds`, cache: { inputs: ['lock.txt'], artifact: 'out/app.apk', installFrom: `echo {artifact} > ${marks}/reinstalled` } })
+    const main = mkdtempSync(join(tmpdir(), 'flow-main-'))
+    mkdirSync(join(main, 'out')); writeFileSync(join(main, 'out', 'app.apk'), 'old build'); await Bun.sleep(20); writeFileSync(join(main, 'lock.txt'), 'deps 1\n')
+    const d = dirs(); writeFileSync(join(d.wt, 'lock.txt'), 'deps 1\n')
+    const s = await startDevice({ spec: sp, platform: 'android', run: 'r', runDir: d.runDir, worktree: d.wt, readyTimeoutMs: 5000, cacheDir, mainCheckout: main })
+    await stopDevice(s, sp, d.runDir)
+    expect(readFileSync(join(marks, 'builds'), 'utf8')).toBe('built\n')
   })
 })

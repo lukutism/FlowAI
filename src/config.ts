@@ -71,6 +71,8 @@ const deviceCommands = z.object({
   bootStays: z.boolean().default(false),
   ready: z.string(),
   install: z.string().optional(),
+  /** the built app kept and installed again ({artifact}) while its native inputs are the same: minutes saved a run */
+  cache: z.object({ inputs: z.array(z.string()).min(1), artifact: z.string(), installFrom: z.string() }).optional(),
   stop: z.string().optional(),
   remove: z.string().optional(),
   /** the app on the device (android package, iOS bundle id): the agent's device tool relaunches it */

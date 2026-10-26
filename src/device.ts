@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
-import { existsSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { copyFileSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { fill, fillSh, livePids, logLine, sh, shLogged, tail } from './sh.ts'
 
 /**
@@ -23,6 +23,12 @@ export interface DeviceCommands {
   ready: string
   /** builds and installs the app, pointed at the run's Metro */
   install?: string
+  /**
+   * the built app kept and installed again while its native inputs are the same (a run's JS comes from its own Metro):
+   * inputs, paths in the worktree whose content decides the build (native code, the lockfile, an env file compiled
+   * in); artifact, the built file; installFrom, installs {artifact} instead of building
+   */
+  cache?: { inputs: string[]; artifact: string; installFrom: string }
   stop?: string
   remove?: string
   /** the app's id (android package, iOS bundle id) */
@@ -67,7 +73,7 @@ export async function until(ok: () => Promise<boolean>, timeoutMs: number): Prom
   return ok()
 }
 
-export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | 'ios'; run: string; runDir: string; worktree: string; taken?: Set<number>; readyTimeoutMs?: number; log?: string }): Promise<DeviceState> {
+export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | 'ios'; run: string; runDir: string; worktree: string; taken?: Set<number>; readyTimeoutMs?: number; log?: string; cacheDir?: string; mainCheckout?: string }): Promise<DeviceState> {
   const cmds = o.spec[o.platform]
   if (!cmds) throw new Error(`the project has no ${o.platform} device commands`)
   const consolePort = await freePort(o.spec.consolePortStart, 2, o.taken)
@@ -100,7 +106,7 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
     const metroUp = () => fetch(`http://127.0.0.1:${metroPort}/status`).then(r => r.text()).then(t => t.includes('packager-status:running'), () => false)
     if (!(await until(metroUp, Math.max(timeout, 60_000))))
       throw new Error(`Metro did not answer on :${metroPort}:\n${existsSync(metroLog) ? tail(readFileSync(metroLog, 'utf8')) : '(no Metro log)'}`)
-    if (cmds.install) await must('installing the app (build and install)', filled(cmds.install), o.worktree, o.log)
+    await installApp(cmds, o, filled, vars)
     writeFileSync(join(o.runDir, 'device.json'), JSON.stringify(state, null, 2) + '\n')
     return state
   } catch (e) {
@@ -124,4 +130,65 @@ export async function stopDevice(state: DeviceState, spec: DeviceSpec, runDir: s
   for (const pid of livePids(state.pids)) { try { process.kill(-pid, 'SIGKILL') } catch {} }
   if (cmds?.remove) await sh(filled(cmds.remove), runDir)
   rmSync(join(runDir, 'device.json'), { force: true })
+}
+
+/**
+ * The app on the device: the build kept from an earlier run when its native inputs are the same (seconds), else
+ * built (minutes) and kept for the next.
+ */
+async function installApp(cmds: DeviceCommands, o: { platform: string; worktree: string; log?: string; cacheDir?: string; mainCheckout?: string }, filled: (c: string) => string, vars: Record<string, string | number | undefined>) {
+  if (!cmds.install) return
+  const c = cmds.cache
+  const key = c && o.cacheDir ? await appFingerprint(o.worktree, c.inputs, cmds.template) : undefined
+  const dir = key ? join(o.cacheDir!, `${o.platform}-${key}`) : undefined
+  const kept = dir && c ? join(dir, basename(c.artifact)) : undefined
+  // none kept yet: the main checkout's own build, when it was built from the same native inputs
+  if (kept && dir && c && !existsSync(kept) && o.mainCheckout && existsSync(join(o.mainCheckout, c.artifact)) && (await builtFromCurrent(o.mainCheckout, c)) && (await appFingerprint(o.mainCheckout, c.inputs, cmds.template)) === key) {
+    mkdirSync(dir, { recursive: true })
+    copyFileSync(join(o.mainCheckout, c.artifact), kept)
+    logLine(o.log, `the main checkout's build has the same native inputs: kept for runs (${kept})`)
+  }
+  if (kept && c && existsSync(kept)) {
+    logLine(o.log, `installing the app built before (its native inputs are the same): ${kept}`)
+    vars.artifact = kept
+    return void await must('installing the app', filled(c.installFrom), o.worktree, o.log)
+  }
+  await must('installing the app (build and install)', filled(cmds.install), o.worktree, o.log)
+  const built = c ? join(o.worktree, c.artifact) : ''
+  if (kept && dir && existsSync(built)) {
+    mkdirSync(dir, { recursive: true })
+    copyFileSync(built, kept)
+    logLine(o.log, `kept the built app for runs with the same native inputs: ${kept}`)
+    // a few per platform: the newest
+    const all = readdirSync(o.cacheDir!).filter(x => x.startsWith(`${o.platform}-`)).map(x => join(o.cacheDir!, x)).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)
+    for (const old of all.slice(4)) rmSync(old, { recursive: true, force: true })
+  }
+}
+
+/** the checkout's build is newer than every change to its native inputs, and none of them is modified now */
+async function builtFromCurrent(checkout: string, c: { inputs: string[]; artifact: string }): Promise<boolean> {
+  const git = async (...a: string[]) => { const p = Bun.spawn(['git', ...a], { cwd: checkout, stdout: 'pipe', stderr: 'ignore' }); const out = await new Response(p.stdout).text(); await p.exited; return out.trim() }
+  const dirs = c.inputs.filter(i => existsSync(join(checkout, i)) && !statSync(join(checkout, i)).isFile())
+  if (dirs.length && (await git('status', '--porcelain', '--', ...dirs))) return false
+  const changed = Math.max(dirs.length ? Number(await git('log', '-1', '--format=%ct', '--', ...dirs)) * 1000 || 0 : 0,
+    ...c.inputs.map(i => join(checkout, i)).filter(p => existsSync(p) && statSync(p).isFile()).map(p => statSync(p).mtimeMs))
+  return statSync(join(checkout, c.artifact)).mtimeMs > changed
+}
+
+/** what decides a native build: each input's content (a folder's files as git sees them, changes and new files too) */
+export async function appFingerprint(worktree: string, inputs: string[], template?: string): Promise<string> {
+  const h = new Bun.CryptoHasher('sha256')
+  h.update(`template ${template ?? ''}\n`)
+  const git = async (...a: string[]) => { const p = Bun.spawn(['git', ...a], { cwd: worktree, stdout: 'pipe', stderr: 'ignore' }); const out = await new Response(p.stdout).text(); await p.exited; return out }
+  for (const input of [...inputs].sort()) {
+    const p = join(worktree, input)
+    h.update(`input ${input}\n`)
+    if (!existsSync(p)) continue
+    if (statSync(p).isFile()) { h.update(readFileSync(p)); continue }
+    // a folder: its tracked files as committed, what changed in them, and new files (ignored ones, builds, are not inputs)
+    h.update(await git('ls-files', '-s', '--', input))
+    h.update(await git('diff', '--binary', '--', input))
+    for (const f of (await git('ls-files', '--others', '--exclude-standard', '--', input)).split('\n').filter(Boolean).sort()) { h.update(`new ${f}\n`); h.update(readFileSync(join(worktree, f))) }
+  }
+  return h.digest('hex').slice(0, 16)
 }
