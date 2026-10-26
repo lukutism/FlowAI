@@ -437,6 +437,8 @@ export class Pipeline {
       // a customer patch run ends in the patch written back, not a PR: a dry run first, then (ship again) for real
       const others = m.repos.filter(r => r.key !== m.patch!.repo && changedFiles(r.worktree).length).map(r => r.key)
       if (others.length) throw new Error(`${run}: a patch run ships only its patch, but ${others.join(', ')} changed too`)
+      const pr = m.repos.find(r => r.key === m.patch!.repo)
+      if (pr) this.noLogins(run, '', [{ r: pr, files: changedFiles(pr.worktree) }])
       const first = s.needs!.kind === 'ship'
       const report = await this.writeBack(run, m, first)
       writeFileSync(join(this.runDir(run), 'patch-report.txt'), report)
@@ -586,7 +588,10 @@ export class Pipeline {
   private keepLearnings(run: string) {
     const f = join(this.runDir(run), 'learnings.md')
     if (!existsSync(f)) return
-    saveLearnings({ run, text: readFileSync(f, 'utf8'), backlog: join(this.d.dataDir, 'backlog.md'),
+    // a line with a test login in it never reaches the memory every later agent reads
+    const secrets = this.secrets(run)
+    const text = readFileSync(f, 'utf8').split('\n').filter(l => !secrets.some(x => l.includes(x))).join('\n')
+    saveLearnings({ run, text, backlog: join(this.d.dataDir, 'backlog.md'),
       memory: key => { try { return memoryDir(this.repoConfig(key).path) } catch { return undefined } } })
   }
 
@@ -722,11 +727,16 @@ export class Pipeline {
   }
 
   /** the run's test logins must not ship: a secret-looking word of them in a changed file or pr.md refuses */
-  private noLogins(run: string, pr: string, changed: { r: RunRepo; files: string[] }[]) {
+  /** the run's test logins as the words to look for: 6 characters or more, with a digit or a symbol (not a plain name) */
+  private secrets(run: string): string[] {
     const f = join(this.runDir(run), 'logins.md')
-    if (!existsSync(f)) return
-    // words that look like secrets (6 characters or more, with a digit or a symbol): not plain words such as a name
-    const secrets = [...new Set(readFileSync(f, 'utf8').split(/[\s,;:/|]+/).filter(w => w.length >= 6 && /[^a-zA-Z]/.test(w) && !/^https?$/i.test(w)))]
+    if (!existsSync(f)) return []
+    return [...new Set(readFileSync(f, 'utf8').split(/[\s,;:/|]+/).filter(w => w.length >= 6 && /[^a-zA-Z]/.test(w) && !/^https?$/i.test(w)))]
+  }
+
+  private noLogins(run: string, pr: string, changed: { r: RunRepo; files: string[] }[]) {
+    const secrets = this.secrets(run)
+    if (!secrets.length) return
     const where: string[] = []
     if (secrets.some(x => pr.includes(x))) where.push('pr.md')
     for (const { r, files } of changed) for (const file of files) {

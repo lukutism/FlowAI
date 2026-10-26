@@ -75,6 +75,18 @@ const devices = z.object({
   ios: deviceCommands.optional(),
 })
 
+/** whether a {placeholder} sits inside '…' or "…" in a shell command */
+export function placeholderInQuotes(cmd: string): boolean {
+  let q = ''
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i]!
+    if (q) { if (c === q) q = ''; else if (c === '\\' && q === '"') i++; else if (c === '{' && /^\{\w+\}/.test(cmd.slice(i))) return true; continue }
+    if (c === '\\') i++
+    else if (c === "'" || c === '"') q = c
+  }
+  return false
+}
+
 const project = z.object({
   key: z.string().regex(/^[a-z0-9-]+$/),
   name: z.string(),
@@ -109,8 +121,9 @@ const project = z.object({
     description: z.string().min(1),
     cmd: z.string().min(1),
     cwd: z.enum(['worktree', 'run']).default('worktree'),
-    args: z.array(z.object({ name: z.string().regex(/^[a-z][a-zA-Z0-9_]*$/), description: z.string() })).default([]),
-  })).default([]),
+    args: z.array(z.object({ name: z.string().regex(/^[a-z][a-zA-Z0-9_]*$/).refine(n => !['run', 'worktree', 'runDir', 'base', 'id', 'metroPort', 'platform'].includes(n), "an argument can't take a built-in placeholder's name"), description: z.string() })).default([]),
+  // flow quotes each value as one word; a placeholder inside quotes of the command's own would undo that
+  }).refine(t => !placeholderInQuotes(t.cmd), { message: 'a {placeholder} inside quotes: leave it bare (flow quotes each value itself)', path: ['cmd'] })).default([]),
   /** tools the agents may not call (an MCP server's write tools); permission rules, as in Claude Code's settings */
   denyTools: z.array(z.string()).default([]),
   /** an independent reviewer (a fresh, read-only claude session) before ship */

@@ -41,3 +41,16 @@ describe('flow.json: settings for the whole machine', () => {
     expect(() => loadSettings(f)).toThrow(/limits\.builds/)
   })
 })
+
+describe('project tools: their commands keep arguments as data', () => {
+  const base = { key: 'x', name: 'X', worktrees: '/w', tracker: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'p' }, forge: { kind: 'azure', org: 'https://dev.azure.com/o', project: 'p' }, repos: [{ key: 'm', path: '/m', defaultBase: 'origin/develop', verify: [] }] }
+  const tool = (cmd: string, args = [{ name: 'q', description: 'd' }]) => ({ ...base, tools: [{ name: 'find_it', description: 'd', cmd, args }] })
+  test('a placeholder inside quotes is refused (the quoting would be undone: "{q}" with $(…) in it runs it)', () => {
+    expect(() => parseProject(tool('grep "{q}" .'), 'x.json')).toThrow(/quotes/)
+    expect(() => parseProject(tool("grep '{q}' ."), 'x.json')).toThrow(/quotes/)
+    expect(parseProject(tool('grep -- {q} .'), 'x.json').tools[0]!.cmd).toBe('grep -- {q} .')
+  })
+  test("an argument can't take a built-in's name (it would replace {worktree} or {run})", () => {
+    expect(() => parseProject(tool('ls {worktree}', [{ name: 'worktree', description: 'd' }]), 'x.json')).toThrow(/built-in/)
+  })
+})

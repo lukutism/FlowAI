@@ -6,7 +6,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 export function splitLearnings(text: string): { repos: Record<string, string[]>; flow: string[] } {
   const out = { repos: {} as Record<string, string[]>, flow: [] as string[] }
@@ -24,7 +24,9 @@ export function memoryDir(repo: string): string {
   for (const f of ['settings.local.json', 'settings.json']) {
     try {
       const v = (JSON.parse(readFileSync(join(repo, '.claude', f), 'utf8')) as { autoMemoryDirectory?: string }).autoMemoryDirectory
-      if (v) return v.replace(/^~(?=\/)/, homedir())
+      // a repo names its own memory, but flow writes there: only an absolute folder in your home is taken
+      const dir = v ? resolve(v.replace(/^~(?=\/)/, homedir())) : ''
+      if (dir && isAbsolute(v!.replace(/^~(?=\/)/, homedir())) && dir.startsWith(homedir() + '/')) return dir
     } catch {}
   }
   return join(homedir(), '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'), 'memory')

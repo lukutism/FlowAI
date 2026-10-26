@@ -585,3 +585,19 @@ describe('pipeline: memory and learnings', () => {
     expect(readFileSync(join(t.root, 'data', 'backlog.md'), 'utf8')).toContain('example-186278: verify: say which package failed')
   })
 })
+
+describe('pipeline: test logins never reach memory', () => {
+  test('a learnings line with a login is dropped; the others are kept', async () => {
+    const mem = mkdtempSync(join(tmpdir(), 'flow-mem-'))
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => {
+      writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd)
+      writeFileSync(join(d.run, 'learnings.md'), '[repo:mobile] login: use tester / s3cret-pass on qa\n[repo:mobile] jest: run it from the app folder\n')
+    })])
+    mkdirSync(join(t.main, '.claude'), { recursive: true }); writeFileSync(join(t.main, '.claude', 'settings.local.json'), JSON.stringify({ autoMemoryDirectory: mem }))
+    const run = await t.pipe.start(186278, { logins: 'password: s3cret-pass' })
+    await t.pipe.ship(run)
+    const note = readFileSync(join(mem, 'flow-learnings.md'), 'utf8')
+    expect(note).not.toContain('s3cret-pass')
+    expect(note).toContain('jest: run it from the app folder')
+  })
+})

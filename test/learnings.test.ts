@@ -13,8 +13,14 @@ describe('learnings', () => {
   test("a repo's memory: its own setting, else Claude Code's folder for its path", () => {
     const repo = mkdtempSync(join(tmpdir(), 'flow-mem-'))
     expect(memoryDir(repo)).toBe(join(require('node:os').homedir(), '.claude', 'projects', repo.replace(/[^a-zA-Z0-9]/g, '-'), 'memory'))
-    mkdirSync(join(repo, '.claude')); writeFileSync(join(repo, '.claude', 'settings.local.json'), JSON.stringify({ autoMemoryDirectory: '/m/x' }))
-    expect(memoryDir(repo)).toBe('/m/x')
+    const home = require('node:os').homedir() as string, fallback = memoryDir(repo)
+    mkdirSync(join(repo, '.claude')); writeFileSync(join(repo, '.claude', 'settings.local.json'), JSON.stringify({ autoMemoryDirectory: `${home}/.claude/projects/x/memory` }))
+    expect(memoryDir(repo)).toBe(`${home}/.claude/projects/x/memory`)
+    // anywhere else (another place on disk, a relative path) is not taken: flow writes there
+    for (const v of ['/etc/x', 'mem', `${home}/../../etc`]) {
+      writeFileSync(join(repo, '.claude', 'settings.local.json'), JSON.stringify({ autoMemoryDirectory: v }))
+      expect(memoryDir(repo)).toBe(fallback)
+    }
   })
   test("saved under the run's name: a note plus its index line; saving again replaces that run's lines", () => {
     const mem = mkdtempSync(join(tmpdir(), 'flow-mem-')), backlog = join(mem, 'backlog.md')
