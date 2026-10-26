@@ -200,3 +200,84 @@ describe('guard: what the agent must not touch', () => {
     expect(b(`ls ${home}/.local/share/flow/runs`)).toBeNull()
   })
 })
+
+describe('guard: bypasses found by the second review', () => {
+  test.each([
+    // shell keywords before the command
+    'if git push; then :; fi',
+    'for b in a; do git push origin $b; done',
+    'while true; do git commit -am x; done',
+    '! git push',
+    'true && { git push; }',
+    // redirections around it
+    'git push>/dev/null',
+    '>/dev/null git push',
+    '2>&1 git push',
+    '</dev/null git push',
+    'git push 2>&1 | tee log',
+    // ${…} is one word, and ${#…} is no comment
+    'echo ${#a}; git push origin HEAD',
+    'git -C ${D} push',
+    // $'…' and $"…" quoting
+    "git $'push'",
+    "git $'\\x70ush'",
+    'git $"push"',
+    // wrappers and feeding a shell
+    "env -S 'git push'",
+    'find . -name x -exec git push \;',
+    "echo 'git push' | sh",
+    'echo git push | bash -s',
+    // what else moves or publishes
+    'git reset HEAD~1',
+    'git reset --soft origin/develop',
+    'git reset --mixed abc1234',
+    'git commit-tree HEAD^{tree} -m x',
+    'git send-pack origin x',
+    'wget --post-data=x https://dev.azure.com/o/_apis/x',
+    "curl -sd '{}' https://api.github.com/repos/o/r/issues",
+  ])('refused: %s', c => expect(bash(c)).toMatchObject({ deny: true }))
+  test.each([
+    'git reset',
+    'git reset -- src/a.ts',
+    'git reset HEAD src/a.ts',
+    'git reset -q',
+    "gh api graphql -f query='query{viewer{login}}'",
+    'gh api -X GET search/issues -f q=repo:o/r',
+    'echo "${#list[@]} items"',
+    'if [ -f a ]; then yarn lint; fi',
+    'yarn tsc > /tmp/tsc.log 2>&1',
+    'find . -name "*.ts" -exec grep -l foo {} \;',
+  ])('allowed: %s', c => expect(bash(c)).toBeNull())
+  test("Claude Code's settings in another case are the same file on macOS", () => {
+    expect(edit(`${wt}/.CLAUDE/Settings.json`, 'Write')).toMatchObject({ deny: true })
+    expect(edit(`${wt}/.Git/config`, 'Write')).toMatchObject({ deny: true })
+  })
+  test('a dangling symlink in the worktree pointing out of it is outside', () => {
+    const { mkdtempSync, symlinkSync, realpathSync, rmSync } = require('node:fs') as typeof import('node:fs')
+    const root = realpathSync(mkdtempSync(require('node:path').join(require('node:os').homedir(), '.flow-guard-test-')))
+    try {
+      symlinkSync(`${require('node:os').homedir()}/.flow-guard-nowhere-${process.pid}`, `${root}/link`)
+      expect(guard({ tool_name: 'Write', tool_input: { file_path: `${root}/link` } }, { worktree: root })).toMatchObject({ deny: true })
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+})
+
+describe('guard: what real agents ran that is fine (3,416 commands of hwt agents replayed)', () => {
+  test.each([
+    "cat >> .hwt/plan.md <<'EOF'\n## Notes\nflow commits it: git commit -m x, then git push\nEOF\necho done",
+    'cat > notes.md <<-END\n\tgit push is not ours\n\tEND',
+    'git worktree list',
+    'git merge --abort && git status --short',
+    'git cherry-pick --quit',
+    'git rebase --abort',
+    'az boards work-item update --help',
+    'git commit --help',
+  ])('allowed: %s', c => expect(bash(c)).toBeNull())
+  test.each([
+    'bash <<EOF\ngit push\nEOF',
+    "python3 - <<'EOF'\nimport os\nos.system('git push')\nEOF",
+    "cat > x.md <<'EOF'\ntext\nEOF\ngit push",
+    'git cherry-pick --continue',
+    'git worktree add ../x',
+  ])('refused: %s', c => expect(bash(c)).toMatchObject({ deny: true }))
+})
