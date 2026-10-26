@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -571,7 +571,9 @@ describe('pipeline: a message while the agent works', () => {
 
 describe('pipeline: memory and learnings', () => {
   test("the agent reads its repo's memory; what it learned goes there once you shipped, and flow's own lessons to the backlog", async () => {
-    const mem = mkdtempSync(join(tmpdir(), 'flow-mem-'))
+    // a memory folder in your home (flow takes no other), removed after
+    const mem = mkdtempSync(join(require('node:os').homedir(), '.flow-test-mem-'))
+    afterAll(() => require('node:fs').rmSync(mem, { recursive: true, force: true }))
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => {
       writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')
       writeFileSync(join(d.run, 'learnings.md'), '[repo:mobile] jest: run it from the app folder\n[flow] verify: say which package failed\n')
@@ -588,7 +590,9 @@ describe('pipeline: memory and learnings', () => {
 
 describe('pipeline: test logins never reach memory', () => {
   test('a learnings line with a login is dropped; the others are kept', async () => {
-    const mem = mkdtempSync(join(tmpdir(), 'flow-mem-'))
+    // a memory folder in your home (flow takes no other), removed after
+    const mem = mkdtempSync(join(require('node:os').homedir(), '.flow-test-mem-'))
+    afterAll(() => require('node:fs').rmSync(mem, { recursive: true, force: true }))
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => {
       writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd)
       writeFileSync(join(d.run, 'learnings.md'), '[repo:mobile] login: use tester / s3cret-pass on qa\n[repo:mobile] jest: run it from the app folder\n')
