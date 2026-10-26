@@ -1074,3 +1074,20 @@ describe('80 to 89 columns', () => {
     }
   })
 })
+
+describe('the worktree in the editor', () => {
+  test('e in a run\'s detail opens its worktree with FLOW_EDITOR (VS Code\'s code by default)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-ed-')), mark = join(dir, 'opened')
+    const editor = join(dir, 'editor.sh')
+    require('node:fs').writeFileSync(editor, `#!/bin/sh\necho "$1" > ${mark}\n`, { mode: 0o755 })
+    const old = process.env.FLOW_EDITOR
+    process.env.FLOW_EDITOR = editor
+    const t = await screen(runs, undefined, { file: async (_r: string, n: string) => (n === 'run.json' ? JSON.stringify({ worktree: dir }) : '') })
+    try {
+      await t.press('enter'); await act(async () => { await Bun.sleep(30) })
+      await t.press('e')
+      for (let i = 0; i < 40 && !require('node:fs').existsSync(mark); i++) await Bun.sleep(25)
+      expect(require('node:fs').readFileSync(mark, 'utf8').trim()).toBe(dir)
+    } finally { process.env.FLOW_EDITOR = old; t.s.renderer.destroy() }
+  })
+})

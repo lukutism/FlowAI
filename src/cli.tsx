@@ -11,6 +11,7 @@
  *   flow ship <run>                                                 commit, push, draft PR (after verify); stops the run's device;
  *                                                                   a patch run: the write-back's dry run, then (again) the write-back
  *   flow release <run>                                              stop the run's device now and free its slot
+ *   flow code <run>                                                 the run's worktree in VS Code (FLOW_EDITOR to use another)
  *   flow device <run>                                               the run's device in the browser: see it, tap, swipe, type
  *   flow stop <run>                                                 end the agent's turn now; the run waits for a message
  *   flow done <run>                                                 the run is finished (merged, or given up): off the attention list
@@ -230,6 +231,17 @@ async function main(argv: string[]) {
       if (!run) throw new Error('flow release <run>')
       if (service) return viaService(service, { cmd: 'release', run }).finally(() => service.close())
       return withRun(run, f.model, p => p.releaseDevice(run))
+    }
+    case 'code': {
+      const [run] = args
+      if (!run) throw new Error('flow code <run>')
+      const f = join(DATA, 'runs', run, 'run.json')
+      if (!/^[\w.-]+$/.test(run) || !existsSync(f)) throw new Error(`no run ${run}: flow status`)
+      const wt = (JSON.parse(readFileSync(f, 'utf8')) as { worktree: string }).worktree
+      if (!existsSync(wt)) throw new Error(`${run}'s worktree is gone (${wt})`)
+      Bun.spawn([process.env.FLOW_EDITOR ?? 'code', wt], { stdout: 'ignore', stderr: 'ignore' })
+      console.log(wt)
+      return
     }
     case 'device': {
       const [run] = args

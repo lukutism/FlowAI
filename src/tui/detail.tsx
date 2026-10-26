@@ -106,6 +106,12 @@ function shellFor(run: string, cwd: string, cols: number, rows: number, redraw: 
   return sh
 }
 
+/** the run's worktree in your editor: FLOW_EDITOR, else VS Code's `code` */
+export function openEditor(dir: string) {
+  if (!dir || !existsSync(dir)) return
+  try { Bun.spawn([process.env.FLOW_EDITOR ?? 'code', dir], { stdout: 'ignore', stderr: 'ignore' }) } catch {}
+}
+
 export type Pane = 'agent' | 'metro' | 'devserver' | 'shell'
 
 /** a command of the palette: what it says, and what choosing it does */
@@ -238,6 +244,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     }
     if (typed === 'v') { setSplit(x => !x); return true }
     if (typed === 'o') { setFull(x => !x); return true }
+    if (typed === 'e') { openEditor(data.worktree); return true }
     if (typed === 'd') { setPopup({ kind: 'diff' }); return true }
     if (typed === 'P') { setPopup({ kind: 'md', file: 'plan.md' }); return true }
     if (typed === 'i') { if (shells.get(run.id)?.ended) { shells.delete(run.id); redraw(x => x + 1) } if (!showsShell) setPane('shell'); setFocus('shell'); return true }
@@ -254,6 +261,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
     { label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) },
     { label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) },
     ...panes.filter(x => x.key !== 'shell').map(x => ({ label: `Show ${x.label === 'Agent' ? "the agent's session" : x.label}`, hint: 'pane', run: () => { setPane(x.key); setFocus('none') } })),
+    { label: 'Open the worktree in VS Code', hint: 'e', run: () => openEditor(data.worktree) },
     { label: 'Type in the shell', hint: 'i · in the worktree', run: () => { if (!showsShell) setPane('shell'); setFocus('shell') } },
     { label: split ? 'Unsplit' : 'Split with the shell', hint: 'v', run: () => setSplit(x => !x) },
   ]
@@ -326,7 +334,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const fake = (typed: string, name = typed) => ({ name, ctrl: false, shift: false, meta: false, sequence: typed }) as unknown as KeyEvent
   const keyLine: [string, () => void][] = focus === 'shell' ? [['typing in Shell: keys go to the shell', () => {}], ['ctrl+] leave', () => setFocus('none')], ['^K commands', () => onKey('palette')]]
     : focus === 'message' ? [['typing a message to the agent', () => {}], ['↵ send', () => keys(fake('', 'return'), '')], ['esc leave', () => setFocus('none')]]
-    : [['esc back', onBack], ['d diff', () => setPopup({ kind: 'diff' })], ['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ...(pane === 'agent' ? [[full ? 'o fold' : 'o show all', () => setFull(x => !x)] as [string, () => void]] : []), ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
+    : [['esc back', onBack], ['d diff', () => setPopup({ kind: 'diff' })], ['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ['e code', () => openEditor(data.worktree)], ...(pane === 'agent' ? [[full ? 'o fold' : 'o show all', () => setFull(x => !x)] as [string, () => void]] : []), ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
       ['a approve', () => onKey('a')], ['S ship', () => onKey('S')], ['p port', () => onKey('p')], ['^K commands', () => onKey('palette')]]
   const rule = <text fg={C.faint}>{'─'.repeat(W)}</text>
   return (
