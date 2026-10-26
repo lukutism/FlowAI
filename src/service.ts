@@ -235,7 +235,7 @@ export class Service {
         this.prChecked.set(s.id, now)
         // merged: done and removed (refused if something was left unshipped: then only done); closed: done, kept
         this.act(s.id, async () => {
-          const p = this.pipeline(s.project), state = p.prsState(s.id)
+          const p = this.pipeline(s.project), state = await p.prsState(s.id)
           if (state === 'open') return
           p.done(s.id, state === 'merged' ? 'its draft PR was merged' : 'its draft PR was closed')
           if (state === 'merged') await p.remove(s.id)

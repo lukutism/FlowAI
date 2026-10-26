@@ -2,11 +2,14 @@
  * Azure DevOps through the `az` CLI (the user's own sign-in): reading a work item, opening a draft PR.
  * Writes happen only in flow's ship step, never from an agent (the guard refuses `az boards/repos` writes).
  */
-export type Az = (args: string[]) => { code: number; out: string; err: string }
+export type AzResult = { code: number; out: string; err: string }
+/** az with these arguments; the real one doesn't hold up the service while az takes its seconds */
+export type Az = (args: string[]) => AzResult | Promise<AzResult>
 
-export const realAz: Az = args => {
-  const r = Bun.spawnSync(['az', ...args])
-  return { code: r.exitCode, out: new TextDecoder().decode(r.stdout), err: new TextDecoder().decode(r.stderr) }
+export const realAz: Az = async args => {
+  const p = Bun.spawn(['az', ...args], { stdout: 'pipe', stderr: 'pipe' })
+  const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
+  return { code: await p.exited, out, err }
 }
 
 export interface AzureRef { org: string; project: string }
@@ -23,13 +26,13 @@ export function htmlToText(html: string): string {
 
 const firstError = (err: string) => err.split('\n').find(l => l.startsWith('ERROR')) ?? err.trim()
 
-export function azureTicket(az: Az, t: AzureRef, id: number): Ticket {
-  const r = az(['boards', 'work-item', 'show', '--id', String(id), '--org', t.org, '-o', 'json'])
+export async function azureTicket(az: Az, t: AzureRef, id: number): Promise<Ticket> {
+  const r = await az(['boards', 'work-item', 'show', '--id', String(id), '--org', t.org, '-o', 'json'])
   if (r.code !== 0) throw new Error(`az boards work-item show ${id} failed: ${firstError(r.err)} (signed in? az login)`)
   const f = JSON.parse(r.out).fields as Record<string, string | undefined>
   // a ticket may live in another project of the organisation (a customer's board): use its own
   const project = f['System.TeamProject'] ?? t.project
-  const c = az(['devops', 'invoke', '--area', 'wit', '--resource', 'comments', '--route-parameters', `project=${project}`, `workItemId=${id}`,
+  const c = await az(['devops', 'invoke', '--area', 'wit', '--resource', 'comments', '--route-parameters', `project=${project}`, `workItemId=${id}`,
     '--org', t.org, '--api-version', '7.1-preview', '-o', 'json'])
   const comments = c.code === 0 ? ((JSON.parse(c.out).comments ?? []) as { createdDate: string; createdBy?: { displayName?: string }; text?: string }[]) : []
   const sections: string[] = []
@@ -50,11 +53,11 @@ export function azureTicket(az: Az, t: AzureRef, id: number): Ticket {
   }
 }
 
-export function azureDraftPr(az: Az, t: AzureRef, repository: string, o: { head: string; base: string; title: string; body: string; workItem: number }): { number: number; url: string } {
+export async function azureDraftPr(az: Az, t: AzureRef, repository: string, o: { head: string; base: string; title: string; body: string; workItem: number }): Promise<{ number: number; url: string }> {
   // Azure refuses a description over 4000 characters
   const note = '\n\n… (cut at 4000 characters: the full description is the run\'s pr.md)'
   const body = o.body.length > 4000 ? o.body.slice(0, 4000 - note.length) + note : o.body
-  const r = az(['repos', 'pr', 'create', '--org', t.org, '--project', t.project, '--repository', repository,
+  const r = await az(['repos', 'pr', 'create', '--org', t.org, '--project', t.project, '--repository', repository,
     '--source-branch', o.head, '--target-branch', o.base, '--title', o.title, '--description', body, '--draft', 'true',
     ...(o.workItem > 0 ? ['--work-items', String(o.workItem)] : []), '-o', 'json'])
   if (r.code !== 0) throw new Error(`az repos pr create failed: ${firstError(r.err)}`)
@@ -63,8 +66,8 @@ export function azureDraftPr(az: Az, t: AzureRef, repository: string, o: { head:
 }
 
 /** a PR's state: active is open, completed is merged, abandoned is closed */
-export function azurePrState(az: Az, t: AzureRef, number: number): 'open' | 'merged' | 'closed' | 'unknown' {
-  const r = az(['repos', 'pr', 'show', '--id', String(number), '--org', t.org, '-o', 'json'])
+export async function azurePrState(az: Az, t: AzureRef, number: number): Promise<'open' | 'merged' | 'closed' | 'unknown'> {
+  const r = await az(['repos', 'pr', 'show', '--id', String(number), '--org', t.org, '-o', 'json'])
   if (r.code !== 0) return 'unknown'
   try {
     const status = (JSON.parse(r.out) as { status?: string }).status

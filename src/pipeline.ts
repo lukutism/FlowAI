@@ -447,7 +447,7 @@ export class Pipeline {
       if (open) { updated.push({ number: open.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) }); continue }
       const origin = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], { cwd: r.worktree })
       const repository = new TextDecoder().decode(origin.stdout).trim().replace(/\.git$/, '').split(/[/:]/).pop()!
-      const c = this.forge.draftPr({ repository, head: m.branch, base: r.base.replace(/^origin\//, ''), title, body, ...(typeof m.id === 'number' ? { workItem: m.id } : {}) })
+      const c = await this.forge.draftPr({ repository, head: m.branch, base: r.base.replace(/^origin\//, ''), title, body, ...(typeof m.id === 'number' ? { workItem: m.id } : {}) })
       this.d.store.append(run, 'human', { type: 'pr.opened', url: c.url, number: c.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) })
       created.push(c)
     }
@@ -546,10 +546,10 @@ export class Pipeline {
   done(run: string, reason?: string) { this.must(run); this.d.store.append(run, reason ? 'engine' : 'human', { type: 'run.done', ...(reason ? { reason } : {}) }) }
 
   /** the run's draft PRs on the code host: all merged, some closed (none open any more), or still open */
-  prsState(run: string): 'merged' | 'closed' | 'open' {
+  async prsState(run: string): Promise<'merged' | 'closed' | 'open'> {
     const s = this.must(run)
     const prs = s.prs?.length ? s.prs : s.pr ? [s.pr] : []
-    const states = prs.map(p => this.forge.prState(p))
+    const states = await Promise.all(prs.map(p => this.forge.prState(p)))
     if (!states.length || states.some(x => x === 'open' || x === 'unknown')) return 'open'
     return states.every(x => x === 'merged') ? 'merged' : 'closed'
   }

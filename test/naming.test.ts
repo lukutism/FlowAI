@@ -33,7 +33,7 @@ function setup() {
     read: async id => ({ id, key: String(id), title: 'New success modal text', kind: 'feature', url: `https://example.atlassian.net/browse/${id}`, text: 'Show Ačiū.' }),
   }
   const prs: Parameters<Forge['draftPr']>[0][] = []
-  const forge: Forge = { draftPr: o => { prs.push(o); return { number: 57, url: 'https://github.com/OWNER/shop-web-app/pull/57' } }, prState: () => 'open' }
+  const forge: Forge = { draftPr: async o => { prs.push(o); return { number: 57, url: 'https://github.com/OWNER/shop-web-app/pull/57' } }, prState: async () => 'open' }
   const data = join(root, 'data'), run = join(data, 'runs', 'shop-SGL-692')
   const agent = new FakeAgent([
     turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), '# Plan\n\nChange the text.\n\n## Open questions\nnone\n') }),
