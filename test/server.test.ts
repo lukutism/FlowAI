@@ -225,6 +225,13 @@ describe('the device page: logs and other devices', () => {
     const t = withDevice()
     const text = await (await fetch(t.url('/device/fso-1/log'))).text()
     expect(text).toContain('TypeError: x is undefined')
+    // the console view: entries with their level, objects parsed to open; the native view: the rest
+    const entries = await (await fetch(t.url('/device/fso-1/log?view=console'))).json() as { level: string; text: string; values: unknown }[]
+    expect(entries.map(e => e.level)).toEqual(['log', 'error', 'log'])
+    expect(entries[2]!.values).toEqual([{ kind: 'string', text: 'faq' }, { kind: 'object', entries: [['items', { kind: 'array', items: [{ kind: 'object', entries: [['a', { kind: 'number', text: '1' }]] }] }]] }])
+    expect(await (await fetch(t.url('/device/fso-1/log?view=native'))).text()).toBe('10-26 11:08:04.000 D/OkHttp  ( 123): --> GET https://api.example/faq')
+    // DevTools needs the run's own Metro: nothing listens on the test's port
+    expect((await fetch(t.url('/device/fso-1/devtools'), { method: 'POST' })).status).toBe(502)
     expect(require('node:fs').readFileSync(join(t.data, 'adb.log'), 'utf8')).toContain('"-s","emulator-5700","logcat"')
   })
   test('the devices to switch to: the runs\' own, then emulators no run holds; one of those can be opened too', async () => {

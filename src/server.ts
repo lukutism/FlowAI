@@ -1,4 +1,5 @@
 import { appLog, deviceSize, emulators, frame, parseInput, send, video } from './screen.ts'
+import { consoleEntries } from './consolelog.ts'
 import { screenPage } from './screen-page.ts'
 import type { DeviceState } from './device.ts'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -201,7 +202,21 @@ async function deviceRoute(dataDir: string, path: string, req: globalThis.Reques
   const run = name
   try {
     if (!what) return new Response(screenPage({ run, device: d.id, platform: d.platform }), { headers: { 'content-type': 'text/html; charset=utf-8' } })
-    if (what === 'log') return new Response((await appLog(d, new URL(req.url).searchParams.get('all') === '1')).join('\n'), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } })
+    if (what === 'log') {
+      // view=console: the app's JS console as entries (objects parsed); view=native: the rest of its log (all: the device's)
+      const q = new URL(req.url).searchParams, all = q.get('all') === '1'
+      const lines = await appLog(d, all)
+      if (q.get('view') === 'console') return Response.json(consoleEntries(lines.join('\n')).console, { headers: { 'cache-control': 'no-store' } })
+      const text = q.get('view') === 'native' && d.platform === 'android' ? consoleEntries(lines.join('\n')).native : lines
+      return new Response(text.join('\n'), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } })
+    }
+    // React Native DevTools (the browser's debugger, objects and all), opened by the run's Metro; it takes Metro's one
+    // debugger connection, so an agent's debugger on this app is disconnected while it is open
+    if (what === 'devtools' && req.method === 'POST') {
+      if (!d.metroPort) return new Response('this device has no Metro of its own', { status: 404 })
+      const r = await fetch(`http://127.0.0.1:${d.metroPort}/open-debugger`, { method: 'POST' }).catch(() => null)
+      return r?.ok ? new Response(null, { status: 204 }) : new Response(`Metro :${d.metroPort} could not open DevTools${r ? ` (${r.status})` : ''}: is the app running?`, { status: 502 })
+    }
     if (what === 'frame') { const fr = await frame(d); return new Response(new Blob([fr.bytes as BlobPart]), { headers: { 'content-type': fr.type, 'cache-control': 'no-store' } }) }
     if (what === 'input' && req.method === 'POST') {
       const i = parseInput(await req.json().catch(() => null))

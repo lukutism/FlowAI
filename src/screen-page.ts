@@ -22,6 +22,17 @@ export function screenPage(o: { run: string; device: string; platform: 'android'
   aside .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   aside pre { flex: 1; margin: 0; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
   .e { color: var(--bad); } .w { color: #E2B35F; } .js { color: var(--text); } .o { color: var(--muted); }
+  #console { flex: 1; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; line-height: 1.45; }
+  #console[hidden] { display: none; }
+  .row { display: flex; gap: 10px; padding: 3px 10px; border-bottom: 1px solid var(--line); align-items: baseline; }
+  .row.warn { background: #2A2416; } .row.error { background: #2C1A19; }
+  .row .t { color: var(--muted); flex: none; }
+  .row .m { min-width: 0; white-space: pre-wrap; word-break: break-word; display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; }
+  .row.warn .m { color: #E2B35F; } .row.error .m { color: var(--bad); }
+  details { display: inline-block; vertical-align: top; } details[open] { display: block; }
+  summary { cursor: pointer; color: var(--text); list-style: none; } summary::before { content: '▸ '; color: var(--muted); } details[open] > summary::before { content: '▾ '; }
+  .kv { padding-left: 16px; } .k { color: #B39DDB; }
+  .v-string { color: #E9A96E; } .v-number, .v-boolean { color: #8FB8F0; } .v-null, .v-undefined, .v-special { color: var(--muted); }
   input, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
   button.on { border-color: var(--accent); color: var(--accent); }
   @media (max-width: 900px) { main { flex-direction: column; } aside { max-width: none; min-height: 300px; } }
@@ -32,7 +43,7 @@ export function screenPage(o: { run: string; device: string; platform: 'android'
 <body>
 <header><span><span class="dot" id="state"></span><b>${esc(o.run)}</b></span><span class="muted">${esc(o.platform)} ${esc(o.device)}</span><span class="muted" id="fps"></span><label class="muted" for="devices">devices</label><select id="devices" aria-label="other devices"></select><button id="logsToggle">Logs</button></header>
 <main><div class="screen"><canvas id="video" hidden aria-label="the device's screen"></canvas><img id="screen" alt="the device's screen"></div>
-<aside id="logs" hidden><div class="bar"><button id="appOnly" class="on">App: console and errors</button><button id="allLines">Everything</button><input id="filter" placeholder="filter" aria-label="filter the log"><button id="pause">Pause</button><span class="muted" id="count"></span></div><pre id="log" aria-live="polite"></pre></aside></main>
+<aside id="logs" hidden><div class="bar"><button id="viewConsole" class="on">Console</button><button id="viewNative">Native</button><button id="allLines" hidden>Whole device</button><input id="filter" placeholder="filter" aria-label="filter the log"><button id="pause">Pause</button><button id="devtools" title="React Native DevTools: the browser's debugger for this app (it takes over an agent's debugger on it)">DevTools</button><span class="muted" id="count"></span></div><div id="console" aria-live="polite"></div><pre id="log" hidden aria-live="polite"></pre></aside></main>
 <footer>${drives ? `
   <button data-key="back">◀ Back</button><button data-key="home">● Home</button><button data-key="apps">▢ Apps</button><button data-key="menu">Dev menu</button>
   <span class="muted">click to tap · drag to swipe · type to enter text</span>` : `<span class="muted">The simulator is shown here; drive it in Simulator.app (simctl has no input).</span>`}
@@ -66,24 +77,59 @@ fetch('/devices?token=' + encodeURIComponent(token)).then(r => r.json()).then(li
   for (const d of list) { const o = document.createElement('option'); o.value = d.name; o.textContent = d.label; if (d.name === here) o.selected = true; sel.append(o) }
   sel.onchange = () => { location.href = '/device/' + encodeURIComponent(sel.value) + '?token=' + encodeURIComponent(token) }
 }).catch(() => {})
-// the app's log: its JS console and errors (or everything), every two seconds while shown
-const logs = document.getElementById('logs'), pre = document.getElementById('log'), lineCount = document.getElementById('count'), filter = document.getElementById('filter')
-let all = false, paused = false, timer2 = 0
+// the app's log, every two seconds while shown: its JS console (objects open like the browser's) or the native rest
+const logs = document.getElementById('logs'), pre = document.getElementById('log'), con = document.getElementById('console'), lineCount = document.getElementById('count'), filter = document.getElementById('filter')
+let view = 'console', all = false, paused = false, timer2 = 0, shown = ''
 const cls = l => /\\s[EF]\\/|Error|FATAL|Exception/.test(l) ? 'e' : /\\sW\\//.test(l) ? 'w' : /ReactNativeJS/.test(l) ? 'js' : 'o'
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e }
+const short = v => v.kind === 'object' ? '{…}' : v.kind === 'array' ? 'Array(' + v.items.length + ')' : v.kind === 'string' ? '"' + v.text.slice(0, 40) + (v.text.length > 40 ? '…' : '') + '"' : v.text
+const preview = v => v.kind === 'object' ? '{' + v.entries.slice(0, 4).map(([k, x]) => k + ': ' + short(x)).join(', ') + (v.entries.length > 4 ? ', …' : '') + '}'
+  : '(' + v.items.length + ') [' + v.items.slice(0, 6).map(short).join(', ') + (v.items.length > 6 ? ', …' : '') + ']'
+// a value: objects and arrays fold open, the rest coloured by kind
+function node(v, top) {
+  if (v.kind === 'object' || v.kind === 'array') {
+    const d = el('details'), s = el('summary', '', preview(v)); d.append(s)
+    for (const [k, x] of v.kind === 'object' ? v.entries : v.items.map((x, i) => [String(i), x])) { const row = el('div', 'kv'); row.append(el('span', 'k', k + ': '), node(x, false)); d.append(row) }
+    return d
+  }
+  return el('span', 'v-' + v.kind, v.kind === 'string' && !top ? '"' + v.text + '"' : v.text)
+}
 async function pull() {
   if (logs.hidden || paused || document.hidden) return
   try {
-    const t = await (await fetch(base + '/log?all=' + (all ? 1 : 0) + '&token=' + encodeURIComponent(token), { cache: 'no-store' })).text()
-    const q = filter.value.toLowerCase(), lines = t.split('\\n').filter(l => l && (!q || l.toLowerCase().includes(q)))
-    const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40
-    pre.replaceChildren(...lines.map(l => { const s = document.createElement('div'); s.className = cls(l); s.textContent = l; return s }))
-    lineCount.textContent = lines.length + ' lines'
-    if (atEnd) pre.scrollTop = pre.scrollHeight
+    const q = filter.value.toLowerCase(), url = base + '/log?view=' + view + '&all=' + (all ? 1 : 0) + '&token=' + encodeURIComponent(token)
+    if (view === 'console') {
+      const entries = (await (await fetch(url, { cache: 'no-store' })).json()).filter(e => !q || e.text.toLowerCase().includes(q))
+      const key = JSON.stringify(entries.map(e => e.time + e.text))
+      if (key === shown) return // unchanged: the folds you opened stay open
+      shown = key
+      const atEnd = con.scrollHeight - con.scrollTop - con.clientHeight < 40
+      con.replaceChildren(...entries.map(e => { const r = el('div', 'row ' + e.level); const m = el('div', 'm'); if (e.values) m.append(...e.values.map(v => node(v, true))); else m.textContent = e.text; r.append(el('span', 't', e.time), m); return r }))
+      lineCount.textContent = entries.length + ' entries'
+      if (atEnd) con.scrollTop = con.scrollHeight
+    } else {
+      const lines = (await (await fetch(url, { cache: 'no-store' })).text()).split('\\n').filter(l => l && (!q || l.toLowerCase().includes(q)))
+      const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40
+      pre.replaceChildren(...lines.map(l => el('div', cls(l), l)))
+      lineCount.textContent = lines.length + ' lines'
+      if (atEnd) pre.scrollTop = pre.scrollHeight
+    }
   } catch {}
 }
+function show(v) {
+  view = v; shown = ''
+  document.getElementById('viewConsole').classList.toggle('on', v === 'console'); document.getElementById('viewNative').classList.toggle('on', v === 'native')
+  con.hidden = v !== 'console'; pre.hidden = v !== 'native'; document.getElementById('allLines').hidden = v !== 'native'
+  pull()
+}
 document.getElementById('logsToggle').onclick = e => { logs.hidden = !logs.hidden; e.target.classList.toggle('on', !logs.hidden); if (!logs.hidden) { pull(); clearInterval(timer2); timer2 = setInterval(pull, 2000) } else clearInterval(timer2) }
-document.getElementById('appOnly').onclick = e => { all = false; e.target.classList.add('on'); document.getElementById('allLines').classList.remove('on'); pull() }
-document.getElementById('allLines').onclick = e => { all = true; e.target.classList.add('on'); document.getElementById('appOnly').classList.remove('on'); pull() }
+document.getElementById('viewConsole').onclick = () => show('console')
+document.getElementById('viewNative').onclick = () => show('native')
+document.getElementById('allLines').onclick = e => { all = !all; e.target.classList.toggle('on', all); pull() }
+document.getElementById('devtools').onclick = async () => {
+  const r = await fetch(base + '/devtools?token=' + encodeURIComponent(token), { method: 'POST' }).catch(() => null)
+  lineCount.textContent = r && r.ok ? 'DevTools opened (an agent\\'s debugger on this app is disconnected meanwhile)' : 'DevTools: ' + (r ? await r.text() : 'the service did not answer')
+}
 document.getElementById('pause').onclick = e => { paused = !paused; e.target.textContent = paused ? 'Resume' : 'Pause'; if (!paused) pull() }
 filter.oninput = () => pull()
 // the device's own H.264 encoder over a WebSocket, decoded here: smooth, and cheap for the device
