@@ -18,7 +18,7 @@ const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const result = (text = 'done') => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 's-1', usage: { input_tokens: 1000, output_tokens: 100 } })
 const turn = (effect?: (prompt: string) => void, text?: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), result(text)].join('\n'), effect })
 
-function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources; appEnv?: object; lenses?: string[] } = {}) {
+function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources; appEnv?: object; lenses?: string[]; ticket?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-pipe-'))
   const origin = join(root, 'origin.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin])
@@ -42,7 +42,7 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   const azCalls: string[][] = []
   const az: Az = args => {
     azCalls.push(args)
-    if (args.includes('work-item')) return { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'Asset list crashes', 'System.WorkItemType': 'Bug', 'System.Description': '<p>It crashes.</p>' } }), err: '' }
+    if (args.includes('work-item')) return { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'Asset list crashes', 'System.WorkItemType': 'Bug', 'System.Description': o.ticket ?? '<p>It crashes.</p>' } }), err: '' }
     if (args.includes('pr')) return { code: 0, out: JSON.stringify({ pullRequestId: 4711 }), err: '' }
     return { code: 0, out: '{"comments":[]}', err: '' }
   }
@@ -397,6 +397,20 @@ describe('port: the same fix onto another line', () => {
     const run = await t.pipe.start(186278)
     expect(t.agent.prompts[2]).toMatch(/src\/b\.test\.ts\|tests\|a new test file.*tests\/ folder/)
     expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
+  })
+  test('a login in the ticket: its value goes to logins.md, the agent reads a pointer, and ship refuses a change that has it', async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), "export const pw = 'Hunter2!x'\n"); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+    ], { ticket: '<p>It crashes.</p><p>qa@acme.test password: Hunter2!x</p>' })
+    const run = await t.pipe.start(186278)
+    expect(t.agent.prompts[0]).not.toContain('Hunter2!x')
+    expect(t.agent.prompts[0]).toContain("password: [in the run's logins.md]")
+    expect(readFileSync(join(t.runDir, 'ticket.md'), 'utf8')).not.toContain('Hunter2!x')
+    expect(readFileSync(join(t.runDir, 'logins.md'), 'utf8')).toContain('from the ticket, password: Hunter2!x')
+    expect((require('node:fs').statSync(join(t.runDir, 'logins.md')).mode & 0o777).toString(8)).toBe('600')
+    expect((t.agents[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('logins.md')
+    await expect(t.pipe.ship(run)).rejects.toThrow(/test login is in src\/b\.ts/)
   })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])

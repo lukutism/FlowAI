@@ -81,7 +81,10 @@ the goal (the smallest correct change, a PR description a reviewer can judge in 
 screenshots in the run's `evidence/`). Before the start you can add a **note** (how to test, which order or tenant,
 what not to touch) and **test logins** (form fields, or `--note` / `--logins-file`): the note goes into the brief;
 the logins stay in the run's `logins.md` (readable only by you), the agent is told the file and that they never go
-into code, commits or the PR, and ship refuses a change or a PR description that contains them.
+into code, commits or the PR, and ship refuses a change or a PR description that contains them. Logins written in
+the ticket (a labelled password, license key, token or PIN, or a password alone under an email) join them: the
+ticket the agent reads keeps a pointer instead (also for a ticket it reads through its `ticket` tool), and the
+values are masked in the run's transcript and the Agent pane.
 
 **The app's env.** A repo's `appEnv` (`{ "file": ".env", "from": ".env.container.develop", "set": {…}, "login":
 { "license": "OPS_LICENSE_KEY" } }`) gives each run its own env file: written at setup, before the device's build,

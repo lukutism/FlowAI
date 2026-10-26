@@ -1,6 +1,7 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
+import { loginValues, maskLogins } from './redact.ts'
 
 /**
  * A run's agent session as it happened, for the run detail's Agent pane: what flow and you sent, and what the agent
@@ -17,7 +18,11 @@ const cut = (v: unknown): unknown => (typeof v === 'string' && v.length > 1000 ?
 /** returns the entry as kept */
 export function appendTranscript(dataDir: string, run: string, e: Entry): Entry {
   mkdirSync(join(dataDir, 'runs', run), { recursive: true })
-  const kept = e.kind === 'tool' ? { ...e, input: Object.fromEntries(Object.entries(e.input).map(([k, v]) => [k, cut(v)])) } : e
+  const short = e.kind === 'tool' ? { ...e, input: Object.fromEntries(Object.entries(e.input).map(([k, v]) => [k, cut(v)])) } : e
+  // the run's test logins never reach the transcript or a screen (the agent types them on the device)
+  const logins = join(dataDir, 'runs', run, 'logins.md')
+  const values = existsSync(logins) ? loginValues(readFileSync(logins, 'utf8')) : []
+  const kept = values.length ? JSON.parse(maskLogins(JSON.stringify(short), [...values, ...values.map(v => JSON.stringify(v).slice(1, -1))])) as Entry : short
   appendFileSync(file(dataDir, run), JSON.stringify(kept) + '\n')
   return kept
 }

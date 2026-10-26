@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
@@ -11,6 +11,7 @@ import { startDevServer, stopDevServer, type DevServerState } from './devserver.
 import { contentHash, createWorktree, pending, pushed, shipChange } from './git.ts'
 import { fillSh, logLine, sh, tail } from './sh.ts'
 import { parseLogins, writeAppEnv } from './appenv.ts'
+import { loginValues, redactLogins } from './redact.ts'
 import { slug } from './slug.ts'
 import { commitMessage, parsePlan, planFacts, planGaps, prSummary } from './plan.ts'
 import { drift, prProblems } from './drift.ts'
@@ -230,11 +231,14 @@ export class Pipeline {
     // what you add before the start: a note into the agent's brief; test logins in a file only you can read, which
     // the agent is pointed at (never their values) and ship checks the change against
     if (o.note?.trim()) writeFileSync(join(this.runDir(run), 'note.md'), o.note.trim() + '\n')
-    if (o.logins?.trim()) writeFileSync(join(this.runDir(run), 'logins.md'), o.logins.trim() + '\n', { mode: 0o600 })
-    writeFileSync(join(this.runDir(run), 'ticket.md'), task ? `# ${t.title}\n\n${t.text}\n` : `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}\n`)
+    // logins written in the ticket join them; the ticket the agent quotes from keeps a pointer instead
+    const red = redactLogins(t.text)
+    const logins = [o.logins?.trim(), ...red.found.map(f => `from the ticket, ${f.label}: ${f.value}`)].filter(Boolean).join('\n')
+    if (logins) writeFileSync(join(this.runDir(run), 'logins.md'), logins + '\n', { mode: 0o600 })
+    writeFileSync(join(this.runDir(run), 'ticket.md'), task ? `# ${t.title}\n\n${red.text}\n` : `# ${t.key} ${t.title}\n${t.url}\n\n${red.text}\n`)
     this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key || 'task', title: t.title, project: p.key, base: m.base })
     if (!(await this.setup(run, m))) return run
-    await this.planStep(run, t.text)
+    await this.planStep(run, red.text)
     return run
   }
 
@@ -775,7 +779,9 @@ export class Pipeline {
         const k = this.tracker.parseKey(id)
         if (!k) throw new Error(`${id} is not a ticket of project ${this.d.project.key}`)
         const t = await this.tracker.read(k.id)
-        return fenced('ticket', `# ${t.key} ${t.title}\n${t.url}\n\n${t.text}`).text
+        const red = redactLogins(t.text)
+        if (red.found.length) appendFileSync(join(dir, 'logins.md'), red.found.map(f => `from ticket ${t.key}, ${f.label}: ${f.value}`).join('\n') + '\n', { mode: 0o600 })
+        return fenced('ticket', `# ${t.key} ${t.title}\n${t.url}\n\n${red.text}`).text
       },
       end: (kind, text) => { this.ends.set(run, { kind, text }) },
     }, this.d.project.tools, name, args)
@@ -836,7 +842,7 @@ export class Pipeline {
   private secrets(run: string): string[] {
     const f = join(this.runDir(run), 'logins.md')
     if (!existsSync(f)) return []
-    return [...new Set(readFileSync(f, 'utf8').split(/[\s,;:/|]+/).filter(w => w.length >= 6 && /[^a-zA-Z]/.test(w) && !/^https?$/i.test(w)))]
+    return loginValues(readFileSync(f, 'utf8'))
   }
 
   private noLogins(run: string, pr: string, changed: { r: RunRepo; files: string[] }[]) {
