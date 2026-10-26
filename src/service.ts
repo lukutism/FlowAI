@@ -120,13 +120,17 @@ export class Service {
    * carries them on), and devices still up count against the device slots again.
    */
   async recover() {
+    const carry: { id: string; project: string; stage: string }[] = []
     for (const s of this.d.store.runs()) {
       if (!['running', 'waiting', 'paused'].includes(s.status)) continue
       // a change verify had set aside comes back first, or is named
       const put = s.stage === 'verify' && this.d.projects[s.project] ? await this.pipeline(s.project).restoreStashes(s.id).catch(() => []) : []
       this.stopped(s.id, `flow's service restarted during ${s.stage}${put.length ? ` (${put.join('; ')})` : ''}`)
+      // an agent's session resumes where it was: it is told to carry on (a setup isn't redone, a ship waits for you)
+      if (s.stage !== 'setup' && s.stage !== 'ship' && this.d.projects[s.project]) carry.push(s)
     }
     for (const key of Object.keys(this.d.projects)) this.pipeline(key).adoptDevices()
+    for (const s of carry) this.act(s.id, () => this.pipeline(s.project).message(s.id, `flow restarted (a new release of flow) while you were working on ${s.stage === 'plan' ? 'the plan' : 'this step'}: your session is resumed. Carry on where you left off and end the turn the usual way.`, 'flow'))
   }
 
   /** a run whose step ended without a decision: blocked with the reason (a failed setup can't be carried on) */

@@ -576,9 +576,11 @@ export class Pipeline {
   }
 
   /** a message from the human: goes to the run's session; afterwards the run carries on from where it is */
-  async message(run: string, text: string) {
-    this.d.store.append(run, 'human', { type: 'human.message', text })
-    const r = await this.say(run, fromHuman(text), 'you')
+  /** a message to the agent, from the human (or from flow itself, which notes it on the run) */
+  async message(run: string, text: string, from: 'human' | 'flow' = 'human') {
+    if (from === 'flow') this.d.store.append(run, 'engine', { type: 'run.note', text: 'the agent was told to carry on' })
+    else this.d.store.append(run, 'human', { type: 'human.message', text })
+    const r = await this.say(run, from === 'flow' ? text : fromHuman(text), from === 'flow' ? 'flow' : 'you')
     if (!r.ok || this.ended(run, r.text)) return
     const s = this.must(run)
     if (s.status !== 'running') return // the agent asked something back, or the run was done or failed already

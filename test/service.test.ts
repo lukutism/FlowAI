@@ -149,6 +149,17 @@ describe('Service: after a restart, and when a step throws', () => {
     expect(t.store.state('ex-9')).toMatchObject({ status: 'failed', needs: { ask: expect.stringMatching(/restarted during setup/) } })
     expect(t.store.state('ex-8')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/restarted during plan.*message/) } })
   })
+  test("an agent that was mid-turn is told to carry on by itself (its session resumes); a setup is not redone", async () => {
+    const t = setup(() => [])
+    const run = (id: string, ...e: EventBody[]) => { t.store.append(id, 'human', { type: 'run.created', ticket: `#${id}`, title: 'x', project: 'ex', base: 'origin/develop' }); for (const x of e) t.store.append(id, 'engine', x) }
+    run('ex-9')
+    run('ex-8', { type: 'setup.done' })
+    const told: [string, string, string?][] = []
+    const orig = Pipeline.prototype.message
+    Pipeline.prototype.message = async function (r: string, text: string, from?: 'human' | 'flow') { told.push([r, text, from]) }
+    try { await t.svc.recover(); await t.svc.idle() } finally { Pipeline.prototype.message = orig }
+    expect(told).toEqual([['ex-8', expect.stringMatching(/flow restarted .*Carry on/), 'flow']])
+  })
   test('a step that throws blocks its run with the reason instead of leaving it running', async () => {
     const t = setup(() => [turn()])
     t.store.append('ex-7', 'human', { type: 'run.created', ticket: '#7', title: 'x', project: 'ex', base: 'origin/develop' })

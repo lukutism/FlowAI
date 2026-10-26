@@ -31,6 +31,12 @@ mkdir -p "$(dirname "$bin")"
 cp dist/flow "$bin.new" && mv -f "$bin.new" "$bin"
 echo "installed $bin ($version)"
 
+# a setup can't be carried on after a restart (an agent's turn can: it is told to): the service waits for setups to end
+waited=0
+while "$bin" status 2>/dev/null | grep -Eq ' setup · (running|waiting)' && [ "$waited" -lt "${FLOW_RELEASE_WAIT:-1200}" ]; do
+  [ "$waited" = 0 ] && echo "a run is setting up: the service restarts once it is done"
+  sleep 10; waited=$((waited + 10))
+done
 # the service on the release (open screens reconnect by themselves); a run's next turn uses the release's guard and tools
 if [ -f "$data/service.json" ]; then
   pid="$(sed -n 's/.*"pid": *\([0-9]*\).*/\1/p' "$data/service.json")"
