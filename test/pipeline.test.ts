@@ -474,3 +474,21 @@ describe('pipeline: what the second review found', () => {
     expect(git(t.wt, 'stash', 'list')).toContain('flow verify: base run')
   })
 })
+
+describe('pipeline: remove never takes what another run uses', () => {
+  test("a worktree another run's folder names stays (a failed run pointing at its source's worktree)", async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const run = await t.pipe.start(186278)
+    await t.pipe.ship(run)
+    // a second, failed run whose run.json names the same worktree
+    const other = join(t.root, 'data', 'runs', 'example-186278-x')
+    mkdirSync(other, { recursive: true })
+    writeFileSync(join(other, 'run.json'), readFileSync(join(t.runDir, 'run.json')))
+    t.store.append('example-186278-x', 'human', { type: 'run.created', ticket: '#186278', title: 'x', project: 'example', base: 'origin/develop' })
+    t.store.append('example-186278-x', 'engine', { type: 'setup.failed', reason: 'exists already' })
+    const r = await t.pipe.remove('example-186278-x')
+    expect(r.removed).toEqual([])
+    expect(existsSync(t.wt)).toBe(true)
+    expect(git(t.main, 'branch', '--list', 'fix/186278')).toContain('fix/186278')
+  })
+})

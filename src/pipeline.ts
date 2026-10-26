@@ -576,7 +576,13 @@ export class Pipeline {
     await this.closeAgent(run)
     this.agents.delete(run)
     const removed: string[] = []
+    // worktrees another run's folder names are that run's (a failed port pointed at its source's): left alone
+    const runs = join(this.d.dataDir, 'runs')
+    const others = new Set((existsSync(runs) ? readdirSync(runs) : []).filter(x => x !== run && !x.startsWith('.')).flatMap(x => {
+      try { return (JSON.parse(readFileSync(join(runs, x, 'run.json'), 'utf8')) as Meta).repos.map(r => r.worktree) } catch { return [] }
+    }))
     for (const r of m?.repos ?? []) {
+      if (others.has(r.worktree)) continue
       const repo = this.repoConfig(r.key).path
       if (existsSync(r.worktree)) {
         const res = Bun.spawnSync(['git', 'worktree', 'remove', '--force', '--force', r.worktree], { cwd: repo, env: this.d.gitEnv })
