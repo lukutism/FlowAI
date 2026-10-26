@@ -18,7 +18,7 @@ const SERVER = join(import.meta.dir, 'fake-metro-server.ts')
 const init = JSON.stringify({ type: 'system', subtype: 'init', session_id: 's', model: 'm', apiKeySource: 'none' })
 const turn = (effect?: () => void): FakeTurn => ({ stream: `${init}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: 'ok', num_turns: 1, session_id: 's', usage: {} })}`, effect })
 
-function setup(o: { cmd?: string; portStart?: number } = {}) {
+function setup(o: { cmd?: string; portStart?: number; browser?: object; browserBin?: string } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-dev-srv-'))
   const origin = join(root, 'o.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin]); Bun.spawnSync(['git', 'clone', '-q', origin, main], { env })
@@ -27,7 +27,7 @@ function setup(o: { cmd?: string; portStart?: number } = {}) {
   const project = parseProject({
     key: 'ex', name: 'Ex', worktrees: join(root, 'wt'), tracker: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' }, forge: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' },
     repos: [{ key: 'portal', path: main, defaultBase: 'origin/develop', verify: [],
-      devServer: { cmd: o.cmd ?? `echo starting on {port}; exec ${process.execPath} ${SERVER} {port}`, portStart, url: 'https://localhost:{port}' } }],
+      devServer: { cmd: o.cmd ?? `echo starting on {port}; exec ${process.execPath} ${SERVER} {port}`, portStart, url: 'https://localhost:{port}', ...(o.browser ? { browser: o.browser } : {}) } }],
     review: { enabled: false },
   }, 't')
   const az: Az = args => args.includes('work-item') ? { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'T', 'System.WorkItemType': 'Bug' } }), err: '' }
@@ -40,7 +40,7 @@ function setup(o: { cmd?: string; portStart?: number } = {}) {
   const store = new EventStore(':memory:')
   const slots = new Resources({ agents: 2, builds: 2, devices: 2 })
   const made: unknown[] = []
-  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, resources: slots, makeAgent: o => { made.push(o); return agent }, devServerReadyTimeoutMs: 4000 })
+  const pipe = new Pipeline({ store, project, az, dataDir: data, gitEnv: env, resources: slots, makeAgent: x => { made.push(x); return agent }, devServerReadyTimeoutMs: 4000, ...(o.browserBin ? { browserBin: o.browserBin } : {}) })
   return { made, pipe, store, agent, slots, run, data, portStart }
 }
 
@@ -91,6 +91,25 @@ describe('restarting a run with a dev server', () => {
       expect(await (await fetch(`http://127.0.0.1:${t.store.state(run)!.devServer!.port}/status`)).text()).toBe('packager-status:running')
       t.store.append(run, 'human', { type: 'run.done' })
       await expect(t.pipe.restartDevice(run)).rejects.toThrow(/is done/)
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})
+
+describe('a web run with a browser', () => {
+  test("the browser tool drives the run's own session through its proxy; the brief says so; release closes it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flow-ab-')), log = join(dir, 'calls'), bin = join(dir, 'agent-browser')
+    writeFileSync(bin, `#!/bin/sh\necho "$@" >> ${log}\necho "- button \\"Save\\" [ref=e2]"\n`, { mode: 0o755 })
+    const t = setup({ portStart: 5390, browser: { start: 'https://qa.example.com/#/dev' }, browserBin: bin })
+    const run = await t.pipe.start(5, { devServer: true })
+    try {
+      expect(t.pipe.tools(run).map(x => x.name)).toContain('browser')
+      expect((t.made[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('drive it with the browser tool')
+      const r = await t.pipe.callTool(run, 'browser', { action: 'snapshot' })
+      expect(r).toEqual({ ok: true, text: '- button "Save" [ref=e2]' })
+      expect(readFileSync(log, 'utf8')).toMatch(/--session flow-ex-5 --ignore-https-errors --proxy http:\/\/127\.0\.0\.1:\d+ --proxy-bypass <-loopback> open https:\/\/qa\.example\.com\/#\/dev/)
+      expect((await t.pipe.callTool(run, 'browser', { action: 'open', target: 'https://elsewhere.example.net/' })).text).toMatch(/not one of the hosts/)
+      await t.pipe.releaseDevice(run)
+      expect(readFileSync(log, 'utf8').trim().split('\n').at(-1)).toBe('--session flow-ex-5 close')
     } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
   })
 })

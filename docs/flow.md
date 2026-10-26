@@ -162,6 +162,14 @@ A run started with `--dev-server` (or Dev server in the form) gets its own dev s
 in a build slot on a port no other run holds, and counts as ready once it listens; the agent is told the url, its
 output feeds the run detail's Dev server pane, and ship or `flow release` stop it.
 
+With `devServer.browser` (`{ "start": "<page to open>", "hosts": [...], "appPort": 3000, "headed": false }`) the run
+also gets its own browser: an agent-browser session (`flow-<run>`) through a proxy in flow's service that sends
+`localhost:<appPort>` to the run's own port, so an app pinned to one address (a HUB's dev web bundle loading
+`https://localhost:3000`) still reaches this run's dev server. The agent drives it with its `browser` tool
+(snapshot, click, fill, press, screenshot into `evidence/`, url, open); open takes only the start page's host,
+`hosts` and localhost, since the browser runs outside the agent's sandbox. It starts at the first call and closes
+with the dev server.
+
 ### A run's own device
 
 A run started with `--device android|ios` gets its own emulator or simulator and its own Metro, so runs never share

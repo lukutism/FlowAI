@@ -43,7 +43,13 @@ const repo = z.object({
    */
   appEnv: z.object({ file: z.string(), from: z.string().optional(), set: z.record(z.string(), z.string()).default({}), login: z.object({ email: z.string().optional(), password: z.string().optional(), license: z.string().optional() }).default({}) }).optional(),
   /** a web app's dev server, started for a run that asks for one: cmd with {port}; url where it answers */
-  devServer: z.object({ cmd: z.string(), portStart: z.number().int().default(5300), url: z.string().default('http://localhost:{port}') }).optional(),
+  devServer: z.object({ cmd: z.string(), portStart: z.number().int().default(5300), url: z.string().default('http://localhost:{port}'),
+    /**
+     * the run's own browser (agent-browser), through a proxy that sends localhost:<appPort> to the run's port: start
+     * is opened first, hosts the other hosts the agent may open (with localhost); headed shows its window
+     */
+    browser: z.object({ start: z.string().url().optional(), hosts: z.array(z.string()).default([]), appPort: z.number().int().default(3000), headed: z.boolean().default(false) }).optional(),
+  }).optional(),
   /**
    * customer patches: apply puts the customer's patch in the new worktree, staged ({customer} {app} {base} {main});
    * writeBack writes the worktree's whole change back as that patch ({customer} {app} {base} {dryRun}: --dry-run or nothing)

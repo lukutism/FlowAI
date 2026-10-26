@@ -16,6 +16,7 @@ import { slug } from './slug.ts'
 import { commitMessage, parsePlan, planFacts, planGaps, prSummary } from './plan.ts'
 import { drift, prProblems } from './drift.ts'
 import { advisorPrompt, lookupPrompt, parseAdvice, type Advice } from './advisor.ts'
+import { Browsers } from './browser.ts'
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
 import { memoryDir, saveLearnings } from './learnings.ts'
@@ -67,6 +68,8 @@ export interface PipelineDeps {
   /** where tickets come from and PRs go; by default from the project (az, gh, the Jira token in the keychain) */
   tracker?: Tracker
   forge?: Forge
+  /** agent-browser (tests pass a stand-in) */
+  browserBin?: string
   gh?: Gh
   jira?: JiraDeps
   /** machine-wide slots shared with other runs (the service's): agent turns, builds */
@@ -89,12 +92,15 @@ export class Pipeline {
   private deviceSlots = new Map<string, () => void>()
   /** how the agent ended its turn through its tools (ask, resolve, block), taken when the turn is over */
   private ends = new Map<string, { kind: 'ask' | 'resolve' | 'block'; text: string }>()
+  /** the web runs' browsers, each through its proxy */
+  private browsers: Browsers
   private tracker: Tracker
   private forge: Forge
 
   constructor(private d: PipelineDeps) {
     this.tracker = d.tracker ?? trackerFor(d.project, { az: d.az, ...d.jira })
     this.forge = d.forge ?? forgeFor(d.project, { az: d.az, gh: d.gh })
+    this.browsers = new Browsers(d.browserBin ? { bin: d.browserBin } : {})
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
       store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
@@ -382,6 +388,7 @@ export class Pipeline {
   /** stop the run's device and dev server and free the device slot (at ship, or by hand); nothing to do when it has none */
   async releaseDevice(run: string) {
     const web = join(this.runDir(run), 'devserver.json')
+    await this.browsers.stop(run, this.runDir(run))
     if (existsSync(web)) {
       await stopDevServer(JSON.parse(readFileSync(web, 'utf8')) as DevServerState, this.runDir(run))
       if (this.d.store.state(run)?.devServer) this.d.store.append(run, 'engine', { type: 'devserver.stopped' })
@@ -633,7 +640,7 @@ export class Pipeline {
     // a tool such as verify can take minutes
     const env = { MCP_TOOL_TIMEOUT: '1800000', ...(dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : {}) }
     const note = existsSync(join(dir, 'note.md')) ? readFileSync(join(dir, 'note.md'), 'utf8') : undefined
-    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools })
+    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run) })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, mcpConfig, env, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent
@@ -762,7 +769,13 @@ export class Pipeline {
   private queue = new Map<string, string[]>()
 
   /** the tools of the run's agent (its flow MCP server) */
-  tools(run: string): ToolDef[] { return toolList(this.d.project.tools, !!this.must(run).device) }
+  tools(run: string): ToolDef[] { return toolList(this.d.project.tools, !!this.must(run).device, !!this.browserSpec(run)) }
+
+  /** the run's browser settings: its dev server's, when the run has a dev server running */
+  private browserSpec(run: string) {
+    const s = this.must(run)
+    return s.devServer ? this.repoConfig(s.devServer.repo).devServer?.browser : undefined
+  }
 
   /** a tool call from the run's agent: on this run only */
   async callTool(run: string, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; text: string }> {
@@ -784,6 +797,7 @@ export class Pipeline {
         return fenced('ticket', `# ${t.key} ${t.title}\n${t.url}\n\n${red.text}`).text
       },
       end: (kind, text) => { this.ends.set(run, { kind, text }) },
+      ...(this.browserSpec(run) ? { browser: (action: string, a: { target?: string; text?: string }) => this.browsers.act({ run, runDir: dir, devPort: this.must(run).devServer!.port, spec: this.browserSpec(run)! }, action, a) } : {}),
     }, this.d.project.tools, name, args)
   }
 
