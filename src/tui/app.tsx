@@ -90,7 +90,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const [removing, setRemoving] = useState<ReadonlySet<string>>(new Set())
 
   useEffect(() => api.listen(m => {
-    if (m.type === 'notice' && m.notice) { setNotice(`${m.notice.run}: ${m.notice.text}`); const run = m.notice.run; setRemoving(x => (x.has(run) ? new Set([...x].filter(y => y !== run)) : x)) }
+    // a notice is one plain line on the screen (an error may carry a hook's terminal output: colours, boxes, lines)
+    if (m.type === 'notice' && m.notice) { setNotice(`${m.notice.run}: ${m.notice.text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/[\u2800-\u28ff]/g, '').split('\n').map(l => l.trim()).filter(l => l && !/^[─━-]+$/.test(l)).join(' · ').slice(0, 300)}`); const run = m.notice.run; setRemoving(x => (x.has(run) ? new Set([...x].filter(y => y !== run)) : x)) }
     if (m.type === 'closed') setNotice('the flow service stopped: start flow again')
     setTick(t => t + 1)
   }), [api])

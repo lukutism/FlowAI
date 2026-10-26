@@ -8,7 +8,7 @@ import { trackerFor, type Tracker } from './tracker.ts'
 import type { Project, Repo } from './config.ts'
 import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { startDevServer, stopDevServer, type DevServerState } from './devserver.ts'
-import { contentHash, createWorktree, pending, pushed, shipChange } from './git.ts'
+import { contentHash, createWorktree, pending, plainOutput, pushed, shipChange } from './git.ts'
 import { fillSh, logLine, sh, tail } from './sh.ts'
 import { parseLogins, writeAppEnv } from './appenv.ts'
 import { loginValues, redactLogins } from './redact.ts'
@@ -584,7 +584,8 @@ export class Pipeline {
     // a ship that breaks off (a hook refuses the commit, the push or the PR fails) says so on the run; shipping
     // again carries on from where it stopped
     try { return await this.shipNow(run, s, m, n) } catch (e) {
-      if (this.d.store.state(run)?.stage === 'ship') this.d.store.append(run, 'engine', { type: 'ship.failed', reason: (e as Error).message.split('\n')[0]!.slice(0, 300) })
+      // the reason as plain words on one line (a hook's terminal output has colour codes and boxes)
+      if (this.d.store.state(run)?.stage === 'ship') this.d.store.append(run, 'engine', { type: 'ship.failed', reason: plainOutput((e as Error).message, 6).split('\n').map(l => l.trim()).join(' · ').slice(0, 400) })
       throw e
     }
   }
@@ -630,7 +631,9 @@ export class Pipeline {
     const message = (files: string[], repo: string) => (n.commit === 'key-summary' ? `${m.key} ${summary}`.trim().slice(0, 100) : commitMessage({ id: m.task ? '' : m.id, title: m.title, kind: m.kind }, files, repo))
     const created: { number: number; url: string }[] = [], updated: { number: number; repo?: string }[] = []
     for (const { r, files } of changed) {
-      await shipChange({ worktree: r.worktree, branch: m.branch, message: message(files, r.key), env: this.d.gitEnv })
+      // ship is refused unless verify passed for exactly this tree: a hook objecting only to lint the files already had is passed
+      const shipped = await shipChange({ worktree: r.worktree, branch: m.branch, message: message(files, r.key), env: this.commitEnv(), verified: true })
+      if (shipped.bypassed) this.d.store.append(run, 'engine', { type: 'run.note', text: `${r.key}: ${shipped.bypassed}` })
       const open = prFor(r.key)
       if (open) { updated.push({ number: open.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) }); continue }
       const origin = Bun.spawnSync(['git', 'remote', 'get-url', 'origin'], { cwd: r.worktree })
@@ -638,12 +641,6 @@ export class Pipeline {
       const c = await this.forge.draftPr({ repository, head: m.branch, base: r.base.replace(/^origin\//, ''), title, body, ...(typeof m.id === 'number' ? { workItem: m.id } : {}) })
       this.d.store.append(run, 'human', { type: 'pr.opened', url: c.url, number: c.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) })
       created.push(c)
-      // the body is just the ticket link: the agent's description (and what nobody confirmed) goes in a first comment,
-      // so the PR's reviewer still gets it; the PR stands if that fails
-      const described = (pr.replace(/^#\s+.+\n?/m, '').trim() + decisions).trim()
-      if (n.prBody === 'ticket-link' && described && this.forge.comment) {
-        await this.forge.comment(c, described).catch(e => this.d.store.append(run, 'engine', { type: 'run.note', text: `the PR's description comment was not posted: ${(e as Error).message}` }))
-      }
     }
     if (!created.length && updated[0]) this.d.store.append(run, 'human', { type: 'pr.updated', ...updated[0] })
     this.keepLearnings(run)
@@ -1104,6 +1101,12 @@ export class Pipeline {
     writeFileSync(join(this.runDir(run), 'review.json'), JSON.stringify({ review: n, at: this.now(), findings, dropped: read_.reduce((k, x) => k + x.dropped, 0), below: read_.flatMap(x => x.below), lenses: read_.map(x => ({ lens: x.lens, findings: x.findings.length, dropped: x.dropped, below: x.below, note: x.note })), ...(errors.length ? { errors } : {}), note: read_.map(x => (c.lenses.length > 1 ? `${x.lens}: ${x.note}` : x.note)).join('\n\n') }, null, 2) + '\n')
     this.d.store.append(run, 'engine', { type: 'review.result', findings: findings.length })
     return findings.length ? findings : null
+  }
+
+  /** git's environment for flow's own commits: the project's commit identity when it names one */
+  private commitEnv(): Record<string, string | undefined> {
+    const who = this.d.project.commitAs, env = this.d.gitEnv ?? process.env
+    return who ? { ...env, GIT_AUTHOR_NAME: who.name, GIT_AUTHOR_EMAIL: who.email, GIT_COMMITTER_NAME: who.name, GIT_COMMITTER_EMAIL: who.email } : env
   }
 
   private answersFile(run: string) { return join(this.runDir(run), 'review-answers.md') }

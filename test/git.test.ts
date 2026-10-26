@@ -177,3 +177,33 @@ describe('cloneTree', () => {
     expect(cloneTree(src, dst)).toBe(false) // the target is there already
   })
 })
+
+describe("shipChange: the repo's commit hook", () => {
+  const hooked = async (script: string) => {
+    const p = project()
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/h', base: 'origin/develop' })
+    const hooks = join(p.root, 'hooks'); mkdirSync(hooks)
+    writeFileSync(join(hooks, 'pre-commit'), `#!/bin/sh\n${script}\n`, { mode: 0o755 })
+    git(p.wt, 'config', 'core.hooksPath', hooks)
+    writeFileSync(join(p.wt, 'a.ts'), 'fixed\n')
+    return p
+  }
+  const lint = 'printf "\\033[31m✖ 4 problems (4 errors, 0 warnings)\\033[0m\\n  lint (1.31 seconds)\\n" >&2; exit 1'
+  test('only lint the touched files already had, and verify passed: committed past it, and said so', async () => {
+    const p = await hooked(lint)
+    const r = await shipChange({ worktree: p.wt, branch: 'fix/h', message: 'fix: x', env, verified: true })
+    expect(r.bypassed).toMatch(/committed past the commit hook/)
+    expect(git(p.origin, 'log', '-1', '--format=%s', 'fix/h')).toBe('fix: x')
+  })
+  test('not verified: refused, with the hook\'s words as plain text (no colour codes)', async () => {
+    const p = await hooked(lint)
+    const e = await shipChange({ worktree: p.wt, branch: 'fix/h', message: 'fix: x', env }).catch(x => x as Error)
+    expect((e as Error).message).toBe("commit refused by the repo's hooks:\n✖ 4 problems (4 errors, 0 warnings)\n  lint (1.31 seconds)")
+    expect(git(p.origin, 'branch', '--list', 'fix/h')).toBe('')
+  })
+  test('another objection (a secret scan) is never passed, verified or not', async () => {
+    const p = await hooked('echo "gitleaks: 1 potential secret found" >&2; exit 1')
+    await expect(shipChange({ worktree: p.wt, branch: 'fix/h', message: 'fix: x', env, verified: true })).rejects.toThrow(/potential secret/)
+    expect(git(p.wt, 'diff', '--name-only')).toBe('a.ts') // left as the agent left it
+  })
+})

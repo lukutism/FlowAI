@@ -84,20 +84,60 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
  * is pushed. Never forced: a branch that moved on origin makes the push fail instead. Safe to do again: a clean
  * worktree (committed by an earlier try whose push failed) is only pushed.
  */
-export async function shipChange(o: { worktree: string; branch: string; message: string; env?: Env }): Promise<{ files: string[] }> {
+/**
+ * A hook's terminal output as plain lines: colour codes, cursor moves and spinners out, the last few lines that say
+ * something.
+ */
+export function plainOutput(text: string, lines = 8): string {
+  return text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/[\u2800-\u28ff]/g, '').split(/\r?\n|\r/).map(l => l.trimEnd()).filter(l => l.trim() && !/^[\s─━-]+$/.test(l)).slice(-lines).join('\n')
+}
+
+/** the hook's objection is a lint report and nothing else: no commit-message check, no secret scan (hwt's rule) */
+export const lintOnly = (out: string) => /\beslint\b|\blint\b|\d+ problems? \(/i.test(out)
+  && !/commitlint|commit-msg|gitleaks|detect-secrets|trufflehog|secretlint|talisman|secrets? (found|detected)|potential secret/i.test(out)
+
+/**
+ * verified: verify found nothing new for exactly this tree. A commit hook that lints whole touched files then only
+ * objects to lint they already had: flow commits past it (the developer's rule, as in hwt), and checks its own
+ * message with the repo's commitlint, which --no-verify skips too. Any other objection stops the ship.
+ */
+export async function shipChange(o: { worktree: string; branch: string; message: string; env?: Env; verified?: boolean }): Promise<{ files: string[]; bypassed?: string }> {
   const files = changedFiles(o.worktree)
+  let bypassed: string | undefined
   if (files.length) {
     const add = await run(['git', 'add', '--all'], o.worktree, o.env)
     if (add.code !== 0) throw new Error(`git add failed: ${tail(add.err)}`)
     const commit = await run(['git', 'commit', '--quiet', '-m', o.message], o.worktree, o.env)
     if (commit.code !== 0) {
-      await run(['git', 'reset', '--quiet'], o.worktree, o.env) // unstage again: the change stays as the agent left it
-      throw new Error(`commit refused:\n${tail(commit.err || commit.out)}`)
+      const said = plainOutput(`${commit.out}\n${commit.err}`)
+      if (o.verified && lintOnly(said)) {
+        const forced = await run(['git', 'commit', '--quiet', '--no-verify', '-m', o.message], o.worktree, o.env)
+        if (forced.code !== 0) { await run(['git', 'reset', '--quiet'], o.worktree, o.env); throw new Error(`commit refused:\n${plainOutput(forced.err || forced.out)}`) }
+        const cl = await commitlintProblem(o.worktree, o.message, o.env)
+        if (cl) {
+          await run(['git', 'reset', '--quiet', '--soft', 'HEAD~1'], o.worktree, o.env); await run(['git', 'reset', '--quiet'], o.worktree, o.env)
+          throw new Error(`the commit message flow wrote fails the repo's commitlint (flow's format, not the change):\n${cl}`)
+        }
+        bypassed = "committed past the commit hook: it objected only to lint the touched files already had (verify found nothing new)"
+      } else {
+        await run(['git', 'reset', '--quiet'], o.worktree, o.env) // unstage again: the change stays as the agent left it
+        throw new Error(`commit refused by the repo's hooks:\n${said}`)
+      }
     }
   }
   const push = await run(['git', 'push', '--quiet', '-u', 'origin', `HEAD:refs/heads/${o.branch}`], o.worktree, o.env)
   if (push.code !== 0) throw new Error(`push failed: ${tail(push.err)}`)
-  return { files }
+  return { files, ...(bypassed ? { bypassed } : {}) }
+}
+
+/** the repo's commitlint on a message (null: fine, or the repo has none) */
+async function commitlintProblem(worktree: string, message: string, env?: Env): Promise<string | null> {
+  const configured = readdirSync(worktree).some(f => /^(commitlint\.config\.[cm]?[jt]s|\.commitlintrc(\.\w+)?)$/.test(f))
+    || (existsSync(join(worktree, 'package.json')) && /"commitlint"\s*:/.test(readFileSync(join(worktree, 'package.json'), 'utf8')))
+  if (!configured) return null
+  const p = Bun.spawn(['npx', '--no-install', 'commitlint'], { cwd: worktree, stdin: new Blob([message]), stdout: 'pipe', stderr: 'pipe', env: env ?? process.env })
+  const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
+  return (await p.exited) === 0 ? null : plainOutput(out + err)
 }
 
 /** what a worktree has to ship: uncommitted changes, or commits of its own on top of its base */

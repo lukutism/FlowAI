@@ -124,6 +124,8 @@ const project = z.object({
   claudeMdExcludes: z.array(z.string()).optional(),
   /** the main checkout's git-ignored files linked into each worktree (project skills, .mcp.json, .npmrc, a code index) */
   localFiles: z.array(z.string()).default([]),
+  /** who flow's commits are by in this project's repos (a client's repo may need another identity than your global git one) */
+  commitAs: z.object({ name: z.string().min(1), email: z.string().email() }).optional(),
   /**
    * indexes each worktree gets its own copy of (a code graph): cloned copy-on-write from the main checkout when it
    * has one (none is made), git-excluded, then sync run in the background to bring it to the run's branch
