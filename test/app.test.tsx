@@ -1032,3 +1032,26 @@ describe('the device in the browser', () => {
     } finally { t.s.renderer.destroy() }
   })
 })
+
+describe('80 to 89 columns', () => {
+  test('every run and every item needing you stays on one line (they used to wrap)', async () => {
+    const long = (id: string, over: Partial<RunState>) => base(id, { title: `A rather long title for the run ${id} that goes on`, ...over })
+    const list = [
+      long('fso-105', { stage: 'plan', status: 'needs-you', needs: { kind: 'plan', ask: '1 open question', held: false, deadline: NOW + 12 * 60_000 }, plan: { summary: 's', questions: [] } }),
+      long('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'ship', ask: 'verified' } }),
+      long('fso-103', { stage: 'verify', status: 'paused', pausedUntil: NOW + 3600_000 }),
+      long('fso-102', { stage: 'build', loops: { verify: 2, verifyRuns: 2, review: 1 } }),
+    ]
+    for (const width of [80, 84, 89]) {
+      const t = await screen(list, { width, height: 26 })
+      try {
+        const lines = (await t.frame()).split('\n')
+        const row = (s: string) => lines.filter(l => l.includes(s))
+        for (const l of lines) expect(l.trimEnd().length).toBeLessThanOrEqual(width)
+        expect(lines.some(l => /^\s*(plan|by itself|12m)\s*$/.test(l))).toBe(false)
+        expect(row('#103').some(l => l.includes('resumes'))).toBe(true)
+        expect(row('#105').some(l => l.includes('a approve'))).toBe(true)
+      } finally { t.s.renderer.destroy() }
+    }
+  })
+})

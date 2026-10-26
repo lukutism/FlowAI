@@ -412,7 +412,7 @@ function Attention({ items, shown, two, inline, mode, runs, resources, onItem, o
           <box flexDirection="row">
             <Click on={() => onItem(a, false)}>
               <text>
-                <span fg={C.accent}>{focused === a.run ? '▌' : ' '}</span><span fg={C.secondary}>{fit(a.ticket, 9)}</span> <strong>{fit(a.title, two ? 34 : 26)}</strong> {two ? <span fg={C.muted}>{fit(a.line, 9)}</span> : null}
+                <span fg={C.accent}>{focused === a.run ? '▌' : ' '}</span><span fg={C.secondary}>{fit(a.ticket, 9)}</span> <strong>{fit(a.title, two ? 34 : 20)}</strong> {two ? <span fg={C.muted}>{fit(a.line, 9)}</span> : null}
                 <span fg={TONE[a.tone]}> ◆ {fit(a.label, 15)}</span><span fg={C.secondary}>{fit(a.when, 18)}</span>
               </text>
             </Click>
@@ -457,7 +457,9 @@ function Confirm({ mode, run, resources, onKey }: { mode: Mode; run?: RunState; 
 function Table({ items, selected, rowsShown, width, cols, onClick, onScroll, active, hover, onHover }: { items: Grouped[]; selected: number; rowsShown: number; width: number; cols: { project: boolean; tokens: boolean; track: boolean }; onClick: (i: number) => void; onScroll: (down: boolean) => void; active: boolean; hover: string | null; onHover: (key: string | null) => void }) {
   // the selected row shows only while the table has the cursor (one cursor on the screen)
   const bg = (on: boolean, key: string) => (on && active ? C.selected : hover === key ? C.panel : undefined)
-  const stageW = cols.track ? 12 : 8, statusW = 20, nextW = width >= 120 ? 24 : 18
+  // below 90 columns the status and next columns narrow, so a row stays one line
+  const narrow = width < 90
+  const stageW = cols.track ? 12 : 8, statusW = narrow ? 15 : 20, nextW = width >= 120 ? 24 : narrow ? 11 : 18
   const fixed = 10 + (cols.project ? 7 : 0) + 10 + stageW + statusW + 8 + (cols.tokens ? 7 : 0) + 1 + nextW
   const titleW = Math.max(12, width - fixed)
   const first = Math.max(0, Math.min(selected - rowsShown + 1, items.length - rowsShown))
