@@ -106,7 +106,7 @@ describe('Runs screen', () => {
     } finally { t.s.renderer.destroy() }
   })
   test('in a run\'s detail p ports it once it has its draft PR; otherwise it says why not', async () => {
-    const t = await screen([base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } }), base('fso-103', {})])
+    const t = await screen([base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } }), base('fso-103', {})])
     try {
       await t.press('enter', 'p')
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
@@ -446,13 +446,15 @@ describe('the command palette', () => {
     } finally { t.s.renderer.destroy() }
   })
   test('in a run\'s detail: that run\'s commands, and the detail stays open under it', async () => {
-    const list = [base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
+    const list = [base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
     const t = await screen(list, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nThe walk.\n' : '') })
     try {
       const f = await t.press('enter', 'ctrl+k')
       expect(f).toContain('#104 commands')
       for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Open the worktree in VS Code', 'Type in the shell', 'Port to develop']) expect(f).toContain(c)
       expect(f).not.toContain('Group by stage')
+      expect(f).not.toContain('Open the review') // no review yet
+      expect(f).not.toContain('dropping work') // one Remove; f in its question removes work not shipped too
       expect(await t.press('esc')).toContain('← esc  #104') // still the detail
       await t.press('ctrl+k', ...'plan'.split(''), 'enter')
       expect(await t.until('The walk.')).toContain('The walk.')
@@ -501,8 +503,8 @@ describe('the command palette', () => {
   test(': opens it too; a filter from it applies; esc closes without doing anything', async () => {
     const t = await screen(runs, undefined, { projects })
     try {
-      await t.press(':', ...'show fso'.split(''), 'enter')
-      expect(await t.frame()).toContain('filter project:fso')
+      await t.press(':', ...'show failed'.split(''), 'enter')
+      expect(await t.frame()).toContain('filter status:failed,blocked')
       await t.press(':', 'esc')
       expect(t.f.sent).toEqual([])
       expect(await t.frame()).not.toContain('↑↓ choose')
@@ -615,8 +617,25 @@ describe('the mouse', () => {
       expect(await t.frame()).toMatch(/Activity +#103/)
     } finally { t.s.renderer.destroy() }
   })
+  test('Add a repo opens a choice of the repos the run lacks; Remove asks once, f removes work not shipped too', async () => {
+    const list = [base('fso-104', { repos: ['mobile'], stage: 'build', status: 'blocked', needs: { kind: 'blocked', ask: 'x' } })]
+    const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: [], patches: [], deadlineMinutes: 30 }
+    const t = await screen(list, undefined, { projects: [fso] })
+    try {
+      await t.press('enter', 'ctrl+k', ...'add a repo'.split(''), 'enter')
+      const f = await t.frame()
+      expect(f).toContain('#104 · add a repo')
+      expect(f).toContain('Add portal')
+      await t.press('enter')
+      expect(t.f.sent).toEqual([{ cmd: 'addRepo', run: 'fso-104', repo: 'portal' }])
+      await t.press('ctrl+k', ...'remove the run'.split(''), 'enter')
+      expect(await t.frame()).toContain('f also work not shipped')
+      await t.press('f')
+      expect(t.f.sent.at(-1)).toEqual({ cmd: 'remove', run: 'fso-104', force: true })
+    } finally { t.s.renderer.destroy() }
+  })
   test('a command in the palette is clicked to run it', async () => {
-    const list = [base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
+    const list = [base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
     const t = await screen(list)
     try {
       await t.press('enter', 'ctrl+k')

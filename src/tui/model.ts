@@ -135,7 +135,7 @@ export function filterRuns(runs: RunState[], q: string, now = Date.now()): RunSt
   const text = words.filter(w => !/^(project|status|stage):/.test(w))
   return runs.filter(r => (status === 'done' || !hiddenDone(r, now))
     && (!project || r.project.toLowerCase() === project)
-    && (!status || r.status === status || r.needs?.kind === status)
+    && (!status || status.split(',').some(x => r.status === x || r.needs?.kind === x))
     && (!stage || r.stage === stage)
     && text.every(w => `${r.id} ${r.ticket} ${r.title}`.toLowerCase().includes(w)))
 }

@@ -155,7 +155,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const [logs, setLogs] = useState<string[]>([])
   const [text, setText] = useState('')
   const [diffs, setDiffs] = useState<FileDiff[] | null>(null)
-  const [data, setData] = useState<{ plan: string; review: string; changes: Change[]; events: RunEvent[]; worktree: string }>({ plan: '', review: '', changes: [], events: [], worktree: '' })
+  const [data, setData] = useState<{ plan: string; review: string; pr: string; changes: Change[]; events: RunEvent[]; worktree: string }>({ plan: '', review: '', pr: '', changes: [], events: [], worktree: '' })
   const [scroll, setScroll] = useState(0)
   const [, redraw] = useState(0)
   // the shell pane's terminal (a new one each time the pane is shown): a state, so the replay runs for each
@@ -171,12 +171,12 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   // the run's data: refreshed when it changes
   useEffect(() => {
     let live = true
-    void Promise.all([api.events(run.id), api.file(run.id, 'plan.md'), api.file(run.id, 'review.json'), api.changes?.(run.id) ?? Promise.resolve([]), api.file(run.id, 'run.json')])
-      .then(([events, plan, review, changes, meta]) => {
+    void Promise.all([api.events(run.id), api.file(run.id, 'plan.md'), api.file(run.id, 'review.json'), api.changes?.(run.id) ?? Promise.resolve([]), api.file(run.id, 'run.json'), api.file(run.id, 'pr.md')])
+      .then(([events, plan, review, changes, meta, pr]) => {
         if (!live) return
         let worktree = ''
         try { worktree = (JSON.parse(meta || '{}') as { worktree?: string }).worktree ?? '' } catch {}
-        setData({ events, plan, review, changes, worktree })
+        setData({ events, plan, review, pr, changes, worktree })
       })
     return () => { live = false }
   }, [api, run.id, run.updatedAt])
@@ -258,10 +258,11 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const commands = (): PaletteAction[] => [
     { label: 'Message the agent', hint: 'm', run: () => { setPane(p => (split ? p : 'agent')); setFocus('message') } },
     { label: 'Open the change', hint: 'd · comment on its lines', run: () => setPopup({ kind: 'diff' }) },
-    { label: 'Open the plan', hint: 'P', run: () => setPopup({ kind: 'md', file: 'plan.md' }) },
+    // what the run has written so far: each only once it is there
+    ...(data.plan ? [{ label: 'Open the plan', hint: 'P', run: () => setPopup({ kind: 'md', file: 'plan.md' }) }] : []),
     { label: 'Open the ticket', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) },
-    { label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) },
-    { label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) },
+    ...(data.pr ? [{ label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) }] : []),
+    ...(data.review ? [{ label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) }] : []),
     ...panes.filter(x => x.key !== 'shell').map(x => ({ label: `Show ${x.label === 'Agent' ? "the agent's session" : x.label}`, hint: 'pane', run: () => { setPane(x.key); setFocus('none') } })),
     { label: 'Open the worktree in VS Code', hint: 'e', run: () => openEditor(data.worktree) },
     { label: 'Type in the shell', hint: 'i · in the worktree', run: () => { if (!showsShell) setPane('shell'); setFocus('shell') } },

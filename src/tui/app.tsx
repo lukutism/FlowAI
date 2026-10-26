@@ -74,7 +74,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   /** the run detail's own commands, for the palette while it is open */
   const detailCmds = useRef<(() => PaletteAction[]) | null>(null)
   /** the command palette: over whatever is open (the runs, a tab, a run's detail), which stays as it is */
-  const [pal, setPal] = useState<{ text: string; index: number } | null>(null)
+  // the palette; sub: a choice one of its commands opened (the repo to add)
+  const [pal, setPal] = useState<{ text: string; index: number; sub?: 'repos' } | null>(null)
   const [tab, setTab] = useState<Tab>('Runs')
   const [sort, setSort] = useState<Sort>('newest')
   const [grouped, setGrouped] = useState(false)
@@ -148,7 +149,14 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const goTab = (x: Tab) => { setTab(x); setMode({ kind: 'list' }) }
 
   // the commands: in a run's detail that run's own; elsewhere the screen's, and every run to open by its ticket or title
+  const missingRepos = (r: RunState) => { const has = new Set(r.repos ?? []); return r.repos ? (api.projects?.find(p => p.key === r.project)?.repos ?? []).filter(k => !has.has(k)) : [] }
   const actions = (): Action[] => {
+    // the repo to add, chosen from those the run lacks
+    if (pal?.sub === 'repos' && detailId) {
+      const r = api.runs.get(detailId)
+      if (r) return [...missingRepos(r).map(key => ({ label: `Add ${key}`, hint: "its own worktree on the run's branch; the agent's next turn has it", run: () => void send({ cmd: 'addRepo', run: r.id, repo: key }, `${r.ticket}: adding ${key}`) })),
+        { label: 'Back to the commands', hint: 'esc', run: () => setPal({ text: '', index: 0 }) }]
+    }
     const a: Action[] = []
     const inDetail = mode.kind === 'detail' ? api.runs.get(mode.run) : undefined
     if (inDetail) {
@@ -156,11 +164,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (r.needs?.kind === 'plan') a.push({ label: 'Approve the plan', hint: 'a · with the defaults, or other answers', run: () => ask.approve(r) })
       if (r.needs?.kind === 'ship' || r.needs?.kind === 'patch') a.push({ label: r.patch ? (r.needs.kind === 'patch' ? 'Write the patch back' : 'Check the write-back') : 'Ship', hint: r.patch ? 'S' : 'S · commit, push, draft PR', run: () => ask.ship(r) })
       a.push(...(detailCmds.current?.() ?? []))
-      if (r.pr) a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
+      // a port is to develop: a run on develop has nothing to port
+      if (r.pr && r.base.replace(/^origin\//, '') !== 'develop') a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
       if (r.status !== 'done' && r.status !== 'failed') {
-        const has = new Set(r.repos ?? []), all = api.projects?.find(p => p.key === r.project)?.repos ?? []
-        for (const key of r.repos ? all.filter(k => !has.has(k)) : []) a.push({ label: `Add repo ${key}`, hint: "its own worktree on the run's branch; the agent's next turn has it", run: () => void send({ cmd: 'addRepo', run: r.id, repo: key }, `${r.ticket}: adding ${key}`) })
-        a.push({ label: 'Sync with the base', hint: "fetch, merge the base under the agent's change (kept uncommitted)", run: () => void send({ cmd: 'sync', run: r.id }, `${r.ticket}: syncing with its base`) })
+        if (missingRepos(r).length) a.push({ label: 'Add a repo', hint: `${missingRepos(r).join(', ')} · its own worktree on the run's branch`, run: () => setPal({ text: '', index: 0, sub: 'repos' }) })
+        if (!r.pr) a.push({ label: 'Sync with the base', hint: "fetch, merge the base under the agent's change (kept uncommitted)", run: () => void send({ cmd: 'sync', run: r.id }, `${r.ticket}: syncing with its base`) })
       }
       if (r.device && api.pageUrl) a.push({ label: 'See the device in the browser', hint: `${r.device.platform === 'android' ? 'see it and use it' : 'see it'} · ${r.device.id}`, run: () => { (api.openUrl ?? openUrl)(api.pageUrl!(`/device/${r.id}`)); setNotice(`${r.ticket}: the device opened in the browser`) } })
       if (!r.device && r.status !== 'done' && r.status !== 'failed') for (const pl of api.projects?.find(p => p.key === r.project)?.devices ?? []) a.push({ label: `Add a device: ${pl}`, hint: "its own emulator, Metro and the app from the run's worktree; the agent's next turn has it", run: () => void send({ cmd: 'restartDevice', run: r.id, add: pl }, `${r.ticket}: adding its ${pl} device`) })
@@ -168,8 +176,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })
       if (r.status === 'running') a.push({ label: "Stop the agent's turn", hint: 'it ends now; a message carries the run on', run: () => void send({ cmd: 'stop', run: r.id }, `${r.ticket}: stopping the agent's turn`) })
       if (r.status !== 'done') a.push({ label: 'Mark done', hint: r.pr ? 'merged, or given up: off the attention list' : 'given up: off the attention list', run: () => ask.done(r) })
-      a.push({ label: 'Remove the run', hint: 'device, worktrees, local branch; folder archived', run: () => ask.remove(r) })
-      a.push({ label: 'Remove the run, dropping work not shipped', hint: 'uncommitted changes and unpushed commits are lost', run: () => ask.remove(r, true) })
+      a.push({ label: 'Remove the run', hint: 'device, worktrees, local branch; folder archived (f there: work not shipped too)', run: () => ask.remove(r) })
       a.push({ label: 'Back to the runs', hint: 'esc', run: () => setMode({ kind: 'list' }) })
       a.push({ label: 'Quit', hint: 'q', run: () => { stopShells(); onQuit() } })
       return a
@@ -181,11 +188,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (state && state.status !== 'done') a.push({ label: `Mark ${state.ticket} done`, hint: 'merged, or given up: off the attention list', run: () => ask.done(state) })
     if (state) a.push({ label: `Remove ${state.ticket} ${line(state.base)}`, hint: 'device, worktrees, local branch; folder archived', run: () => ask.remove(state) })
     a.push({ label: 'Show runs that need you', hint: 'status:needs-you', run: () => { setFilter('status:needs-you'); goTab('Runs') } })
-    a.push({ label: 'Show failed and blocked runs', hint: 'status:failed', run: () => { setFilter('status:failed'); goTab('Runs') } })
-    for (const p of api.projects ?? []) a.push({ label: `Show ${p.name} runs`, hint: `project:${p.key}`, run: () => { setFilter(`project:${p.key}`); goTab('Runs') } })
+    a.push({ label: 'Show failed and blocked runs', hint: 'status:failed,blocked', run: () => { setFilter('status:failed,blocked'); goTab('Runs') } })
     if (filter) a.push({ label: 'Clear the filter', hint: filter, run: () => { setFilter(''); setMode({ kind: 'list' }) } })
     a.push({ label: grouped ? 'Stop grouping' : 'Group by stage', run: () => { setGrouped(g => !g); setMode({ kind: 'list' }) } })
-    for (const x of SORTS) if (x !== sort) a.push({ label: `Sort by ${x}`, run: () => { setSort(x); setMode({ kind: 'list' }) } })
+    const nextSort = SORTS[(SORTS.indexOf(sort) + 1) % SORTS.length]!
+    a.push({ label: `Sort by ${nextSort}`, hint: `s · now ${sort}`, run: () => { setSort(nextSort); setMode({ kind: 'list' }) } })
     for (const x of TABS) if (x !== tab) a.push({ label: `Go to ${x}`, hint: String(TABS.indexOf(x) + 1), run: () => goTab(x) })
     a.push({ label: 'Quit', hint: 'q', run: () => { stopShells(); onQuit() } })
     return a
@@ -242,9 +249,9 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       return
     }
     if (mode.kind === 'remove') {
-      if (typed === 'y') {
+      if (typed === 'y' || typed === 'f') {
         const run = mode.run
-        void send({ cmd: 'remove', run, force: mode.force }, `removing ${run}`).then(ok => { if (ok) setRemoving(x => new Set([...x, run])) })
+        void send({ cmd: 'remove', run, force: mode.force || typed === 'f' }, `removing ${run}`).then(ok => { if (ok) setRemoving(x => new Set([...x, run])) })
         return setMode({ kind: 'list' })
       }
       if (typed === 'n' || name === 'escape') return setMode(after(mode))
@@ -352,7 +359,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         onMessage={text => send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} bindPaste={f => { pasteTo.current = f }} />
       {inline ? <Confirm mode={mode} run={detailRun} resources={api.resources} onKey={k => handle('', k)} /> : null}
       {mode.kind === 'message' ? <Bar mode={mode} run={detailRun} message="" compact={!L.tabNames} tab={tab} onKey={handle} /> : null}
-      {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title={`${detailRun.ticket} commands`} onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
+      {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title={pal.sub === 'repos' ? `${detailRun.ticket} · add a repo` : `${detailRun.ticket} commands`} onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
     </box>
   )
   return (
@@ -467,7 +474,7 @@ function Confirm({ mode, run, resources, onKey }: { mode: Mode; run?: RunState; 
     const real = run.needs?.kind === 'patch'
     return <box flexDirection="row"><text>{'          '}<strong>{real ? `Write the patch back for ${run.ticket}?` : `Check the write-back for ${run.ticket}?`}</strong><span fg={C.secondary}>{real ? ' the patch and the fix, as the dry run showed   ' : ' a dry run, nothing written   '}</span></text><Hint k="y" label={real ? 'write back' : 'check'} tone={C.success} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   }
-  if (mode.kind === 'remove') return <box flexDirection="row"><text>{'          '}<strong>{`Remove ${run.ticket}?`}</strong><span fg={mode.force ? C.danger : C.secondary}>{mode.force ? ' its worktrees go with any work not shipped; device, local branch; folder archived   ' : ' device, worktrees, local branch; the folder archived (refused if work is not shipped)   '}</span></text><Hint k="y" label="remove" tone={C.danger} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
+  if (mode.kind === 'remove') return <box flexDirection="row"><text>{'          '}<strong>{`Remove ${run.ticket}?`}</strong><span fg={mode.force ? C.danger : C.secondary}>{mode.force ? ' its worktrees go with any work not shipped; device, local branch; folder archived   ' : ' device, worktrees, local branch; folder archived   '}</span></text><Hint k="y" label="remove" tone={C.danger} on={() => onKey('y')} />{mode.force ? null : <Hint k="f" label="also work not shipped" tone={C.danger} on={() => onKey('f')} />}<Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   if (mode.kind === 'ship') return <box flexDirection="row"><text>{'          '}<strong>{`Ship ${run.ticket}?`}</strong><span fg={C.secondary}> commit, push, open a draft PR   </span></text><Hint k="y" label="ship" tone={C.success} on={() => onKey('y')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
   return null
 }
