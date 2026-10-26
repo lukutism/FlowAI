@@ -15,6 +15,8 @@ export type EventBody =
   | { type: 'setup.failed'; reason: string }
   | { type: 'plan.submitted'; summary: string; questions: Question[]; deadline?: number; targets?: string[] }
   | { type: 'plan.decided'; by: 'human' | 'deadline' | 'advisor'; answers: Record<string, string>; reasons?: Record<string, string> }
+  /** something worth knowing that changes nothing (a PR comment that could not be posted) */
+  | { type: 'run.note'; text: string }
   /** a repo added to the run (its own worktree on the run's branch) */
   | { type: 'repo.added'; repo: string; base: string }
   /** the run's repos brought up to their bases */
@@ -140,7 +142,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
       return go(s, e, { stage: 'build', plan: { ...s.plan, answers: e.answers, decidedBy: e.by, ...(e.reasons ? { reasons: e.reasons } : {}) }, ...running })
     }
     case 'repo.added': return go(s, e, s.repos ? { repos: [...s.repos, e.repo] } : {})
-    case 'run.synced': return go(s, e, {})
+    case 'run.synced': case 'run.note': return go(s, e, {})
     case 'plan.returned':
       if (s.needs?.kind !== 'plan' || !s.plan) throw new TransitionError('no plan is waiting for a decision')
       return go(s, e, { plan: { ...s.plan, returned: true }, ...running })

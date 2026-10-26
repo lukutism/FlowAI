@@ -18,7 +18,7 @@ import { drift, prProblems } from './drift.ts'
 import { advisorPrompt, lookupPrompt, parseAdvice, type Advice } from './advisor.ts'
 import { Browsers } from './browser.ts'
 import { detectVars, fillVars, resolveVars } from './vars.ts'
-import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
+import { buildPrompt, contextPrompt, fenced, finishBuildPrompt, fixPrompt, fromHuman, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
 import { memoryDir, saveLearnings } from './learnings.ts'
 import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding, type Lens } from './review.ts'
@@ -530,7 +530,7 @@ export class Pipeline {
   /** a message from the human: goes to the run's session; afterwards the run carries on from where it is */
   async message(run: string, text: string) {
     this.d.store.append(run, 'human', { type: 'human.message', text })
-    const r = await this.say(run, text, 'you')
+    const r = await this.say(run, fromHuman(text), 'you')
     if (!r.ok || this.ended(run, r.text)) return
     const s = this.must(run)
     if (s.status !== 'running') return // the agent asked something back, or the run was done or failed already
@@ -625,6 +625,12 @@ export class Pipeline {
       const c = await this.forge.draftPr({ repository, head: m.branch, base: r.base.replace(/^origin\//, ''), title, body, ...(typeof m.id === 'number' ? { workItem: m.id } : {}) })
       this.d.store.append(run, 'human', { type: 'pr.opened', url: c.url, number: c.number, ...(m.repos.length > 1 ? { repo: r.key } : {}) })
       created.push(c)
+      // the body is just the ticket link: the agent's description (and what nobody confirmed) goes in a first comment,
+      // so the PR's reviewer still gets it; the PR stands if that fails
+      const described = (pr.replace(/^#\s+.+\n?/m, '').trim() + decisions).trim()
+      if (n.prBody === 'ticket-link' && described && this.forge.comment) {
+        await this.forge.comment(c, described).catch(e => this.d.store.append(run, 'engine', { type: 'run.note', text: `the PR's description comment was not posted: ${(e as Error).message}` }))
+      }
     }
     if (!created.length && updated[0]) this.d.store.append(run, 'human', { type: 'pr.updated', ...updated[0] })
     this.keepLearnings(run)
@@ -936,8 +942,16 @@ export class Pipeline {
   }
 
   private async buildStep(run: string) {
-    const r = await this.runner.turn(run, buildPrompt(this.meta(run), this.answers(this.must(run)), this.prFile(run)))
+    let r = await this.runner.turn(run, buildPrompt(this.meta(run), this.answers(this.must(run)), this.prFile(run)))
     if (!r.ok || this.ended(run, r.text)) return
+    // ended early (no PR description, no ask, resolve or block): told to finish, twice at most, then the run stops for you
+    // (a customer patch run ships by writing the patch back: no PR description)
+    const needsPr = !this.meta(run).patch
+    for (let i = 0; i < 2 && needsPr && !existsSync(this.prFile(run)); i++) {
+      r = await this.say(run, finishBuildPrompt(this.prFile(run)))
+      if (!r.ok || this.ended(run, r.text)) return
+    }
+    if (needsPr && !existsSync(this.prFile(run))) { this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the agent ended the build three times without ${this.prFile(run)}; message it, or write the PR description yourself` }); return }
     this.d.store.append(run, 'agent', { type: 'build.done' })
     await this.verifyLoop(run)
   }
@@ -1048,7 +1062,9 @@ export class Pipeline {
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
     const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
     const change = m.repos.length > 1 ? m.repos.map(r => `### ${r.key} (${r.worktree})\n${changeText(r.worktree) || '(no change)'}`).join('\n\n') : changeText(m.repos[0]!.worktree)
-    const base = { key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change, pr: read(this.prFile(run)), answers: read(this.answersFile(run)) }
+    const ev = join(this.runDir(run), 'evidence')
+    const evidence = existsSync(ev) ? readdirSync(ev).filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)).sort().map(f => join(ev, f)) : []
+    const base = { key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change, pr: read(this.prFile(run)), answers: read(this.answersFile(run)), evidence }
     const one = async (lens: Lens) => {
       const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer', lens), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
       // the run's model for the reviewers too (a run started on sonnet is reviewed on sonnet)

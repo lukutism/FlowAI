@@ -34,14 +34,15 @@ function setup() {
     read: async id => ({ id, key: String(id), title: 'New success modal text', kind: 'feature', url: `https://example.atlassian.net/browse/${id}`, text: 'Show Ačiū.' }),
   }
   const prs: Parameters<Forge['draftPr']>[0][] = []
-  const forge: Forge = { draftPr: async o => { prs.push(o); return { number: 57, url: 'https://github.com/OWNER/shop-web-app/pull/57' } }, prState: async () => 'open' }
+  const comments: string[] = []
+  const forge: Forge = { draftPr: async o => { prs.push(o); return { number: 57, url: 'https://github.com/OWNER/shop-web-app/pull/57' } }, prState: async () => 'open', comment: async (_pr, body) => { comments.push(body) } }
   const data = join(root, 'data'), run = join(data, 'runs', 'shop-SGL-692')
   const agent = new FakeAgent([
     turn(() => { mkdirSync(run, { recursive: true }); writeFileSync(join(run, 'plan.md'), fullPlan('none', 'Change the text.')) }),
     turn(() => { writeFileSync(join(root, 'wt', 'SGL-692', 'web', 'a.ts'), 'y\n'); writeFileSync(join(run, 'pr.md'), '# Show the new success text\n\nDetails.\n\nVerified: tsc → clean\nNot verified: nothing\n') }),
   ])
   const pipe = new Pipeline({ store: new EventStore(':memory:'), project, az: () => ({ code: 1, out: '', err: '' }), dataDir: data, gitEnv: env, tracker, forge, makeAgent: () => agent })
-  return { pipe, prs, origin }
+  return { pipe, prs, origin, comments }
 }
 
 describe('a Jira + GitHub project with its own naming', () => {
@@ -52,6 +53,8 @@ describe('a Jira + GitHub project with its own naming', () => {
     await t.pipe.ship(run)
     expect(git(t.origin, 'log', '-1', '--format=%s', 'SGL-692')).toBe('SGL-692 Show the new success text')
     expect(t.prs).toEqual([{ repository: 'shop-web-app', head: 'SGL-692', base: 'main', title: 'SGL-692', body: 'https://example.atlassian.net/browse/SGL-692' }])
+    // the agent's description, which the body leaves out, is the PR's first comment
+    expect(t.comments).toEqual(['Details.\n\nVerified: tsc → clean\nNot verified: nothing'])
   })
   test('something that is not one of the project\'s keys is refused, saying what a key looks like', async () => {
     await expect(setup().pipe.start('692')).rejects.toThrow(/692 is not a ticket of project shop \(SGL-<number>\)/)

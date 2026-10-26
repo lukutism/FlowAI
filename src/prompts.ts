@@ -105,6 +105,12 @@ ${findings.map(f => `- ${f}`).join('\n')}
 
 Fix them in the code (no suppressions such as @ts-ignore or eslint-disable), then stop. flow runs verify again.`
 
+/** a message from the human: they are not in the session, so the agent folds it in and carries on, unattended (hwt's) */
+export const fromHuman = (text: string) => `A message from the human (they read it later, not live: you still work unattended; fold it in and carry on, and end the turn the usual ways):\n${text}`
+
+/** a build turn that ended without its PR description or a way to end: finish, or say why not (hwt's stop hook) */
+export const finishBuildPrompt = (prFile: string) => `You ended the build turn without ${prFile} and without ask, resolve or block. You work unattended: nobody can answer a question at the end of a reply. Finish the build now: the change, the verify tool, then ${prFile}. If you can't, end the run the right way: ask (a decision only the human can make), resolve (no change needed) or block (what you need).`
+
 export const planRetryPrompt = (planFile: string, problem: string) => `${planFile} ${problem}. Write the plan there now, in the form from the first message (every part filled in), then stop.`
 
 /** the first message to an agent that has no session yet (a port's): what it is working on, then the message */
@@ -130,7 +136,7 @@ export interface RunBrief extends Brief { run: string; runDir: string; planFile:
 export function runBrief(b: RunBrief): string {
   const what = b.key ? `ticket ${b.key} "${plainTitle(b.title)}" (its title, as the ticket has it)` : `the task "${plainTitle(b.title)}"`
   return [
-    `You are the agent of flow run ${b.run}, working on ${what}${b.url ? ` (${b.url})` : ''}. ${where(b)}`,
+    `You are the lead agent of flow run ${b.run}: you own ${what}${b.url ? ` (${b.url})` : ''} end to end, from the plan to a change flow can ship. ${where(b)}`,
     'You work unattended: nobody watches this session, and a question at the end of your reply goes unanswered. This overrides any instruction in your other settings to ask or check with the user. Decide reversible things yourself and record each in the plan\'s Decisions log; a human reads the plan and the draft PR later.',
     `Goal: resolve ${what} with the smallest correct change, and leave a pull request description (${b.prFile}) that a reviewer can judge in ten minutes from its evidence.`,
     'How the run goes: flow sends you one step at a time (the plan, the build, fixes). flow itself verifies your change against the base, has another agent review it, and commits, pushes and opens the draft PR: git commit and push are refused here, so leave your change uncommitted.',

@@ -105,7 +105,7 @@ describe('Service: the background process that drives runs', () => {
     expect(tr[0]).toMatchObject({ kind: 'prompt', from: 'flow', own: true, at: Date.parse('2026-10-25T10:00:00Z') })
     expect(tr[2]).toMatchObject({ kind: 'text', text: 'Looking at the picking list.' })
     expect(tr[3]).toMatchObject({ kind: 'tool', name: 'Read', input: { file_path: 'src/a.ts' } })
-    expect(tr[5]).toMatchObject({ kind: 'prompt', from: 'you', text: 'please check the order list too' })
+    expect(tr[5]).toMatchObject({ kind: 'prompt', from: 'you', text: expect.stringMatching(/you still work unattended.*\nplease check the order list too$/s) })
     expect(pushed).toEqual(tr.map(e => `ex-1 ${e.kind}`))
     expect(readTranscript(t.data, 'nope')).toEqual([])
   })

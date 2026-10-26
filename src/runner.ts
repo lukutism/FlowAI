@@ -50,7 +50,7 @@ export class Runner {
     const q = this.o.queued?.(run) ?? []
     if (q.length) {
       for (const text of q) this.o.store.append(run, 'human', { type: 'human.message', text })
-      prompt = `The human wrote while you worked:\n${q.map(x => `- ${x}`).join('\n')}\n\n${prompt}`
+      prompt = `The human wrote while you worked (they read it later, not live: you still work unattended; fold it in):\n${q.map(x => `- ${x}`).join('\n')}\n\n${prompt}`
     }
     return this.turnWith(run, this.o.agentFor(run), prompt, { from })
   }

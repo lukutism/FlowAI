@@ -97,7 +97,7 @@ describe('a run across two repos', () => {
   test('verify findings name their repo', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan)),
-      turn(() => writeFileSync(join(d.root, 'portal', 'src/a.ts'), '// LINT in portal\n')),
+      turn(() => { writeFileSync(join(d.root, 'portal', 'src/a.ts'), '// LINT in portal\n'); writeFileSync(join(d.run, 'pr.md'), '# Portal\n\nVerified: tsc → clean\nNot verified: nothing\n') }),
       turn(() => writeFileSync(join(d.root, 'portal', 'src/a.ts'), 'export const portal = 2\n')),
     ])
     await t.pipe.start(7, { repos: ['mobile', 'portal'] })

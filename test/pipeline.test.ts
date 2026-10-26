@@ -175,7 +175,7 @@ describe('a ticket to a draft PR', () => {
   test('verify finds something new: the agent is told exactly what, fixes it, and verify passes', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
-      turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2 // ERR mine\n')),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2 // ERR mine\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
       turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
     ])
     const run = await t.pipe.start(186278)
@@ -198,7 +198,8 @@ describe('a ticket to a draft PR', () => {
     ])
     const run = await t.pipe.start(186278)
     await t.pipe.message(run, 'Write the plan to plan.md now, please.')
-    expect(t.agent.prompts[2]).toBe('Write the plan to plan.md now, please.')
+    expect(t.agent.prompts[2]).toEndWith('Write the plan to plan.md now, please.')
+    expect(t.agent.prompts[2]).toContain('you still work unattended') // framed: the human isn't there live
     expect(t.store.state(run)).toMatchObject({ stage: 'ship', status: 'needs-you' })
   })
   test('ship refuses while the run is not verified', async () => {
@@ -257,13 +258,14 @@ describe('the independent review before ship', () => {
   test('three lenses: each a fresh reviewer with its own focus, on the plan, the PR description and the change; their findings go to the agent tagged', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan())),
-      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd); mkdirSync(join(d.run, 'evidence'), { recursive: true }); writeFileSync(join(d.run, 'evidence', 'after-list.png'), 'png') }),
       turn(() => writeFileSync(join(d.run, 'review-answers.md'), 'R1: not a problem because b is used by the next ticket\n')),
     ], { lenses: ['correctness', 'skeptic', 'simplicity'], review: [review([]), review([finding]), review([]), review([]), review([]), review([])] })
     const run = await t.pipe.start(186278)
     const lenses = t.reviewer.prompts.slice(0, 3).map(p => /Your lens: (\w+)/.exec(p)?.[1]).sort()
     expect(lenses).toEqual(['correctness', 'simplicity', 'skeptic'])
     expect(t.reviewer.prompts[0]).toContain('Verified: flow verify → no new findings') // the PR description's claims
+    expect(t.reviewer.prompts[0]).toContain(`- ${join(t.runDir, 'evidence', 'after-list.png')}`) // the screenshots, to open
     expect(t.reviewers.map(r => r.settings)).toEqual(expect.arrayContaining([expect.stringContaining(join('reviewer', 'skeptic'))]))
     expect(t.agent.prompts[2]).toMatch(/R1 \[P1, \w+\] src\/b\.ts:1: b is exported but never used/)
     expect(t.agent.prompts[2]).toContain('review-answers.md')
@@ -356,8 +358,9 @@ describe('port: the same fix onto another line', () => {
     expect(t.agent.prompts[2]!).toEndWith('carry on')
   })
   test('ship refuses, before pushing, a run with no PR description or one longer than the forge takes', async () => {
-    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))])
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
     const run = await t.pipe.start(186278)
+    require('node:fs').rmSync(join(t.runDir, 'pr.md')) // gone after verify (by hand)
     await expect(t.pipe.ship(run)).rejects.toThrow(/no PR description.*message it to write one/)
     writeFileSync(join(t.runDir, 'pr.md'), `# Long\n\n${'x'.repeat(4100)}\n`)
     await expect(t.pipe.ship(run)).rejects.toThrow(/4100 characters and Azure takes 4000: message the agent to cut 100/)
@@ -432,6 +435,16 @@ describe('port: the same fix onto another line', () => {
     await u.pipe.start(186278, { vars: { CLOUD: 'https://demo.example.cloud', APP_ID: '12' } })
     expect(readFileSync(join(u.wt, '.env'), 'utf8')).toBe('APP_HOST=https://demo.example.cloud\nAPP_ID=12\n')
     await expect(make().pipe.start(186278, { vars: { NOPE: 'x' } })).rejects.toThrow(/no variable NOPE/)
+  })
+  test('a build turn that ends without its PR description is told to finish, twice at most; then the run stops for you', async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')), turn(() => writeFileSync(join(d.run, 'pr.md'), prMd))])
+    const run = await t.pipe.start(186278)
+    expect(t.agent.prompts[2]).toMatch(/^You ended the build turn without .*pr\.md and without ask, resolve or block/)
+    expect(t.store.state(run)).toMatchObject({ stage: 'ship' })
+    const u = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(), turn(), turn()])
+    const stuck = await u.pipe.start(186278)
+    expect(u.agent.prompts).toHaveLength(4)
+    expect(u.store.state(stuck)).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/ended the build three times without/) } })
   })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])
@@ -516,7 +529,7 @@ describe('pipeline: a message at any gate carries the run on, and flow puts the 
     expect(await t.pipe.ship(run)).toHaveLength(1)
   })
   test('the verify cap: a message runs the agent and verify again (it used to stay stuck)', async () => {
-    const red = (d: { wt: string }, n: number) => turn(() => writeFileSync(join(d.wt, 'src/b.ts'), `export const b = ${n} // ERR mine\n`))
+    const red = (d: { wt: string; run: string }, n: number) => turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), `export const b = ${n} // ERR mine\n`); writeFileSync(join(d.run, 'pr.md'), prMd) })
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), red(d, 1), red(d, 2), red(d, 3), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 4\n'))])
     const run = await t.pipe.start(186278)
     expect(t.store.state(run)).toMatchObject({ needs: { kind: 'verify' } })
@@ -724,7 +737,7 @@ describe('pipeline: a message while the agent works', () => {
     let t: ReturnType<typeof setup>
     t = setup(d => [turn(() => { writeFileSync(join(d.run, 'plan.md'), plan()); t.pipe.queueMessage('example-186278', 'the tablet layout too') }), turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) })])
     const run = await t.pipe.start(186278)
-    expect(t.agent.prompts[1]).toMatch(/^The human wrote while you worked:\n- the tablet layout too\n\n/)
+    expect(t.agent.prompts[1]).toMatch(/^The human wrote while you worked \(they read it later, not live: you still work unattended; fold it in\):\n- the tablet layout too\n\n/)
     expect(t.store.events(run).some(e => e.type === 'human.message' && e.text === 'the tablet layout too')).toBe(true)
     expect(t.pipe.takeQueued(run)).toEqual([])
   })

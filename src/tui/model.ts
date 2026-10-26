@@ -187,6 +187,7 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'plan.submitted': return { stage: 'plan', text: e.questions.length ? `plan ready, ${e.questions.length} question${e.questions.length > 1 ? 's' : ''}` : 'plan ready, no questions' }
     case 'plan.decided': return { stage: 'plan', text: e.by === 'human' ? 'approved by you' : e.by === 'advisor' ? 'decided by the advisor at the deadline' : 'defaults taken at the deadline' }
     case 'repo.added': return { stage: '', text: `${e.repo} added (from ${e.base.replace(/^origin\//, '')})` }
+    case 'run.note': return { stage: '', text: e.text }
     case 'run.synced': return { stage: '', text: `brought up to the base: ${e.repos.join(', ')}` }
     case 'plan.returned': return { stage: 'plan', text: `back to the agent to look up ${e.lookups.join(', ')}` }
     case 'agent.asked': return { stage: '', text: `asks: ${e.question}` }

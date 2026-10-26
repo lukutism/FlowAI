@@ -9,6 +9,8 @@ export interface Forge {
   draftPr(o: { repository: string; head: string; base: string; title: string; body: string; workItem?: number }): Promise<{ number: number; url: string }>
   /** whether a PR flow opened is still open, merged or closed (unknown: the host could not be asked) */
   prState(pr: { number: number; url: string }): Promise<'open' | 'merged' | 'closed' | 'unknown'>
+  /** a comment on a PR flow opened (the agent's description, where the project's PR body is just the ticket link) */
+  comment?(pr: { number: number; url: string }, body: string): Promise<void>
 }
 
 export type GhResult = { code: number; out: string; err: string }
@@ -39,6 +41,16 @@ export function githubForge(f: { kind: 'github'; owner: string }, gh: Gh = realG
         const url = /https:\/\/\S+\/pull\/(\d+)/.exec(r.out)
         if (!url) throw new Error(`gh pr create printed no PR link: ${r.out.trim().split('\n')[0]}`)
         return { number: Number(url[1]), url: url[0] }
+      } finally { rmSync(dir, { recursive: true, force: true }) }
+    },
+    async comment(pr, body) {
+      const repo = /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(pr.url)?.[1]
+      if (!repo) throw new Error(`not a GitHub PR: ${pr.url}`)
+      const dir = mkdtempSync(join(tmpdir(), 'flow-pr-'))
+      try {
+        writeFileSync(join(dir, 'comment.md'), body)
+        const r = await gh(['pr', 'comment', String(pr.number), '-R', repo, '--body-file', join(dir, 'comment.md')])
+        if (r.code !== 0) throw new Error(`gh pr comment failed: ${(r.err || r.out).trim().split('\n')[0]}`)
       } finally { rmSync(dir, { recursive: true, force: true }) }
     },
     async prState(pr) {
