@@ -13,6 +13,7 @@
  *   flow release <run>                                              stop the run's device now and free its slot
  *   flow add <run> <repo> [--base <ref>]                            a repo the run lacks: its own worktree on the run's branch
  *   flow sync <run>                                                 the run's repos brought up to their bases (the change kept)
+ *   flow doctor [<project>]                                         what a run would trip on: CLIs, logins, checkouts, devices, disk
  *   flow code <run>                                                 the run's worktree in VS Code (FLOW_EDITOR to use another)
  *   flow device <run>                                               the run's device in the browser: see it, tap, swipe, type
  *   flow stop <run>                                                 end the agent's turn now; the run waits for a message
@@ -304,6 +305,33 @@ async function main(argv: string[]) {
       const release = lock(port)
       try { await p.port(run, f.to ?? 'develop') } finally { await p.close(); release() }
       console.log(`\n${next(s.state(port)!)}\n${windowsLine(p.runner.ingest.windows)}`)
+      return
+    }
+    case 'doctor': {
+      const { doctor, report } = await import('./doctor.ts')
+      const all = (existsSync(PROJECTS) ? readdirSync(PROJECTS) : []).filter(f => f.endsWith('.json')).map(f => loadProject(join(PROJECTS, f)))
+      const projects = args[0] ? all.filter(p => p.key === args[0]) : all
+      if (args[0] && !projects.length) throw new Error(`no project ${args[0]} in ${PROJECTS}`)
+      const checks = await doctor(projects, {
+        run: async (argv, cwd) => {
+          const p = Bun.spawn(argv, { cwd, stdout: 'pipe', stderr: 'pipe', env: process.env })
+          const timer = setTimeout(() => p.kill(), 20_000)
+          const [out, err] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()])
+          clearTimeout(timer)
+          return { code: await p.exited, out, err }
+        },
+        exists: existsSync,
+        freeGB: path => {
+          let at = path
+          while (!existsSync(at) && at !== '/') at = join(at, '..')
+          const r = Bun.spawnSync(['df', '-k', at])
+          const kb = Number(new TextDecoder().decode(r.stdout).trim().split('\n').pop()?.split(/\s+/)[3])
+          return Number.isFinite(kb) ? kb / 1024 / 1024 : Infinity
+        },
+        serviceUp: () => !!running(DATA),
+      })
+      console.log(report(checks))
+      if (checks.some(c => !c.ok)) process.exitCode = 1
       return
     }
     case 'status': {

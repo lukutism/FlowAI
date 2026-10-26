@@ -122,6 +122,11 @@ const project = z.object({
   claudeMdExcludes: z.array(z.string()).optional(),
   /** the main checkout's git-ignored files linked into each worktree (project skills, .mcp.json, .npmrc, a code index) */
   localFiles: z.array(z.string()).default([]),
+  /**
+   * indexes each worktree gets its own copy of (a code graph): cloned copy-on-write from the main checkout when it
+   * has one (none is made), git-excluded, then sync run in the background to bring it to the run's branch
+   */
+  indexes: z.array(z.object({ dir: z.string(), sync: z.string().optional() })).default([]),
   /** what tools write into a worktree and must not ship: added to git's local exclude list (.git/info/exclude), which the repo's main checkout and all its worktrees share, so it applies there too */
   ignore: z.array(z.string()).default(['.argent/']),
   /** the new run's Login step: email and password always; a license field for projects whose app needs one */

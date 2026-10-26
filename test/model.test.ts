@@ -151,6 +151,16 @@ describe('resources as bars, the activity feed, the message line', () => {
     expect(lastMessage([ev('x', min(1), { type: 'setup.failed', reason: 'no disk' })], NOW)).toBe('✕ x setup failed: no disk · 1m ago')
     expect(lastMessage([], NOW)).toBe('')
   })
+  test('the message line skips runs that are gone, and a block or failed setup the run has moved past', () => {
+    const blocked = ev('fso-9', min(3), { type: 'run.blocked', reason: 'agent stopped: the turn was stopped by you' })
+    const shipped = ev('fso-1', min(9), { type: 'pr.opened', url: 'u', number: 7 })
+    const state = (o: Record<string, Partial<RunState>>) => (run: string) => o[run] as RunState | undefined
+    // fso-9 was removed: the latest outcome of a run still there
+    expect(lastMessage([shipped, blocked], NOW, state({ 'fso-1': { status: 'needs-you' } }))).toBe('✓ fso-1 shipped: draft PR #7 · 9m ago')
+    // fso-9 is still there but running again (a message carried it on)
+    expect(lastMessage([shipped, blocked], NOW, state({ 'fso-1': { status: 'needs-you' }, 'fso-9': { status: 'running' } }))).toBe('✓ fso-1 shipped: draft PR #7 · 9m ago')
+    expect(lastMessage([shipped, blocked], NOW, state({ 'fso-1': { status: 'needs-you' }, 'fso-9': { status: 'blocked' } }))).toBe('✕ fso-9 blocked: agent stopped: the turn was stopped by you · 3m ago')
+  })
 })
 
 describe('layout: the responsive rules', () => {

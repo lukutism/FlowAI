@@ -256,7 +256,7 @@ export class Pipeline {
         const c = this.repoConfig(r.key)
         const log = join(this.runDir(run), 'setup.log')
         const ignore = [...this.d.project.ignore, ...(c.appEnv ? [`/${c.appEnv.file}`] : [])]
-        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles, ignore, log }))
+        const w = await this.building(run, () => createWorktree({ repo: c.path, worktree: r.worktree, branch: m.branch, base: r.base, install: c.install, localFiles: this.d.project.localFiles, indexes: this.d.project.indexes, ignore, log }))
         notes.push(...w.notes.map(n => `${r.key}: ${n}`))
         // before the device's build reads it: the app's env with this run's values (the license from the login step)
         if (c.appEnv) {
@@ -358,7 +358,7 @@ export class Pipeline {
     if (!/^[A-Za-z0-9][\w./-]*$/.test(from) || from.includes('..') || from.endsWith('/')) throw new Error(`base "${from}" is not a branch name`)
     const worktree = join(dirname(m.repos[0]!.worktree), key), log = join(this.runDir(run), 'setup.log')
     const ignore = [...this.d.project.ignore, ...(c.appEnv ? [`/${c.appEnv.file}`] : [])]
-    await this.building(run, () => createWorktree({ repo: c.path, worktree, branch: m.branch, base: from, install: c.install, localFiles: this.d.project.localFiles, ignore, log }))
+    await this.building(run, () => createWorktree({ repo: c.path, worktree, branch: m.branch, base: from, install: c.install, localFiles: this.d.project.localFiles, indexes: this.d.project.indexes, ignore, log }))
     if (c.appEnv) {
       const f = join(this.runDir(run), 'logins.md')
       const set = writeAppEnv(worktree, c.appEnv, parseLogins(existsSync(f) ? readFileSync(f, 'utf8') : ''))

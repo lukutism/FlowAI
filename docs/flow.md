@@ -98,7 +98,10 @@ words). A turn that ends with a question to you stops the run as "Agent question
 
 1. **Setup.** The ticket is read (description, repro steps, comments newest first). A git worktree is created on
    `fix/<id>` or `feat/<id>` from the base; `node_modules` is cloned copy-on-write from the main checkout, then the
-   install runs.
+   install runs. An index in the project's `indexes` (`{ "dir": ".codegraph", "sync": "codegraph sync" }`) is the
+   run's own copy, cloned the same way when the main checkout has one (none is made), git-excluded, and brought to
+   the run's branch by its sync in the background: a release-line run doesn't query develop's index, and nothing
+   the run does writes into the main checkout's.
 2. **Plan.** The agent writes `plan.md` in the run's folder, a definition of done: what changes and why; for a bug,
    how it was reproduced first (`Repro: live | test | mocked | not-reproduced`, a mocked or missing one saying why
    live isn't possible); where the project has release lines, the lines the fix is for (`Target lines`); whether the

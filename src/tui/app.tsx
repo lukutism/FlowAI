@@ -331,7 +331,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
 
   const bars = api.resources ? resourceBars(api.resources) : []
   const inline = mode.kind === 'approve' || mode.kind === 'ship' || mode.kind === 'remove' ? mode.run : undefined
-  const message = notice ?? (L.message ? lastMessage(recent, t) : '')
+  const message = notice ?? (L.message ? lastMessage(recent, t, id => api.runs.get(id)) : '')
   if (mode.kind === 'settings') return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => {}} />

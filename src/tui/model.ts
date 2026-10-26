@@ -224,8 +224,15 @@ export function activity(events: RunEvent[], run?: string): { at: string; run: s
 const OUTCOMES = new Set(['pr.opened', 'patch.written', 'setup.failed', 'run.blocked', 'plan.decided', 'review.result'])
 
 /** the latest outcome worth a line at the bottom, and how long ago */
-export function lastMessage(events: RunEvent[], now: number): string {
-  const e = [...events].reverse().find(x => OUTCOMES.has(x.type))
+export function lastMessage(events: RunEvent[], now: number, state?: (run: string) => RunState | undefined): string {
+  // a run that is gone says nothing any more, nor a block or a failed setup its run has moved past
+  const current = (x: RunEvent) => {
+    if (!state) return true
+    const s = state(x.run)
+    if (!s) return false
+    return x.type === 'run.blocked' ? s.status === 'blocked' : x.type === 'setup.failed' ? s.status === 'failed' : true
+  }
+  const e = [...events].reverse().find(x => OUTCOMES.has(x.type) && current(x))
   if (!e) return ''
   const ago = `${duration(now - e.at)} ago`
   const text = e.type === 'pr.opened' ? `✓ ${e.run} shipped: draft PR #${e.number}` : e.type === 'patch.written' ? `✓ ${e.run}: patch written back`

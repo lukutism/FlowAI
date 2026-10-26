@@ -138,3 +138,28 @@ describe('createWorktree: the setup log', () => {
     expect(text).toMatch(/^\d\d:\d\d:\d\d fetching origin/)
   })
 })
+
+describe('createWorktree: indexes the run gets its own copy of', () => {
+  test("cloned from the main checkout, not linked (writes stay the run's), excluded from git; its sync runs in the background", async () => {
+    const p = project()
+    mkdirSync(join(p.main, '.codegraph'), { recursive: true }); writeFileSync(join(p.main, '.codegraph', 'codegraph.db'), 'index of develop')
+    const log = join(p.root, 'setup.log'); writeFileSync(log, '')
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/9', base: 'origin/patch/3.20.7', localFiles: ['.codegraph'], indexes: [{ dir: '.codegraph', sync: 'echo synced > .codegraph/synced' }], log })
+    const { lstatSync } = require('node:fs') as typeof import('node:fs')
+    expect(lstatSync(join(p.wt, '.codegraph')).isSymbolicLink()).toBe(false)
+    expect(readFileSync(join(p.wt, '.codegraph', 'codegraph.db'), 'utf8')).toBe('index of develop')
+    writeFileSync(join(p.wt, '.codegraph', 'codegraph.db'), 'index of the release line')
+    expect(readFileSync(join(p.main, '.codegraph', 'codegraph.db'), 'utf8')).toBe('index of develop')
+    for (let i = 0; i < 100 && !existsSync(join(p.wt, '.codegraph', 'synced')); i++) await Bun.sleep(20)
+    expect(readFileSync(join(p.wt, '.codegraph', 'synced'), 'utf8')).toBe('synced\n')
+    expect(git(p.wt, 'status', '--porcelain')).toBe('')
+    expect(readFileSync(log, 'utf8')).toContain('.codegraph: copied from the main checkout; echo synced > .codegraph/synced in the background')
+  })
+  test('the main checkout has no index: none is made (indexing is the user\'s decision)', async () => {
+    const p = project()
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/10', base: 'origin/develop', indexes: [{ dir: '.codegraph', sync: 'touch made' }] })
+    await Bun.sleep(100)
+    expect(existsSync(join(p.wt, '.codegraph'))).toBe(false)
+    expect(existsSync(join(p.wt, 'made'))).toBe(false)
+  })
+})

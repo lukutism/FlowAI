@@ -12,6 +12,8 @@ Status: tickets go from Azure DevOps to a draft PR (one repo), with a terminal s
     flow message <run> "<text>"          talk to the run's agent
     flow ship <run>                      commit, push, draft PR (after verify)
     flow status / flow log <run>
+    flow add <run> <repo> / flow sync <run>   a repo the run lacks; the run brought up to its base
+    flow doctor [<project>]              what a run would trip on: CLIs, logins, checkouts, devices, disk
 
 Projects are JSON files in ~/.config/flow/projects (see test/fixtures/project.example.json).
 

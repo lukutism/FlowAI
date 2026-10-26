@@ -17,7 +17,7 @@ const tail = (s: string, n = 6) => s.split('\n').slice(-n).join('\n')
  * The run's own git worktree on a new branch from its base. node_modules is cloned from the user's main checkout
  * (copy-on-write on APFS, so instant and separate), then the project's install brings it in line with the base.
  */
-export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[]; ignore?: string[]; log?: string }): Promise<{ notes: string[] }> {
+export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[]; ignore?: string[]; log?: string; indexes?: { dir: string; sync?: string }[] }): Promise<{ notes: string[] }> {
   const notes: string[] = []
   const started = Date.now(), secs = (t: number) => `${Math.round((Date.now() - t) / 1000)}s`
   logLine(o.log, `fetching origin in ${o.repo}`)
@@ -30,14 +30,30 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   const add = await run(['git', 'worktree', 'add', '--quiet', '--no-track', '-b', o.branch, o.worktree, o.base], o.repo)
   if (add.code !== 0) throw new Error(`git worktree add failed: ${tail(add.err)}`)
   // what tools write into a worktree (argent's .argent/) stays out of the change: git's local exclude list
-  if (o.ignore?.length) {
+  const indexes = (o.indexes ?? []).filter(x => existsSync(join(o.repo, x.dir)))
+  const ignore = [...(o.ignore ?? []), ...indexes.map(x => `/${x.dir.replace(/\/$/, '')}/`)]
+  if (ignore.length) {
     const ex = resolve(o.worktree, (await run(['git', 'rev-parse', '--git-path', 'info/exclude'], o.worktree)).out)
     const have = existsSync(ex) ? readFileSync(ex, 'utf8') : ''
-    const add = o.ignore.filter(p => !have.split('\n').includes(p))
+    const add = ignore.filter(p => !have.split('\n').includes(p))
     if (add.length) { mkdirSync(dirname(ex), { recursive: true }); writeFileSync(ex, `${have}${have && !have.endsWith('\n') ? '\n' : ''}${add.join('\n')}\n`) }
   }
-  const linked = await linkLocal(o.repo, o.worktree, o.localFiles ?? [])
+  // an index (a code graph) is the run's own copy: the main checkout's indexes another line, and a sync from the
+  // worktree must not write into it; cloned copy-on-write, then brought up to this branch in the background
+  const own = new Set((o.indexes ?? []).map(x => x.dir.replace(/\/$/, '')))
+  const linked = await linkLocal(o.repo, o.worktree, (o.localFiles ?? []).filter(f => !own.has(f.replace(/\/$/, ''))))
   if (linked.length) notes.push(`linked ${linked.join(', ')} from the main checkout`)
+  for (const x of indexes) {
+    const src = join(o.repo, x.dir), dst = join(o.worktree, x.dir)
+    if (existsSync(dst)) continue // tracked on this branch
+    const cloned = process.platform === 'darwin' && (await run(['cp', '-c', '-R', src, dst], o.worktree)).code === 0
+    if (!cloned) { try { cpSync(src, dst, { recursive: true, mode: 2 /* COPYFILE_FICLONE */ }) } catch (e) { notes.push(`${x.dir} not copied: ${(e as Error).message}`); continue } }
+    logLine(o.log, `${x.dir}: copied from the main checkout${x.sync ? `; ${x.sync} in the background` : ''}`)
+    if (x.sync) {
+      const out = o.log ? `>> '${o.log.replace(/'/g, `'\\''`)}' 2>&1` : '>/dev/null 2>&1'
+      Bun.spawn(['sh', '-c', `(${x.sync}) ${out} &`], { cwd: o.worktree, stdout: 'ignore', stderr: 'ignore', env: process.env })
+    }
+  }
   const nm = join(o.repo, 'node_modules')
   if (existsSync(nm)) {
     const t = Date.now()
