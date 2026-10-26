@@ -568,3 +568,20 @@ describe('pipeline: a message while the agent works', () => {
     expect(t.pipe.takeQueued(run)).toEqual([])
   })
 })
+
+describe('pipeline: memory and learnings', () => {
+  test("the agent reads its repo's memory; what it learned goes there once you shipped, and flow's own lessons to the backlog", async () => {
+    const mem = mkdtempSync(join(tmpdir(), 'flow-mem-'))
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => {
+      writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n')
+      writeFileSync(join(d.run, 'learnings.md'), '[repo:mobile] jest: run it from the app folder\n[flow] verify: say which package failed\n')
+    })])
+    mkdirSync(join(t.main, '.claude'), { recursive: true }); writeFileSync(join(t.main, '.claude', 'settings.local.json'), JSON.stringify({ autoMemoryDirectory: mem }))
+    const run = await t.pipe.start(186278)
+    expect(JSON.parse(readFileSync(t.agents[0]!.settings, 'utf8')).autoMemoryDirectory).toBe(mem)
+    expect(existsSync(join(mem, 'flow-learnings.md'))).toBe(false) // not before it is shipped
+    await t.pipe.ship(run)
+    expect(readFileSync(join(mem, 'flow-learnings.md'), 'utf8')).toContain('- jest: run it from the app folder (example-186278)')
+    expect(readFileSync(join(t.root, 'data', 'backlog.md'), 'utf8')).toContain('example-186278: verify: say which package failed')
+  })
+})

@@ -14,6 +14,7 @@ import { slug } from './slug.ts'
 import { commitMessage, parsePlan, prSummary } from './plan.ts'
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
+import { memoryDir, saveLearnings } from './learnings.ts'
 import { changeText, parseFindings, reviewFixPrompt, reviewPrompt, type Finding } from './review.ts'
 import type { RunState } from './run.ts'
 import type { Resources } from './resources.ts'
@@ -440,7 +441,7 @@ export class Pipeline {
       const report = await this.writeBack(run, m, first)
       writeFileSync(join(this.runDir(run), 'patch-report.txt'), report)
       this.d.store.append(run, 'human', first ? { type: 'patch.checked', report } : { type: 'patch.written', report })
-      if (!first) await this.releaseDevice(run)
+      if (!first) { this.keepLearnings(run); await this.releaseDevice(run) }
       return []
     }
     // each repo with something of its own: uncommitted changes, or commits not on origin yet (a push that failed),
@@ -473,6 +474,7 @@ export class Pipeline {
       created.push(c)
     }
     if (!created.length && updated[0]) this.d.store.append(run, 'human', { type: 'pr.updated', ...updated[0] })
+    this.keepLearnings(run)
     await this.releaseDevice(run)
     return created
   }
@@ -537,8 +539,8 @@ export class Pipeline {
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
     const dir = this.runDir(run)
     // of the run folder the agent writes only these: the plan, the PR description, how the run ended, its evidence
-    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'evidence')]
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools, allowTools: ['mcp__flow'] })
+    const own = [this.planFile(run), this.prFile(run), join(dir, 'resolution.md'), join(dir, 'blocked.md'), join(dir, 'learnings.md'), join(dir, 'evidence')]
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')
     writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { flow: { command: process.execPath, args: [MCP], env: { FLOW_RUN: run, FLOW_DATA: this.d.dataDir } } } }, null, 2) + '\n')
@@ -573,7 +575,20 @@ export class Pipeline {
   }
 
   /** shipped and merged, or given up: the run is done (it leaves the attention list) */
-  done(run: string, reason?: string) { this.must(run); this.d.store.append(run, reason ? 'engine' : 'human', { type: 'run.done', ...(reason ? { reason } : {}) }) }
+  done(run: string, reason?: string) {
+    const s = this.must(run)
+    // confirmed by you that no change was needed: what the agent learned on the way is kept
+    if (!reason && s.needs?.kind === 'resolution') this.keepLearnings(run)
+    this.d.store.append(run, reason ? 'engine' : 'human', { type: 'run.done', ...(reason ? { reason } : {}) })
+  }
+
+  /** the run's learnings.md into its repos' memory and flow's backlog (after you shipped, or confirmed no change) */
+  private keepLearnings(run: string) {
+    const f = join(this.runDir(run), 'learnings.md')
+    if (!existsSync(f)) return
+    saveLearnings({ run, text: readFileSync(f, 'utf8'), backlog: join(this.d.dataDir, 'backlog.md'),
+      memory: key => { try { return memoryDir(this.repoConfig(key).path) } catch { return undefined } } })
+  }
 
   /** the run's draft PRs on the code host: all merged, some closed (none open any more), or still open */
   async prsState(run: string): Promise<'merged' | 'closed' | 'open'> {
