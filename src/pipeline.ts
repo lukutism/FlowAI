@@ -9,7 +9,7 @@ import type { Project, Repo } from './config.ts'
 import { startDevice, stopDevice, type DeviceState } from './device.ts'
 import { startDevServer, stopDevServer, type DevServerState } from './devserver.ts'
 import { contentHash, createWorktree, pending, plainOutput, pushed, shipChange } from './git.ts'
-import { fillSh, logLine, sh, tail } from './sh.ts'
+import { alive, fillSh, livePids, logLine, sh, tail } from './sh.ts'
 import { parseLogins, writeAppEnv } from './appenv.ts'
 import { loginValues, redactLogins } from './redact.ts'
 import { slug } from './slug.ts'
@@ -447,6 +447,36 @@ export class Pipeline {
     if (web) await this.bootDevServer(run, m)
   }
 
+  /**
+   * The run's emulator, gone while the run still holds it (it crashed, or was killed): booted again with the app,
+   * noted on the run, and the agent told with its next turn. Not while it is being stopped, and three times at most.
+   */
+  async reviveDevice(run: string): Promise<boolean> {
+    const f = join(this.runDir(run), 'device.json'), spec = this.d.project.devices
+    if (!spec || !existsSync(f) || this.stopping.has(run)) return false
+    const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState, s = this.d.store.state(run)
+    const boot = spec[d.platform]?.bootStays ? livePids(d.pids)[0] : undefined
+    if (!boot || !s?.device || s.status === 'done' || s.status === 'failed' || alive(boot)) return false
+    const log = join(this.runDir(run), 'device.log')
+    const why = (existsSync(log) ? readFileSync(log, 'utf8') : '').split('\n').reverse().find(l => /\b(ERROR|FATAL)\b|crash|Killed/i.test(l))?.replace(/^\s*(ERROR|FATAL)\s*\|\s*/, '').trim()
+    const was = `${d.id} stopped${why ? ` (${why})` : ''}`
+    const times = (this.revived.get(run) ?? 0) + 1
+    if (times > 3) {
+      if (times === 4) this.d.store.append(run, 'engine', { type: 'run.note', text: `${was}; not booted again (it stopped 3 times already): restart it from the run (^K, Restart the device)` })
+      this.revived.set(run, times)
+      return false
+    }
+    this.revived.set(run, times)
+    await this.releaseDevice(run)
+    await this.bootDevice(run, d.platform, this.meta(run).repos[0]!.worktree)
+    const now = this.d.store.state(run)?.device
+    this.d.store.append(run, 'engine', { type: 'run.note', text: `${was}; booted again as ${now?.id ?? d.id}` })
+    this.queueMessage(run, `Your emulator ${d.id} stopped${why ? ` (${why})` : ''} and flow booted it again as ${now?.id ?? d.id}, the app installed, Metro on ${now?.metroPort ?? d.metroPort}: launch the app again before you go on; what was on the screen and in the app's storage is gone.`)
+    return true
+  }
+  private revived = new Map<string, number>()
+  private stopping = new Set<string>()
+
   private async bootDevice(run: string, platform: 'android' | 'ios', worktree: string) {
     const free = this.d.resources ? await this.d.resources.acquire(run, 'devices') : () => {}
     try {
@@ -477,6 +507,11 @@ export class Pipeline {
 
   /** stop the run's device and dev server and free the device slot (at ship, or by hand); nothing to do when it has none */
   async releaseDevice(run: string) {
+    this.stopping.add(run)
+    try { await this.stopRunDevice(run) } finally { this.stopping.delete(run) }
+  }
+
+  private async stopRunDevice(run: string) {
     const web = join(this.runDir(run), 'devserver.json')
     await this.browsers.stop(run, this.runDir(run))
     if (existsSync(web)) {

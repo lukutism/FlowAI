@@ -9,6 +9,8 @@ const word = (v: string) => (v === '' || /^[\w./:=@+,%-]+$/.test(v) ? v : `'${v.
 export const fillSh = (cmd: string, vars: Record<string, string | number | undefined>) => cmd.replace(/\{(\w+)\}/g, (m, k: string) => (vars[k] === undefined ? m : word(String(vars[k]))))
 /** the process ids in a run's state file that are safe to signal: never 0, 1 or negative (kill(-1) is everything) */
 export const livePids = (pids: unknown): number[] => (Array.isArray(pids) ? pids : []).filter((p): p is number => Number.isInteger(p) && p > 1)
+/** whether a process is still there */
+export const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch (e) { return (e as { code?: string }).code === 'EPERM' } }
 export const tail = (s: string, n = 5) => s.trim().split('\n').slice(-n).join('\n')
 
 export async function sh(cmd: string, cwd: string, env?: Record<string, string | undefined>) {

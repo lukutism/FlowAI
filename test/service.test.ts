@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { FakeAgent, type FakeTurn } from '../src/agent/fake.ts'
 import type { Az } from '../src/azure.ts'
 import { parseProject } from '../src/config.ts'
+import { Pipeline } from '../src/pipeline.ts'
 import { Service } from '../src/service.ts'
 import { readTranscript } from '../src/transcript.ts'
 import { EventStore } from '../src/store.ts'
@@ -256,5 +257,19 @@ describe('Service: a message while the run is busy', () => {
     expect(r).toMatchObject({ ok: true, note: expect.stringMatching(/queued/) })
     await t.svc.idle()
     expect(t.agent.prompts.some(p => p.includes('use order 42'))).toBe(true)
+  })
+})
+
+describe('Service: run devices', () => {
+  test("each tick looks at the emulator of every run that has one (booted again when it stopped)", async () => {
+    const t = setup(() => [])
+    t.store.append('ex-1', 'human', { type: 'run.created', ticket: '#1', title: 'x', project: 'ex', base: 'origin/develop' })
+    t.store.append('ex-1', 'engine', { type: 'device.ready', platform: 'android', id: 'emulator-5', metroPort: 1 })
+    t.store.append('ex-2', 'human', { type: 'run.created', ticket: '#2', title: 'y', project: 'ex', base: 'origin/develop' })
+    const asked: string[] = []
+    const orig = Pipeline.prototype.reviveDevice
+    Pipeline.prototype.reviveDevice = async function (run: string) { asked.push(run); return false }
+    try { t.svc.tick(); await Bun.sleep(20) } finally { Pipeline.prototype.reviveDevice = orig }
+    expect(asked).toEqual(['ex-1'])
   })
 })

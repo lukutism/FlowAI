@@ -110,6 +110,27 @@ describe('restarting a run\'s device', () => {
   })
 })
 
+describe('an emulator that stops on its own', () => {
+  test('booted again while the run holds it, noted, and the agent told with its next turn; a live or released one is left alone', async () => {
+    const t = setup({ consoleStart: 25840, metroStart: 28840 })
+    const run = await t.pipe.start(5, { device: 'android' })
+    try {
+      expect(await t.pipe.reviveDevice(run)).toBe(false) // still running
+      const boot = (JSON.parse(readFileSync(join(t.run, 'device.json'), 'utf8')) as { pids: number[] }).pids[0]!
+      writeFileSync(join(t.run, 'device.log'), "ERROR        | detected a hanging thread 'QEMU2 main loop'. No response for 15011 ms\n")
+      process.kill(-boot, 'SIGKILL')
+      await Bun.sleep(100)
+      expect(await t.pipe.reviveDevice(run)).toBe(true)
+      expect(t.store.events(run).filter(e => e.type === 'device.ready')).toHaveLength(2)
+      expect(t.store.events(run).find(e => e.type === 'run.note')).toMatchObject({ text: expect.stringMatching(/emulator-25840 stopped \(detected a hanging thread 'QEMU2 main loop'.*\); booted again/) })
+      expect(t.pipe.takeQueued(run).join()).toMatch(/emulator-25840 stopped .* booted it again .* launch the app/)
+      expect(t.slots.snapshot().holders.devices).toEqual([run])
+      await t.pipe.releaseDevice(run)
+      expect(await t.pipe.reviveDevice(run)).toBe(false)
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})
+
 describe("a run's window", () => {
   test('headless by default (the emulator without its window); a run that asks for its window gets it', async () => {
     const t = setup({ consoleStart: 25780, metroStart: 28780 })

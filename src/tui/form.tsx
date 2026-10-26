@@ -5,6 +5,7 @@ import type { Command, ProjectSummary, Query } from '../service.ts'
 import { C, wrap } from './detail.tsx'
 import { match } from './model.ts'
 import { slug } from '../slug.ts'
+import { at as noteAt, cursor as noteCursor, edit as editNote, rows as noteRows, type NoteKey, type Notes } from './notes.ts'
 
 /** what the form needs from the service connection */
 export interface FormApi {
@@ -86,7 +87,10 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const [task, setTask] = useState('')
   // three steps: the run, notes for the agent (as long as you like), test logins (kept apart, never shown)
   const [step, setStep] = useState<1 | 2 | 3>(1)
-  const [note, setNote] = useState('')
+  const [notes, setNotes] = useState<Notes>({ text: '', at: 0 })
+  const note = notes.text
+  // the notes' width: the form's, less the box's margins and padding and a column for the cursor at a full row's end
+  const noteWidth = Math.min(96, width - 8) - 11
   const [login, setLogin] = useState({ email: '', password: '', license: '' })
   // the run's environment (the project's vars): what you set, and which you changed (the ticket's suggestion stays off those)
   const [env, setEnv] = useState<Record<string, string>>({})
@@ -244,11 +248,13 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (n === 'escape') { onCancel(); return true }
     if (key.ctrl && n === 's') { start(); return true }
     if (step === 2) {
-      // the notes: a box you type into; enter is a new line, tab goes on to the logins
+      // the notes: a box you type into at the cursor (arrows, Home/End, a click move it); enter is a new line, tab goes on to the logins
       if (n === 'tab') { go(key.shift ? 1 : 3); return true }
-      if (n === 'return') setNote(x => x + '\n')
-      else if (n === 'backspace') setNote(x => x.slice(0, -1))
-      else if (typed) setNote(x => x + typed)
+      const moves: Record<string, NoteKey> = { left: 'left', right: 'right', up: 'up', down: 'down', home: 'home', end: 'end', backspace: 'backspace', delete: 'delete' }
+      const move = moves[n] ?? (key.ctrl && n === 'a' ? 'home' : key.ctrl && n === 'e' ? 'end' : undefined)
+      if (move) setNotes(x => editNote(x, { key: move }, noteWidth))
+      else if (n === 'return') setNotes(x => editNote(x, '\n', noteWidth))
+      else if (typed) setNotes(x => editNote(x, typed, noteWidth))
       return true
     }
     if (step === 3) {
@@ -305,7 +311,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const paste = (text: string) => {
     const one = text.replace(/\r?\n/g, ' ').trim()
     if (picking) return setPicking(x => x && { ...x, query: x.query + one, index: 0 })
-    if (step === 2) return setNote(x => x + text.replace(/\r\n/g, '\n'))
+    if (step === 2) return setNotes(x => editNote(x, text, noteWidth))
     if (step === 3 && field.startsWith('var:')) { const name = field.slice(4); return setVar(name, (env[name] ?? '') + one.replace(/\s+/g, '')) }
     if (step === 3) { const k = field as 'email' | 'password' | 'license'; return setLogin(l => ({ ...l, [k]: l[k] + one.replace(/\s+/g, '') })) }
     if (field === 'ticket') return setTicket(x => x + one.replace(/\s+/g, ''))
@@ -404,14 +410,17 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         <text fg={C.muted}>{'  For the agent, as long as you like: how to test, which order, tenant or cloud, what not to touch.'}</text>
         <text fg={C.faint}>{'  It goes into the agent\'s brief for the whole run.'}</text>
         {blank}
-        <box flexDirection="column" marginLeft={2} marginRight={2} backgroundColor={C.selected} paddingLeft={1} paddingRight={1} height={NOTE_ROWS + 2} paddingTop={1}>
+        <box flexDirection="column" marginLeft={2} marginRight={2} backgroundColor={C.selected} paddingLeft={1} paddingRight={1} height={NOTE_ROWS + 2} paddingTop={1} onMouseDown={() => setNotes(x => ({ ...x, at: x.text.length }))}>
           {(() => {
-            // cut at the width as typed (spaces kept: a word-wrap would drop the space you just typed)
-            const w = W - 10
-            const lines = note.split('\n').flatMap(l => (l ? Array.from({ length: Math.ceil(l.length / w) }, (_, i) => l.slice(i * w, (i + 1) * w)) : ['']))
-            const shown = lines.slice(-NOTE_ROWS)
-            return note ? shown.map((l, i) => <text key={i} fg={C.text}>{l}{i === shown.length - 1 ? <span fg={C.accent}>▏</span> : ''}</text>)
-              : <text><span fg={C.accent}>▏</span><span fg={C.faint}>e.g. Test on order 700216740 in the qa cloud; the tablet layout too; leave the sync code alone.</span></text>
+            if (!note) return <text><span fg={C.accent}>▏</span><span fg={C.faint}>e.g. Test on order 700216740 in the qa cloud; the tablet layout too; leave the sync code alone.</span></text>
+            // the rows around the cursor: the last ones while you type at the end
+            const rs = noteRows(note, noteWidth), c = noteCursor(note, noteWidth, notes.at)
+            const top = Math.max(c.row - NOTE_ROWS + 1, Math.min(c.row, Math.max(0, rs.length - NOTE_ROWS)))
+            return rs.slice(top, top + NOTE_ROWS).map((r, i) => (
+              <text key={top + i} fg={C.text} onMouseDown={e => { e.stopPropagation(); const col = e.x - (e.currentTarget?.x ?? e.x); setNotes(x => ({ ...x, at: noteAt(x.text, noteWidth, top + i, col) })) }}>
+                {top + i !== c.row ? r.text || ' ' : <>{r.text.slice(0, c.col)}{c.col < r.text.length ? <span bg={C.accent} fg={C.panel}>{r.text[c.col]}</span> : <span fg={C.accent}>▏</span>}{r.text.slice(c.col + 1)}</>}
+              </text>
+            ))
           })()}
         </box>
         {blank}
@@ -445,7 +454,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         {step === 1 ? <Click on={() => go(2)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Next: Notes '}</strong></text></box></Click> : null}
         {step === 3 ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Start run '}</strong></text></box></Click> : null}
         {step === 2 ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{envVars.length ? ' ⇥ Next: Login & environment ' : ' ⇥ Next: Login '}</strong></text></box></Click> : null}
-        <text fg={C.muted}>{step === 1 ? '   ⇥ next field   ←→ choose   space toggle   ' : step === 2 ? '   ↵ new line   ⇧⇥ back   ' : '   ⇥ next field   ⇧⇥ back   '}</text>
+        <text fg={C.muted}>{step === 1 ? '   ⇥ next field   ←→ choose   space toggle   ' : step === 2 ? '   ↵ new line   ←→↑↓ or a click move   ⇧⇥ back   ' : '   ⇥ next field   ⇧⇥ back   '}</text>
         {step !== 3 ? <Click on={start}><text fg={C.muted}>{'ctrl+s start now   '}</text></Click> : null}
         <Click on={onCancel}><text fg={C.muted}>esc cancel</text></Click>
       </box>

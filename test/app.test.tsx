@@ -726,7 +726,7 @@ describe('the new-run form', () => {
     return o.lookup ?? found
   }
   const typeIn = async (t: Awaited<ReturnType<typeof screen>>, text: string) => { for (const k of text) await act(async () => { t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(400) }) }
-  const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : k === 'ctrl+s' ? t.s.mockInput.pressKey('s', { ctrl: true }) : k === 'shift+tab' ? t.s.mockInput.pressKey('\t', { shift: true }) : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
+  const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : k === 'ctrl+s' ? t.s.mockInput.pressKey('s', { ctrl: true }) : k === 'shift+tab' ? t.s.mockInput.pressKey('\t', { shift: true }) : k === 'backspace' ? t.s.mockInput.pressBackspace() : k === 'home' || k === 'end' || k === 'delete' ? t.s.mockInput.pressKey(k.toUpperCase() as 'HOME') : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
   test('n opens it; the ticket is looked up as you type: its title, type, board, customer; the base and patch it points at', async () => {
     const t = await screen(runs, undefined, { projects: [fso, shop], query: query() as FlowApi['query'] })
     try {
@@ -845,6 +845,17 @@ describe('the new-run form', () => {
       expect(n).toContain('Use order 700216740')
       expect(n).toContain('tablet layout too')
       expect(n).toContain('2 Notes · 2 lines')
+      // the cursor moves: typed in where it is, deleted there, and up a line keeps the column
+      await keys(t, 'left', 'left', 'left'); await typeIn(t, 'X')
+      expect(await t.frame()).toContain('tablet layout Xtoo')
+      await keys(t, 'backspace', 'up'); await typeIn(t, '#')
+      expect(await t.frame()).toContain('Use order 7002#16740')
+      await keys(t, 'backspace')
+      const o = at(await t.frame(), 'Use order')
+      await act(async () => { await t.s.mockMouse.click(o.x + 3, o.y) }); await act(async () => { await Bun.sleep(30) })
+      await typeIn(t, '@')
+      expect(await t.frame()).toContain('Use @order 700216740') // a click put the cursor there
+      await keys(t, 'backspace', 'down', 'end')
       expect(await keys(t, 'tab')).toContain('▸ 3 Login')
       await typeIn(t, 'tester@example.com')
       await keys(t, 'tab'); await typeIn(t, 's3cret-pass')

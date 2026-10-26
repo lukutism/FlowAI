@@ -282,12 +282,22 @@ export class Service {
         continue
       }
     }
+    // a run's emulator that stopped on its own is booted again, beside whatever its run is doing
+    for (const s of this.d.store.runs()) {
+      if (!s.device || this.reviving.has(s.id)) continue
+      this.reviving.add(s.id)
+      void this.pipeline(s.project).reviveDevice(s.id)
+        .catch(e => { for (const l of this.notices) l({ run: s.id, text: `the device could not be booted again: ${(e as Error).message}` }) })
+        .finally(() => this.reviving.delete(s.id))
+    }
     for (const s of this.d.store.runs()) {
       const n = s.needs
       if (n?.kind !== 'plan' || n.held || !n.deadline || n.deadline > now || this.busy.has(s.id)) continue
       this.act(s.id, () => this.pipeline(s.project).decideByDeadline(s.id))
     }
   }
+
+  private reviving = new Set<string>()
 
   async idle() { while (this.busy.size) await Promise.all(this.busy.values()) }
 
