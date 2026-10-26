@@ -26,6 +26,8 @@ export interface RunnerOptions {
   agentSlot?: (run: string) => Promise<() => void>
   /** messages the human wrote while the agent worked: they go first in its next turn */
   queued?: (run: string) => string[]
+  /** told as each of the run's own turns starts */
+  turnStarts?: (run: string) => void
 }
 
 /** Runs agent turns for runs: waits for room in the plan windows, records what each turn reports. */
@@ -44,6 +46,7 @@ export class Runner {
   }
 
   async turn(run: string, prompt: string, from: 'flow' | 'you' = 'flow'): Promise<{ ok: boolean; text: string }> {
+    this.o.turnStarts?.(run)
     const q = this.o.queued?.(run) ?? []
     if (q.length) {
       for (const text of q) this.o.store.append(run, 'human', { type: 'human.message', text })

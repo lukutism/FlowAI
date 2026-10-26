@@ -63,7 +63,7 @@ export interface ServiceDeps {
   az: Az
   dataDir: string
   makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string; mcpConfig?: string }) => RunAgent
-  makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
+  makeReviewer?: (o: { cwd: string; settings: string; model?: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   tap?: (run: string, e: AgentEvent) => void

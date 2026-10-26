@@ -87,7 +87,7 @@ function pipeline(s: EventStore, projectKey: string, model?: string) {
   if (!existsSync(file)) throw new Error(`no project ${projectKey}: ${file} is missing`)
   s.subscribe(showEvent)
   return new Pipeline({ store: s, project: loadProject(file), az: realAz, dataDir: DATA, tap: (_, e) => showAgent(e),
-    makeAgent: o => new ClaudeAgent({ ...o, model: o.model ?? model }), makeReviewer: o => new ClaudeAgent({ ...o, model, permissionMode: 'plan' }) })
+    makeAgent: o => new ClaudeAgent({ ...o, model: o.model ?? model }), makeReviewer: o => new ClaudeAgent({ ...o, model: o.model ?? model, permissionMode: 'plan' }) })
 }
 
 /** one command at a time per run: two would drive the same agent session */

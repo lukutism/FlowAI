@@ -148,3 +148,14 @@ describe('verify: the base run leaves nothing behind', () => {
     expect(runs()).toBe(5) // a new base commit: checked again
   })
 })
+
+describe('verify: one at a time per worktree', () => {
+  test('two at once on the same worktree run one after the other: both see the change, none sees a stashed tree', async () => {
+    const wt = repo()
+    writeFileSync(join(wt, 'src/b.ts'), 'const b = 3 // ERR new\n')
+    const [a, b] = await Promise.all([verify(wt, steps), verify(wt, steps)])
+    expect(a.ok).toBe(false); expect(b.ok).toBe(false)
+    expect(a.changed).toEqual(['src/b.ts']); expect(b.changed).toEqual(['src/b.ts'])
+    expect(readFileSync(join(wt, 'src/b.ts'), 'utf8')).toBe('const b = 3 // ERR new\n')
+  })
+})

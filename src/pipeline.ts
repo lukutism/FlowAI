@@ -51,7 +51,7 @@ export interface PipelineDeps {
   dataDir: string
   makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string; mcpConfig?: string }) => RunAgent
   /** a fresh, read-only reviewer session per review; without it the review is skipped */
-  makeReviewer?: (o: { cwd: string; settings: string }) => RunAgent
+  makeReviewer?: (o: { cwd: string; settings: string; model?: string }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   /** sees each agent event as it arrives (live output); own: the run's agent, not the reviewer */
@@ -94,6 +94,8 @@ export class Pipeline {
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
       store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
+      // an ending (ask, resolve, block) belongs to the turn that called it: a failed turn's never ends a later one
+      turnStarts: run => { this.ends.delete(run) },
       ...(d.resources ? { agentSlot: (run: string) => d.resources!.acquire(run, 'agents') } : {}),
       windows: existsSync(usage) ? JSON.parse(readFileSync(usage, 'utf8')) : undefined,
       onWindows: w => { mkdirSync(d.dataDir, { recursive: true }); writeFileSync(usage, JSON.stringify(w) + '\n'); d.onWindows?.(w) },
@@ -433,6 +435,15 @@ export class Pipeline {
       await this.verifyLoop(run)
       return []
     }
+    // a ship that breaks off (a hook refuses the commit, the push or the PR fails) says so on the run; shipping
+    // again carries on from where it stopped
+    try { return await this.shipNow(run, s, m, n) } catch (e) {
+      if (this.d.store.state(run)?.stage === 'ship') this.d.store.append(run, 'engine', { type: 'ship.failed', reason: (e as Error).message.split('\n')[0]!.slice(0, 300) })
+      throw e
+    }
+  }
+
+  private async shipNow(run: string, s: RunState, m: Meta, n: Project['naming']): Promise<{ number: number; url: string }[]> {
     if (m.patch) {
       // a customer patch run ends in the patch written back, not a PR: a dry run first, then (ship again) for real
       const others = m.repos.filter(r => r.key !== m.patch!.repo && changedFiles(r.worktree).length).map(r => r.key)
@@ -625,6 +636,7 @@ export class Pipeline {
     await this.releaseDevice(run)
     await this.closeAgent(run)
     this.agents.delete(run)
+    this.queue.delete(run); this.ends.delete(run)
     const removed: string[] = []
     // worktrees another run's folder names are that run's (a failed port pointed at its source's): left alone
     const runs = join(this.d.dataDir, 'runs')
@@ -703,7 +715,7 @@ export class Pipeline {
     let p = this.readPlan(run)
     if ('problem' in p) {
       const again = await this.runner.turn(run, planRetryPrompt(this.planFile(run), p.problem))
-      if (!again.ok) return
+      if (!again.ok || this.ended(run)) return
       p = this.readPlan(run)
       if ('problem' in p) { this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the agent wrote no plan (${this.planFile(run)} ${p.problem}); message it, or write the plan yourself` }); return }
     }
@@ -818,7 +830,8 @@ export class Pipeline {
     if (!this.d.makeReviewer) return skip('no reviewer configured')
     const others = m.repos.map(r => r.worktree).filter(w => w !== m.worktree)
     const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer'), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
-    const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings })
+    // the run's model for the reviewer too (a run started on sonnet is reviewed on sonnet)
+    const reviewer = this.d.makeReviewer({ cwd: m.worktree, settings, ...(m.model ? { model: m.model } : {}) })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
       const change = m.repos.length > 1 ? m.repos.map(r => `### ${r.key} (${r.worktree})\n${changeText(r.worktree) || '(no change)'}`).join('\n\n') : changeText(m.repos[0]!.worktree)

@@ -27,6 +27,8 @@ export type EventBody =
   /** the project runs no reviewer yet: the run goes from verify to ship */
   | { type: 'review.skipped'; reason: string }
   | { type: 'pr.opened'; url: string; number: number; repo?: string }
+  /** a ship that broke off: the gate stays, saying what failed (shipping again carries on) */
+  | { type: 'ship.failed'; reason: string }
   /** a further change pushed to a draft PR that was open already */
   | { type: 'pr.updated'; number: number; repo?: string }
   /** after a message at a gate the change is as it was verified: the gate is back */
@@ -165,6 +167,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
       if (s.status !== 'needs-you' && s.status !== 'blocked') return go(s, e, {})
       return go(s, e, { ...running, loops: { ...s.loops, ...(s.needs?.kind === 'verify' ? { verify: 0 } : {}), ...(s.needs?.kind === 'review' ? { review: 0 } : {}) } })
     case 'run.ready': need(s, 'ship', e); return go(s, e, s.prs?.length ? { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs) } } : READY)
+    case 'ship.failed': need(s, 'ship', e); return go(s, e, { status: 'needs-you', needs: { kind: s.needs?.kind === 'patch' || s.needs?.kind === 'pr' ? s.needs.kind : 'ship', ask: `ship failed: ${e.reason}; ship again to carry on` } })
     case 'pr.updated': need(s, 'ship', e); return go(s, e, { status: 'needs-you', needs: { kind: 'pr', ask: prAsk(s.prs ?? [{ url: '', number: e.number }]) } })
     case 'run.blocked': return go(s, e, { status: 'blocked', needs: { kind: 'blocked', ask: e.reason } })
     case 'run.waiting': return go(s, e, { status: 'waiting', waitingFor: e.resource })

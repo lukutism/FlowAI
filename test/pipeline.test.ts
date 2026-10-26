@@ -389,6 +389,8 @@ describe('pipeline: ship can be done again', () => {
     const run = await t.pipe.start(186278)
     git(t.wt, 'remote', 'set-url', 'origin', join(t.root, 'gone.git'))
     await expect(t.pipe.ship(run)).rejects.toThrow(/push failed/)
+    // the run says so (it used to show "verified" with the commit already made)
+    expect(t.store.state(run)).toMatchObject({ needs: { kind: 'ship', ask: expect.stringMatching(/^ship failed: push failed.*ship again to carry on$/) } })
     git(t.wt, 'remote', 'set-url', 'origin', t.origin)
     expect(await t.pipe.ship(run)).toHaveLength(1)
     expect(git(t.origin, 'log', '-1', '--format=%s', 'fix/186278')).toMatch(/#186278/)
@@ -603,5 +605,13 @@ describe('pipeline: test logins never reach memory', () => {
     const note = readFileSync(join(mem, 'flow-learnings.md'), 'utf8')
     expect(note).not.toContain('s3cret-pass')
     expect(note).toContain('jest: run it from the app folder')
+  })
+})
+
+describe('pipeline: the reviewer', () => {
+  test("gets the run's model", async () => {
+    const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))], { review: [review([])] })
+    await t.pipe.start(186278, { model: 'sonnet' })
+    expect(t.reviewers[0]).toMatchObject({ model: 'sonnet' })
   })
 })

@@ -88,7 +88,17 @@ function newOnes(head: string[], base: string[]): string[] {
 /** base findings by worktree, commit, step and files: the base doesn't change while the agent loops on its change */
 const BASE = new Map<string, Run>()
 
+/** one verify at a time per worktree: the agent's verify tool and flow's own would stash and clean under each other */
+const running = new Map<string, Promise<unknown>>()
+
 export async function verify(worktree: string, steps: VerifyStep[]): Promise<VerifyResult> {
+  const before = running.get(worktree) ?? Promise.resolve()
+  const mine = before.catch(() => {}).then(() => verifyNow(worktree, steps))
+  running.set(worktree, mine)
+  try { return await mine } finally { if (running.get(worktree) === mine) running.delete(worktree) }
+}
+
+async function verifyNow(worktree: string, steps: VerifyStep[]): Promise<VerifyResult> {
   // tools report real paths (macOS: /var is /private/var); compare against the worktree's real path
   const wt = realpathSync(worktree)
   const changed = changedFiles(wt)

@@ -27,11 +27,12 @@ export function logLine(log: string | undefined, text: string) {
 /** a command whose output goes into the log as it comes (an install, an app build); its last lines when it fails */
 export async function shLogged(cmd: string, cwd: string, log: string, env?: Record<string, string | undefined>): Promise<{ code: number; out: string }> {
   logLine(log, `$ ${cmd}`)
-  const start = statSync(log).size
+  const start = statSync(log).size // bytes: the new output is read back from there as bytes
   const fd = openSync(log, 'a')
-  const p = Bun.spawn(['sh', '-c', cmd], { cwd, stdout: fd, stderr: fd, ...(env ? { env } : {}) })
-  const code = await p.exited
-  closeSync(fd)
-  const out = readFileSync(log, 'utf8').slice(start)
-  return { code, out }
+  let code: number
+  try {
+    const p = Bun.spawn(['sh', '-c', cmd], { cwd, stdout: fd, stderr: fd, ...(env ? { env } : {}) })
+    code = await p.exited
+  } finally { closeSync(fd) }
+  return { code, out: readFileSync(log).subarray(start).toString('utf8') }
 }

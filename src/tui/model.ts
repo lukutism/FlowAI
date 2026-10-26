@@ -195,6 +195,7 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'review.skipped': return { stage: 'review', text: `skipped: ${e.reason}` }
     case 'pr.opened': return { stage: 'ship', text: `draft PR #${e.number} opened${e.repo ? ` (${e.repo})` : ''}` }
     case 'pr.updated': return { stage: 'ship', text: `draft PR #${e.number} updated${e.repo ? ` (${e.repo})` : ''}` }
+    case 'ship.failed': return { stage: 'ship', text: `ship failed: ${e.reason}` }
     case 'run.ready': return { stage: 'ship', text: 'unchanged since verify: ready again' }
     case 'patch.checked': return { stage: 'ship', text: 'write-back dry run done' }
     case 'patch.written': return { stage: 'ship', text: 'patch written back' }

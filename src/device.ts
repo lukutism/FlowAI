@@ -83,7 +83,9 @@ export async function startDevice(o: { spec: DeviceSpec; platform: 'android' | '
   try {
     if (cmds.prepare) await must('prepare', filled(cmds.prepare), o.worktree, o.log)
     if (cmds.create) {
-      const out = await must('creating the device', filled(cmds.create), o.runDir, o.log)
+      // its id is what it prints on stdout (a warning on stderr must not become the id): not streamed into the log
+      const out = await must('creating the device', filled(cmds.create), o.runDir)
+      logLine(o.log, `created the device: ${out.trim().split('\n').pop() ?? ''}`)
       if (!state.id) state.id = out.trim().split('\n').filter(Boolean).pop() ?? ''
     }
     if (!state.id) throw new Error('the device has no id: give "id" or a "create" that prints it')

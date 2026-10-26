@@ -131,6 +131,8 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
         const data = ws.data
         if (data.device) {
           const size = await deviceSize(data.device)
+          // the page may have gone while adb answered: start nothing for a closed socket
+          if (data.closed || ws.readyState !== 1) return
           if (!size) { ws.close(1011, 'this device has no video'); return }
           ws.send(JSON.stringify({ type: 'size', ...size }))
           data.stop = video(data.device, size, c => ws.send(c))
@@ -139,7 +141,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
         ws.subscribe('all')
         ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows(), resources: o.service.resources(), recent: o.store.recent(RECENT), projects: o.service.projects() } satisfies Message))
       },
-      close(ws) { ws.data.stop?.() },
+      close(ws) { ws.data.closed = true; ws.data.stop?.() },
       async message(ws, raw) {
         if (ws.data.device) return
         let r: Request
@@ -187,7 +189,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
 }
 
 /** a socket's own data: a device's video, or the screen's protocol (none) */
-interface WsData { device?: DeviceState; stop?: () => void }
+interface WsData { device?: DeviceState; stop?: () => void; closed?: boolean }
 
 /** a run's device in the browser: /device/<run> the page, …/frame its screen now, …/input (POST) a tap, swipe, key or text */
 async function deviceRoute(dataDir: string, path: string, req: globalThis.Request): Promise<Response> {

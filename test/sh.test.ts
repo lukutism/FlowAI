@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { fill, fillSh, livePids, sh } from '../src/sh.ts'
+import { fill, fillSh, livePids, sh, shLogged } from '../src/sh.ts'
 
 // A project's commands get values that come from tickets and forms (a base, a customer): in a shell command they
 // are one word each, whatever they hold.
@@ -21,5 +21,15 @@ describe('process ids read back from a run\'s files', () => {
   test('only real ones: never 0, 1 or negative (kill(-1) is every process of the user)', () => {
     expect(livePids([0, -1, 1, 4242, 'x', 3.5, null])).toEqual([4242])
     expect(livePids(undefined)).toEqual([])
+  })
+})
+
+describe('a command logged as it runs', () => {
+  test('its own output comes back whole, even after non-ASCII lines in the log (an id from create)', async () => {
+    const { mkdtempSync, writeFileSync } = require('node:fs') as typeof import('node:fs')
+    const log = require('node:path').join(mkdtempSync(require('node:path').join(require('node:os').tmpdir(), 'flow-log-')), 'setup.log')
+    writeFileSync(log, '✓ done — … 🎉 earlier output\n'.repeat(20))
+    const r = await shLogged('echo A1B2-UDID', '/tmp', log)
+    expect(r.out.trim().split('\n').pop()).toBe('A1B2-UDID')
   })
 })
