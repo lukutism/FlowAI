@@ -47,7 +47,16 @@ describe('settings: the sections', () => {
   })
   test('Tickets & PRs follow the tracker and forge: Jira and GitHub have their own fields', () => {
     const jira = { ...json, tracker: { kind: 'jira', site: 's', key: 'SGL', email: 'e' }, forge: { kind: 'github', owner: 'me' } }
-    expect(fields('Tickets & PRs', jira).map(f => f.label)).toEqual(['Tickets', 'Site', 'Project key', 'Email', 'Keychain item', 'Pull requests', 'Owner'])
+    expect(fields('Tickets & PRs', jira).map(f => f.label)).toEqual(['Tickets', 'Site', 'Project key', 'Email', 'Keychain item', 'Pull requests', 'Owner', 'Commits', 'Name', 'Email'])
+  })
+  test("Commits: the name and email flow commits under; both emptied, the project falls back to the global git identity", () => {
+    const f = fields('Tickets & PRs', json)
+    expect(f.filter(x => x.path?.[0] === 'commitAs').map(x => x.path)).toEqual([['commitAs', 'name'], ['commitAs', 'email']])
+    const { parseProject } = require('../src/config.ts') as typeof import('../src/config.ts')
+    const base = { key: 'ex', name: 'Ex', worktrees: '/w', tracker: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' }, forge: { kind: 'azure', org: 'https://dev.azure.com/x', project: 'x' }, repos: [{ key: 'm', path: '/m', defaultBase: 'origin/develop', verify: [] }] }
+    expect(parseProject({ ...base, commitAs: {} }, 't').commitAs).toBeUndefined()
+    expect(parseProject({ ...base, commitAs: { name: 'Me', email: 'me@example.com' } }, 't').commitAs).toEqual({ name: 'Me', email: 'me@example.com' })
+    expect(() => parseProject({ ...base, commitAs: { email: 'me@example.com' } }, 't')).toThrow(/commitAs/)
   })
 })
 

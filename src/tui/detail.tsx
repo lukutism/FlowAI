@@ -123,8 +123,10 @@ export type DetailKeys = (key: KeyEvent, typed: string) => boolean
 function Click({ on, children }: { on: () => void; children: ReactNode }) { return <box onMouseDown={on}>{children}</box> }
 const Row = ({ l }: { l: Line; w?: number }) => <text>{l.length ? l.map(([t, c], i) => <span key={i} fg={c || undefined}>{t}</span>) : ' '}</text>
 
-export function RunDetail({ api, run, now, width, height, message, bind, onMessage, onBack, onKey, bindCommands, bindPaste }: {
+export function RunDetail({ api, run, now, width, height, message, can, bind, onMessage, onBack, onKey, bindCommands, bindPaste }: {
   api: DetailApi; run: RunState; now: number; width: number; height: number; message: string
+  /** what the run takes now: approve, ship and port are on the key line only then */
+  can?: { approve: boolean; ship: boolean; port: boolean }
   onBack: () => void
   /** a key the screen handles (a, S, p, ^K), pressed from the key line */
   onKey: (typed: string) => void
@@ -338,7 +340,7 @@ export function RunDetail({ api, run, now, width, height, message, bind, onMessa
   const keyLine: [string, () => void][] = focus === 'shell' ? [['typing in Shell: keys go to the shell', () => {}], ['ctrl+] leave', () => setFocus('none')], ['^K commands', () => onKey('palette')]]
     : focus === 'message' ? [['typing a message to the agent', () => {}], ['↵ send', () => keys(fake('', 'return'), '')], ['esc leave', () => setFocus('none')]]
     : [['esc back', onBack], ['d diff', () => setPopup({ kind: 'diff' })], ['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ['e code', () => openEditor(data.worktree)], ...(pane === 'agent' ? [[full ? 'o fold' : 'o show all', () => setFull(x => !x)] as [string, () => void]] : []), ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
-      ['a approve', () => onKey('a')], ['S ship', () => onKey('S')], ['p port', () => onKey('p')], ['^K commands', () => onKey('palette')]]
+      ...(can?.approve ? [['a approve', () => onKey('a')] as [string, () => void]] : []), ...(can?.ship ? [['S ship', () => onKey('S')] as [string, () => void]] : []), ...(can?.port ? [['p port', () => onKey('p')] as [string, () => void]] : []), ['^K commands', () => onKey('palette')]]
   const rule = <text fg={C.faint}>{'─'.repeat(W)}</text>
   return (
     <box flexDirection="column">

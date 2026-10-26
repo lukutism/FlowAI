@@ -7,8 +7,8 @@ import type { Project } from './config.ts'
 /** Where pull requests go. repository: the repo's name on the host (from its origin URL). */
 export interface Forge {
   draftPr(o: { repository: string; head: string; base: string; title: string; body: string; workItem?: number }): Promise<{ number: number; url: string }>
-  /** whether a PR flow opened is still open, merged or closed (unknown: the host could not be asked) */
-  prState(pr: { number: number; url: string }): Promise<'open' | 'merged' | 'closed' | 'unknown'>
+  /** whether a PR flow opened is still a draft, open for review, merged or closed (unknown: the host could not be asked) */
+  prState(pr: { number: number; url: string }): Promise<'draft' | 'open' | 'merged' | 'closed' | 'unknown'>
 }
 
 export type GhResult = { code: number; out: string; err: string }
@@ -44,11 +44,11 @@ export function githubForge(f: { kind: 'github'; owner: string }, gh: Gh = realG
     async prState(pr) {
       const repo = /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(pr.url)?.[1]
       if (!repo) return 'unknown'
-      const r = await gh(['pr', 'view', String(pr.number), '-R', repo, '--json', 'state'])
+      const r = await gh(['pr', 'view', String(pr.number), '-R', repo, '--json', 'state,isDraft'])
       if (r.code !== 0) return 'unknown'
       try {
-        const state = (JSON.parse(r.out) as { state?: string }).state
-        return state === 'OPEN' ? 'open' : state === 'MERGED' ? 'merged' : state === 'CLOSED' ? 'closed' : 'unknown'
+        const { state, isDraft } = JSON.parse(r.out) as { state?: string; isDraft?: boolean }
+        return state === 'OPEN' ? (isDraft ? 'draft' : 'open') : state === 'MERGED' ? 'merged' : state === 'CLOSED' ? 'closed' : 'unknown'
       } catch { return 'unknown' }
     },
   }

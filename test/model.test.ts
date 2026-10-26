@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { RunState } from '../src/run.ts'
 import type { RunEvent } from '../src/run.ts'
 import type { Snapshot } from '../src/resources.ts'
-import { activity, attention, describeEvent, duration, filterRuns, footer, groupRows, header, layout, lastMessage, match, resourceBars, rows, tokens } from '../src/tui/model.ts'
+import { activity, attention, canDo, describeEvent, duration, filterRuns, footer, groupRows, header, layout, lastMessage, match, resourceBars, rows, tokens } from '../src/tui/model.ts'
 
 // What the Runs screen shows, from run states: computed without a terminal.
 const NOW = Date.parse('2026-10-25T12:00:00Z')
@@ -236,5 +236,26 @@ describe('the customer patch from how tickets name the customer', () => {
     expect(suggestPatch(t, pairs, apps)).toBe('mueller/cmms')
     expect(suggestPatch({ ...t, customer: '' }, pairs, apps)).toBe('mueller/cmms') // the tag alone
     expect(suggestPatch({ ...t, customer: '', tags: [] }, pairs, apps)).toBeUndefined()
+  })
+})
+
+describe('canDo: what a run takes now (the key line and the commands offer only these)', () => {
+  const run = (o: Partial<RunState>) => ({ id: 'r', base: 'origin/develop', status: 'needs-you', ...o }) as RunState
+  test('approve at the plan gate; ship at the ship gate (or a patch write-back); port a release-line fix with a PR', () => {
+    expect(canDo(run({ needs: { kind: 'plan', ask: 'x' } }), 'origin/develop')).toEqual({ approve: true, ship: false, port: false })
+    expect(canDo(run({ needs: { kind: 'ship', ask: 'x' } }), 'origin/develop')).toEqual({ approve: false, ship: true, port: false })
+    expect(canDo(run({ base: 'origin/patch/3.18.41', pr: { number: 1, url: 'u' }, needs: { kind: 'pr', ask: 'x' } }), 'origin/develop')).toEqual({ approve: false, ship: false, port: true })
+  })
+  test('a run on its project\'s default line (main for a project without release lines) has nothing to port', () => {
+    expect(canDo(run({ base: 'origin/main', pr: { number: 81, url: 'u' }, needs: { kind: 'pr', ask: 'x' } }), 'origin/main').port).toBe(false)
+  })
+})
+
+describe('a PR marked ready for review', () => {
+  test('is no longer called a draft', () => {
+    const r = { id: 'r', ticket: 'SHOP-7', title: 't', project: 'shop', base: 'origin/main', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review PR #7' }, pr: { number: 7, url: 'u' }, loops: { verify: 0, verifyRuns: 0, review: 0 }, tokens: 0, compactions: 0, createdAt: 0, updatedAt: 0 } as RunState
+    expect(attention([r], 1)[0]!.label).toBe('Draft PR')
+    expect(attention([{ ...r, prDraft: false }], 1)[0]!.label).toBe('PR ready for review')
+    expect(rows([{ ...r, prDraft: false }], 1)[0]!.status).toBe('PR ready')
   })
 })

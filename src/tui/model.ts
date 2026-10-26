@@ -47,7 +47,9 @@ export function attention(runs: RunState[], now: number): AttentionItem[] {
   items.sort((a, b) => { const [x1, y1] = rank(a), [x2, y2] = rank(b); return x1! - x2! || y1! - y2! })
   return items.map(r => {
     const n = r.needs!
-    const [label, key, action, tone] = LABELS[n.kind]
+    const [shown, key, action, tone] = LABELS[n.kind]
+    // a PR marked ready for review on the code host is no longer a draft
+    const label = n.kind === 'pr' && r.prDraft === false ? 'PR ready for review' : shown
     const count = r.plan?.questions.length ?? 0
     const plan = `${n.held ? 'Decides whether behaviour changes: ' : ''}${r.plan?.summary ?? ''} · ${count} open question${count === 1 ? '' : 's'}`
     const when = n.kind !== 'plan' ? '' : n.held || !n.deadline ? 'held for you' : n.deadline <= now ? 'defaults now' : `defaults in ${duration(n.deadline - now)}`
@@ -71,11 +73,25 @@ export function track(r: RunState): string {
   return `${'●─'.repeat(i)}${CURRENT[r.status]}${'╌◌'.repeat(STAGES.length - 1 - i)}`
 }
 
+/**
+ * What a run takes now: approve at the plan gate, ship at the ship gate (or a patch's write-back), port a shipped fix
+ * on a release line (its base isn't its project's default line) to the default line. The keys and commands offer only these.
+ */
+export function canDo(r: RunState, defaultBase?: string): { approve: boolean; ship: boolean; port: boolean } {
+  const line = (b: string) => b.replace(/^origin\//, '')
+  return {
+    approve: r.needs?.kind === 'plan',
+    ship: r.needs?.kind === 'ship' || (r.needs?.kind === 'patch' && !!r.patch),
+    port: !!r.pr && !!defaultBase && line(r.base) !== line(defaultBase),
+  }
+}
+
 function statusWord(r: RunState): string {
   const loops = r.loops.review > 0 && (r.stage === 'review' || r.stage === 'build') && !r.loops.verify ? ` · review ×${r.loops.review}` : r.loops.verify > 0 ? ` · verify ×${r.loops.verify}` : ''
   if (r.status === 'paused') return `paused${r.pausedUntil ? ` until ${hhmm(r.pausedUntil)}` : ''}`
   if (r.status === 'waiting') return 'waiting'
   const words: Record<string, string> = { plan: 'approval', question: 'question', ship: 'verified', pr: 'draft PR', patch: 'write-back checked' }
+  if (r.status === 'needs-you' && r.needs?.kind === 'pr' && r.prDraft === false) return `PR ready${loops}`
   if (r.status === 'needs-you') return `${words[r.needs?.kind ?? ''] ?? r.needs?.kind ?? 'needs you'}${loops}`
   if (r.status === 'running' && r.stage === 'build' && r.loops.verify > 0) return `fixing${loops}`
   return `${r.status}${loops}`
@@ -188,6 +204,7 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'plan.decided': return { stage: 'plan', text: e.by === 'human' ? 'approved by you' : e.by === 'advisor' ? 'decided by the advisor at the deadline' : 'defaults taken at the deadline' }
     case 'repo.added': return { stage: '', text: `${e.repo} added (from ${e.base.replace(/^origin\//, '')})` }
     case 'run.note': return { stage: '', text: e.text }
+    case 'pr.draft': return { stage: 'ship', text: e.draft ? 'PR back to draft' : 'PR ready for review' }
     case 'run.synced': return { stage: '', text: `brought up to the base: ${e.repos.join(', ')}` }
     case 'plan.returned': return { stage: 'plan', text: `back to the agent to look up ${e.lookups.join(', ')}` }
     case 'agent.asked': return { stage: '', text: `asks: ${e.question}` }

@@ -106,11 +106,11 @@ describe('Runs screen', () => {
     } finally { t.s.renderer.destroy() }
   })
   test('in a run\'s detail p ports it once it has its draft PR; otherwise it says why not', async () => {
-    const t = await screen([base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } }), base('fso-103', {})])
+    const t = await screen([base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } }), base('fso-103', {})], undefined, { projects: [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile'], devices: [], patches: [], deadlineMinutes: 30, defaultBase: 'origin/develop' }] })
     try {
       await t.press('enter', 'p')
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
-      expect(await t.press('esc', 'j', 'enter', 'p')).toContain('#103 has no draft PR to port yet')
+      expect(await t.press('esc', 'j', 'enter', 'p')).toContain('#103 has no PR to port yet')
     } finally { t.s.renderer.destroy() }
   })
   test('m: typing a message (q included, it does not quit), enter sends it', async () => {
@@ -447,7 +447,7 @@ describe('the command palette', () => {
   })
   test('in a run\'s detail: that run\'s commands, and the detail stays open under it', async () => {
     const list = [base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
-    const t = await screen(list, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nThe walk.\n' : '') })
+    const t = await screen(list, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nThe walk.\n' : ''), ...{ projects: [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile'], devices: [], patches: [], deadlineMinutes: 30, defaultBase: 'origin/develop' }] } })
     try {
       const f = await t.press('enter', 'ctrl+k')
       expect(f).toContain('#104 commands')
@@ -455,6 +455,7 @@ describe('the command palette', () => {
       expect(f).not.toContain('Group by stage')
       expect(f).not.toContain('Open the review') // no review yet
       expect(f).not.toContain('dropping work') // one Remove; f in its question removes work not shipped too
+      expect(f).toContain('Port to develop') // a release-line fix: its project's default line
       expect(await t.press('esc')).toContain('← esc  #104') // still the detail
       await t.press('ctrl+k', ...'plan'.split(''), 'enter')
       expect(await t.until('The walk.')).toContain('The walk.')
@@ -636,7 +637,7 @@ describe('the mouse', () => {
   })
   test('a command in the palette is clicked to run it', async () => {
     const list = [base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
-    const t = await screen(list)
+    const t = await screen(list, undefined, { projects: [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile'], devices: [], patches: [], deadlineMinutes: 30, defaultBase: 'origin/develop' }] })
     try {
       await t.press('enter', 'ctrl+k')
       await click(t, 'Port to develop')

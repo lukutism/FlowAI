@@ -10,7 +10,7 @@ import type { Command, ProjectSummary, Reply } from '../service.ts'
 import type { Windows } from '../usage.ts'
 import { WAITS_FOR, type Snapshot } from '../resources.ts'
 import {
-  activity, attention, duration, filterRuns, line, footer, groupRows, header, hhmm, lastMessage, layout, match, resourceBars, rank, rows, SORTS, tokens,
+  activity, attention, canDo, duration, filterRuns, line, footer, groupRows, header, hhmm, lastMessage, layout, match, resourceBars, rank, rows, SORTS, tokens,
   type AttentionItem, type Grouped, type Row, type Sort,
 } from './model.ts'
 
@@ -141,7 +141,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     approve: (r: RunState) => (r.needs?.kind === 'plan' ? setMode({ kind: 'approve', run: r.id, editing: false, text: '', back: !!detailId }) : setNotice(`${r.ticket}: no plan is waiting for you`)),
     ship: (r: RunState) => (r.needs?.kind === 'ship' || (r.needs?.kind === 'patch' && r.patch) ? setMode({ kind: 'ship', run: r.id, back: !!detailId }) : setNotice(`${r.ticket} is not ready to ship`)),
     message: (r: RunState) => setMode({ kind: 'message', run: r.id, text: '', back: !!detailId }),
-    port: (r: RunState) => (r.pr ? void send({ cmd: 'port', run: r.id }, `porting ${r.ticket} to develop`) : setNotice(`${r.ticket} has no draft PR to port yet`)),
+    port: (r: RunState) => (can(r).port ? void send({ cmd: 'port', run: r.id }, `porting ${r.ticket} to ${line(defaultBaseOf(r) ?? '')}`) : setNotice(r.pr ? `${r.ticket} is on its project's default line: nothing to port` : `${r.ticket} has no PR to port yet`)),
     release: (r: RunState) => (r.device ? void send({ cmd: 'release', run: r.id }, `stopping ${r.ticket}'s device`) : setNotice(`${r.ticket} has no device`)),
     open: (r: RunState) => setMode({ kind: 'detail', run: r.id }),
     remove: (r: RunState, force = false) => setMode({ kind: 'remove', run: r.id, force, back: !!detailId }),
@@ -150,6 +150,9 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const goTab = (x: Tab) => { setTab(x); setMode({ kind: 'list' }) }
 
   // the commands: in a run's detail that run's own; elsewhere the screen's, and every run to open by its ticket or title
+  // what a run takes now: the keys and commands offer only these
+  const defaultBaseOf = (r: RunState) => api.projects?.find(p => p.key === r.project)?.defaultBase
+  const can = (r: RunState) => canDo(r, defaultBaseOf(r))
   const missingRepos = (r: RunState) => { const has = new Set(r.repos ?? []); return r.repos ? (api.projects?.find(p => p.key === r.project)?.repos ?? []).filter(k => !has.has(k)) : [] }
   const actions = (): Action[] => {
     // the repo to add, chosen from those the run lacks
@@ -166,7 +169,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (r.needs?.kind === 'ship' || r.needs?.kind === 'patch') a.push({ label: r.patch ? (r.needs.kind === 'patch' ? 'Write the patch back' : 'Check the write-back') : 'Ship', hint: r.patch ? 'S' : 'S · commit, push, draft PR', run: () => ask.ship(r) })
       a.push(...(detailCmds.current?.() ?? []))
       // a port is to develop: a run on develop has nothing to port
-      if (r.pr && r.base.replace(/^origin\//, '') !== 'develop') a.push({ label: 'Port to develop', hint: 'p', run: () => ask.port(r) })
+      if (can(r).port) a.push({ label: `Port to ${line(defaultBaseOf(r) ?? '')}`, hint: 'p', run: () => ask.port(r) })
       if (r.status !== 'done' && r.status !== 'failed') {
         if (missingRepos(r).length) a.push({ label: 'Add a repo', hint: `${missingRepos(r).join(', ')} · its own worktree on the run's branch`, run: () => setPal({ text: '', index: 0, sub: 'repos' }) })
         if (!r.pr) a.push({ label: 'Sync with the base', hint: "fetch, merge the base under the agent's change (kept uncommitted)", run: () => void send({ cmd: 'sync', run: r.id }, `${r.ticket}: syncing with its base`) })
@@ -356,7 +359,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   if (detailRun) return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
-      <RunDetail api={api} run={detailRun} now={t} width={width} height={height - (inline ? 2 : 0)} message={message} bind={k => { detailKeys.current = k }}
+      <RunDetail api={api} run={detailRun} now={t} width={width} height={height - (inline ? 2 : 0)} message={message} can={can(detailRun)} bind={k => { detailKeys.current = k }}
         onMessage={text => send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} bindPaste={f => { pasteTo.current = f }} />
       {inline ? <Confirm mode={mode} run={detailRun} resources={api.resources} onKey={k => handle('', k)} /> : null}
       {mode.kind === 'message' ? <Bar mode={mode} run={detailRun} message="" compact={!L.tabNames} tab={tab} onKey={handle} /> : null}
@@ -400,7 +403,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
       {mode.kind === 'projects' ? <ProjectPicker choices={choices} index={mode.index} current={/project:(\S+)/.exec(filter)?.[1] ?? ''} onPick={pickProject} /> : null}
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
-      <Bar mode={mode} run={mode.kind === 'message' ? api.runs.get(mode.run) : undefined} message={message} compact={!L.tabNames} tab={tab} onKey={handle} />
+      <Bar mode={mode} run={mode.kind === 'message' ? api.runs.get(mode.run) : undefined} message={message} compact={!L.tabNames} tab={tab} onKey={handle} {...(state ? { can: can(state) } : {})} />
     </box>
   )
 }
@@ -685,7 +688,7 @@ const KEYS = {
   runs: [['⇥ focus', 'tab'], ['↑↓ move', ''], ['↵ open', 'return'], ['n new', 'n'], ['a approve', 'a'], ['m message', 'm'], ['S ship', 'S'], ['p project', 'p'], ['s sort', 's'], ['g group', 'g'], ['/ filter', '/'], ['^K commands', 'palette'], ['q quit', 'q']],
 } as const
 
-function Bar({ mode, run, message, compact, tab, onKey }: { mode: Mode; run?: RunState; message: string; compact: boolean; tab: Tab; onKey: (name: string, typed: string, ctrl?: boolean) => void }) {
+function Bar({ mode, run, message, compact, tab, onKey, can }: { mode: Mode; run?: RunState; message: string; compact: boolean; tab: Tab; onKey: (name: string, typed: string, ctrl?: boolean) => void; can?: { approve: boolean; ship: boolean; port: boolean } }) {
   if (mode.kind === 'filter') return (
     <box flexDirection="column">
       <text><span fg={C.accent}>Filter </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ apply · esc cancel</span></text>
@@ -693,7 +696,9 @@ function Bar({ mode, run, message, compact, tab, onKey }: { mode: Mode; run?: Ru
     </box>
   )
   if (mode.kind === 'message' && run) return <text><span fg={C.accent}>Message {run.ticket} </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   ↵ send · esc cancel</span></text>
-  const keys = mode.kind === 'detail' ? KEYS.detail : tab !== 'Runs' ? KEYS.tabs : compact ? KEYS.compact : KEYS.runs
+  // a, S and p (in a run's detail) only where the run takes them
+  const keys = (mode.kind === 'detail' ? KEYS.detail : tab !== 'Runs' ? KEYS.tabs : compact ? KEYS.compact : KEYS.runs)
+    .filter(([label]) => !(label === 'a approve' && !can?.approve) && !(label === 'S ship' && !can?.ship) && !(label === 'p port' && !can?.port))
   const press = (k: string) => (k === 'palette' ? onKey('k', '', true) : k === 'return' || k === 'escape' || k === 'tab' ? onKey(k, '') : onKey('', k))
   const gap = compact ? '  ' : '   '
   return (

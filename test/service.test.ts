@@ -221,6 +221,16 @@ describe('Service: draft PRs merged or closed on the host', () => {
     expect(u.store.state('ex-1')).toMatchObject({ status: 'done' })
     expect(u.notices.join('\n')).toContain('no port to release/2.0 yet (flow port ex-1 --to release/2.0)')
   })
+  test('marked ready for review on the code host: recorded once, so the run no longer says draft', async () => {
+    const t = setup(() => [], args => (args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"active","isDraft":false}', err: '' } : undefined))
+    shipped(t, 'ex-1')
+    t.svc.tick(); await t.svc.idle()
+    expect(t.store.state('ex-1')).toMatchObject({ prDraft: false, needs: { kind: 'pr' } })
+    const d = setup(() => [], args => (args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"active","isDraft":true}', err: '' } : undefined))
+    shipped(d, 'ex-1')
+    d.svc.tick(); await d.svc.idle()
+    expect(d.store.events('ex-1').some(e => e.type === 'pr.draft')).toBe(false) // a draft as opened: nothing to record
+  })
   test('still open: nothing changes, and the host is not asked again at the next tick', async () => {
     const calls: string[][] = []
     const t = setup(() => [], args => { calls.push(args); return args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"active"}', err: '' } : undefined })

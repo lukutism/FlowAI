@@ -15,7 +15,9 @@ export type EventBody =
   | { type: 'setup.failed'; reason: string }
   | { type: 'plan.submitted'; summary: string; questions: Question[]; deadline?: number; targets?: string[] }
   | { type: 'plan.decided'; by: 'human' | 'deadline' | 'advisor'; answers: Record<string, string>; reasons?: Record<string, string> }
-  /** something worth knowing that changes nothing (a PR comment that could not be posted) */
+  /** the PR marked ready for review, or back to draft, on the code host */
+  | { type: 'pr.draft'; draft: boolean }
+  /** something worth knowing that changes nothing */
   | { type: 'run.note'; text: string }
   /** a repo added to the run (its own worktree on the run's branch) */
   | { type: 'repo.added'; repo: string; base: string }
@@ -76,6 +78,8 @@ export interface RunState {
   id: string; ticket: string; title: string; project: string; base: string
   /** the run's repos (runs started before this was recorded: unknown) */
   repos?: string[]
+  /** its PR is a draft (flow opens drafts; false once marked ready for review on the code host) */
+  prDraft?: boolean
   stage: Stage; status: Status; needs?: Needs
   plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' | 'advisor'; reasons?: Record<string, string>; returned?: boolean
     /** the plan's Target lines: the other lines the fix is for (none: this base only; unset: the plan didn't say) */
@@ -143,6 +147,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     }
     case 'repo.added': return go(s, e, s.repos ? { repos: [...s.repos, e.repo] } : {})
     case 'run.synced': case 'run.note': return go(s, e, {})
+    case 'pr.draft': return go(s, e, { prDraft: e.draft })
     case 'plan.returned':
       if (s.needs?.kind !== 'plan' || !s.plan) throw new TransitionError('no plan is waiting for a decision')
       return go(s, e, { plan: { ...s.plan, returned: true }, ...running })

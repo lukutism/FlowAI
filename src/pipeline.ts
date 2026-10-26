@@ -652,7 +652,7 @@ export class Pipeline {
    * The same fix onto another line (release fix → develop): a new run on <to> with each repo's shipped commits
    * applied uncommitted, then verify and review as usual and a stop to ship. A conflict blocks it, naming the files.
    */
-  async port(source: string, to = 'develop'): Promise<string> {
+  async port(source: string, to = this.defaultLine(source)): Promise<string> {
     const src = this.d.store.state(source)
     if (!src?.pr) throw new Error(`${source} is not shipped yet: port a run that has its draft PR`)
     const m = this.meta(source), p = this.d.project, short = to.split('/').pop()!
@@ -801,11 +801,14 @@ export class Pipeline {
   }
 
   /** the run's draft PRs on the code host: all merged, some closed (none open any more), or still open */
-  async prsState(run: string): Promise<'merged' | 'closed' | 'open'> {
+  async prsState(run: string): Promise<'merged' | 'closed' | 'open' | 'draft'> {
     const s = this.must(run)
     const prs = s.prs?.length ? s.prs : s.pr ? [s.pr] : []
     const states = await Promise.all(prs.map(p => this.forge.prState(p)))
-    if (!states.length || states.some(x => x === 'open' || x === 'unknown')) return 'open'
+    // still open: a draft while any is (flow opens drafts), ready for review once none is
+    if (!states.length || states.some(x => x === 'unknown')) return 'open'
+    if (states.some(x => x === 'draft')) return 'draft'
+    if (states.some(x => x === 'open')) return 'open'
     return states.every(x => x === 'merged') ? 'merged' : 'closed'
   }
 

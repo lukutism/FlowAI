@@ -67,11 +67,11 @@ export async function azureDraftPr(az: Az, t: AzureRef, repository: string, o: {
 }
 
 /** a PR's state: active is open, completed is merged, abandoned is closed */
-export async function azurePrState(az: Az, t: AzureRef, number: number): Promise<'open' | 'merged' | 'closed' | 'unknown'> {
+export async function azurePrState(az: Az, t: AzureRef, number: number): Promise<'draft' | 'open' | 'merged' | 'closed' | 'unknown'> {
   const r = await az(['repos', 'pr', 'show', '--id', String(number), '--org', t.org, '-o', 'json'])
   if (r.code !== 0) return 'unknown'
   try {
-    const status = (JSON.parse(r.out) as { status?: string }).status
-    return status === 'active' ? 'open' : status === 'completed' ? 'merged' : status === 'abandoned' ? 'closed' : 'unknown'
+    const { status, isDraft } = JSON.parse(r.out) as { status?: string; isDraft?: boolean }
+    return status === 'active' ? (isDraft ? 'draft' : 'open') : status === 'completed' ? 'merged' : status === 'abandoned' ? 'closed' : 'unknown'
   } catch { return 'unknown' }
 }

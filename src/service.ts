@@ -45,6 +45,8 @@ export interface ProjectSummary {
   maxParallel?: number; usage?: { fiveHour: number; week: number }; review?: boolean
   /** the new run's Login step asks for a license too */
   license?: boolean
+  /** the first repo's default base: a run on another line (a release fix) can be ported to it */
+  defaultBase?: string
   /** a run's emulator and browser run without their windows unless it says otherwise */
   headless?: boolean
   /** the run environment's variables, for the new-run form */
@@ -175,7 +177,7 @@ export class Service {
       devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes,
       defaults: (p.repos.some(r => r.default) ? p.repos.filter(r => r.default) : p.repos.slice(0, 1)).map(r => r.key), devServers: p.repos.filter(r => r.devServer).map(r => r.key),
       repoMatch: Object.fromEntries(p.repos.filter(r => r.match).map(r => [r.key, r.match!])), patchApps: p.patchApps,
-      maxParallel: p.agent.maxParallel, usage: p.usage, review: p.review.enabled, license: p.login.license, vars: p.vars.map(({ detect: _, ...v }) => v), headless: p.devices?.headless ?? true,
+      maxParallel: p.agent.maxParallel, usage: p.usage, review: p.review.enabled, license: p.login.license, defaultBase: (p.repos.find(r => r.default) ?? p.repos[0])?.defaultBase, vars: p.vars.map(({ detect: _, ...v }) => v), headless: p.devices?.headless ?? true,
       sandbox: p.sandbox ? (sb => ({ enabled: !!sb.enabled, writable: sb.filesystem?.allowWrite?.length ?? 0, domains: sb.network?.allowedDomains?.length ?? 0, strict: !!sb.network?.strictAllowlist }))(p.sandbox as { enabled?: boolean; filesystem?: { allowWrite?: string[] }; network?: { allowedDomains?: string[]; strictAllowlist?: boolean } }) : undefined }))
   }
 
@@ -238,7 +240,7 @@ export class Service {
       const p = this.pipeline(s.project)
       if (c.cmd === 'port') {
         if (!s.pr) throw new Error(`${c.run} is not shipped yet: port a run that has its draft PR`)
-        const to = c.to ?? 'develop', run = `${c.run}-${to.split('/').pop()}`
+        const to = c.to ?? p.defaultLine(c.run), run = `${c.run}-${to.split('/').pop()}`
         if (s.base.replace(/^origin\//, '') === to) throw new Error(`${c.run} is on ${to} already: port the release run instead`)
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         this.act(run, async () => { await p.port(c.run, to) })
@@ -265,7 +267,12 @@ export class Service {
         // release-line fix has no port to the default line, whose branch the port is made from); closed: done, kept
         this.act(s.id, async () => {
           const p = this.pipeline(s.project), state = await p.prsState(s.id)
-          if (state === 'open') return
+          // still open: whether it is a draft or ready for review, recorded when that changes
+          if (state === 'open' || state === 'draft') {
+            const draft = state === 'draft', now = this.d.store.state(s.id)
+            if (now && (now.prDraft ?? true) !== draft) this.d.store.append(s.id, 'engine', { type: 'pr.draft', draft })
+            return
+          }
           p.done(s.id, state === 'merged' ? 'its draft PR was merged' : 'its draft PR was closed')
           if (state !== 'merged') return
           const lines = p.unported(s.id)

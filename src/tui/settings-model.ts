@@ -67,6 +67,9 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
       { kind: 'heading', label: 'Pull requests', hint: forge === 'github' ? 'GitHub · drafts' : 'Azure DevOps · drafts, linked to the work item' },
       ...(forge === 'github' ? [{ kind: 'text' as const, label: 'Owner', path: ['forge', 'owner'] }]
         : [{ kind: 'text' as const, label: 'Organisation', path: ['forge', 'org'] }, { kind: 'text' as const, label: 'Project', path: ['forge', 'project'] }]),
+      { kind: 'heading', label: 'Commits', hint: "who flow's commits are by; empty: your global git identity" },
+      { kind: 'text', label: 'Name', path: ['commitAs', 'name'] },
+      { kind: 'text', label: 'Email', path: ['commitAs', 'email'], hint: "a client's repo may need another address than your global one" },
     ]
     case 'Repos': {
       const verify = (get(json, r('verify')) as { name?: string; kind?: string }[] | undefined) ?? []
