@@ -1,7 +1,7 @@
-import { deviceSize, frame, parseInput, send, video } from './screen.ts'
+import { appLog, deviceSize, emulators, frame, parseInput, send, video } from './screen.ts'
 import { screenPage } from './screen-page.ts'
 import type { DeviceState } from './device.ts'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { RunEvent, RunState } from './run.ts'
 import type { Command, Notice, ProjectSummary, Query, Reply, Service } from './service.ts'
@@ -117,11 +117,11 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
       // a device's video goes over a WebSocket of its own
       const vid = /^\/device\/([\w-][\w.-]*)\/video$/.exec(url.pathname)
       if (vid) {
-        const f = join(o.dataDir, 'runs', vid[1]!, 'device.json')
-        if (!existsSync(f)) return new Response('this run has no device', { status: 404 })
-        const device = JSON.parse(readFileSync(f, 'utf8')) as DeviceState
+        const device = await deviceFor(o.dataDir, vid[1]!)
+        if (!device) return new Response('no such device', { status: 404 })
         return srv.upgrade(req, { data: { device } }) ? undefined : new Response('a WebSocket, please', { status: 400 })
       }
+      if (url.pathname === '/devices') return Response.json(await deviceList(o.dataDir))
       if (url.pathname.startsWith('/device/')) return deviceRoute(o.dataDir, url.pathname, req)
       if (srv.upgrade(req, { data: {} })) return undefined
       return new Response('flow service: connect with a WebSocket', { status: 400 })
@@ -191,12 +191,13 @@ interface WsData { device?: DeviceState; stop?: () => void }
 
 /** a run's device in the browser: /device/<run> the page, …/frame its screen now, …/input (POST) a tap, swipe, key or text */
 async function deviceRoute(dataDir: string, path: string, req: globalThis.Request): Promise<Response> {
-  const [, , run = '', what = ''] = path.split('/')
-  const f = join(dataDir, 'runs', run, 'device.json')
-  if (!/^[\w.-]+$/.test(run) || run.startsWith('.') || !existsSync(f)) return new Response('this run has no device', { status: 404 })
-  const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState
+  const [, , name = '', what = ''] = path.split('/')
+  const d = await deviceFor(dataDir, name)
+  if (!d) return new Response('no such device', { status: 404 })
+  const run = name
   try {
     if (!what) return new Response(screenPage({ run, device: d.id, platform: d.platform }), { headers: { 'content-type': 'text/html; charset=utf-8' } })
+    if (what === 'log') return new Response((await appLog(d, new URL(req.url).searchParams.get('all') === '1')).join('\n'), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } })
     if (what === 'frame') { const fr = await frame(d); return new Response(new Blob([fr.bytes as BlobPart]), { headers: { 'content-type': fr.type, 'cache-control': 'no-store' } }) }
     if (what === 'input' && req.method === 'POST') {
       const i = parseInput(await req.json().catch(() => null))
@@ -206,4 +207,21 @@ async function deviceRoute(dataDir: string, path: string, req: globalThis.Reques
     }
   } catch (e) { return new Response((e as Error).message, { status: 502 }) }
   return new Response('not found', { status: 404 })
+}
+
+/** a device by its run (the run's own), or by an emulator's id that adb sees (one no run holds: yours, another tool's) */
+async function deviceFor(dataDir: string, name: string): Promise<DeviceState | null> {
+  if (!/^[\w-][\w.-]*$/.test(name)) return null
+  const f = join(dataDir, 'runs', name, 'device.json')
+  if (existsSync(f)) return JSON.parse(readFileSync(f, 'utf8')) as DeviceState
+  if (/^emulator-\d+$/.test(name) && (await emulators()).includes(name)) return { run: name, platform: 'android', id: name, consolePort: Number(name.slice(9)), metroPort: 0, pids: [] }
+  return null
+}
+
+/** every device to see: the runs' own, then emulators no run holds */
+async function deviceList(dataDir: string): Promise<{ name: string; label: string }[]> {
+  const runs = join(dataDir, 'runs')
+  const own = (existsSync(runs) ? readdirSync(runs) : []).filter(r => !r.startsWith('.') && existsSync(join(runs, r, 'device.json'))).map(r => ({ name: r, d: JSON.parse(readFileSync(join(runs, r, 'device.json'), 'utf8')) as DeviceState }))
+  const held = new Set(own.map(x => x.d.id))
+  return [...own.map(x => ({ name: x.name, label: `${x.name} · ${x.d.platform} ${x.d.id}` })), ...(await emulators().catch(() => [])).filter(e => !held.has(e)).map(e => ({ name: e, label: `${e} · not a flow run` }))]
 }

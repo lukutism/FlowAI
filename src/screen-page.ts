@@ -15,14 +15,24 @@ export function screenPage(o: { run: string; device: string; platform: 'android'
   .muted { color: var(--muted); }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
   .dot.live { background: var(--ok); } .dot.down { background: var(--bad); }
-  main { display: flex; justify-content: center; align-items: center; min-height: 0; }
+  main { display: flex; gap: 16px; justify-content: center; align-items: stretch; min-height: 0; }
+  .screen { display: flex; justify-content: center; align-items: center; min-width: 0; }
+  aside { flex: 1 1 0; max-width: 760px; min-width: 0; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+  aside[hidden] { display: none; }
+  aside .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  aside pre { flex: 1; margin: 0; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+  .e { color: var(--bad); } .w { color: #E2B35F; } .js { color: var(--text); } .o { color: var(--muted); }
+  input, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  @media (max-width: 900px) { main { flex-direction: column; } aside { max-width: none; min-height: 300px; } }
   img, canvas { max-height: calc(100vh - 110px); max-width: 100%; border: 1px solid var(--line); border-radius: 18px; background: #000; touch-action: none; user-select: none; -webkit-user-drag: none; ${drives ? 'cursor: pointer;' : ''} }
   button { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
   button:hover { border-color: var(--accent); } button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style></head>
 <body>
-<header><span><span class="dot" id="state"></span><b>${esc(o.run)}</b></span><span class="muted">${esc(o.platform)} ${esc(o.device)}</span><span class="muted" id="fps"></span></header>
-<main><canvas id="video" hidden aria-label="the device's screen"></canvas><img id="screen" alt="the device's screen"></main>
+<header><span><span class="dot" id="state"></span><b>${esc(o.run)}</b></span><span class="muted">${esc(o.platform)} ${esc(o.device)}</span><span class="muted" id="fps"></span><label class="muted" for="devices">devices</label><select id="devices" aria-label="other devices"></select><button id="logsToggle">Logs</button></header>
+<main><div class="screen"><canvas id="video" hidden aria-label="the device's screen"></canvas><img id="screen" alt="the device's screen"></div>
+<aside id="logs" hidden><div class="bar"><button id="appOnly" class="on">App: console and errors</button><button id="allLines">Everything</button><input id="filter" placeholder="filter" aria-label="filter the log"><button id="pause">Pause</button><span class="muted" id="count"></span></div><pre id="log" aria-live="polite"></pre></aside></main>
 <footer>${drives ? `
   <button data-key="back">◀ Back</button><button data-key="home">● Home</button><button data-key="apps">▢ Apps</button><button data-key="menu">Dev menu</button>
   <span class="muted">click to tap · drag to swipe · type to enter text</span>` : `<span class="muted">The simulator is shown here; drive it in Simulator.app (simctl has no input).</span>`}
@@ -50,6 +60,32 @@ async function loop() {
   }
 }
 loop()
+// other devices: the runs' own and emulators no run holds
+fetch('/devices?token=' + encodeURIComponent(token)).then(r => r.json()).then(list => {
+  const sel = document.getElementById('devices'), here = base.split('/').pop()
+  for (const d of list) { const o = document.createElement('option'); o.value = d.name; o.textContent = d.label; if (d.name === here) o.selected = true; sel.append(o) }
+  sel.onchange = () => { location.href = '/device/' + encodeURIComponent(sel.value) + '?token=' + encodeURIComponent(token) }
+}).catch(() => {})
+// the app's log: its JS console and errors (or everything), every two seconds while shown
+const logs = document.getElementById('logs'), pre = document.getElementById('log'), lineCount = document.getElementById('count'), filter = document.getElementById('filter')
+let all = false, paused = false, timer2 = 0
+const cls = l => /\\s[EF]\\/|Error|FATAL|Exception/.test(l) ? 'e' : /\\sW\\//.test(l) ? 'w' : /ReactNativeJS/.test(l) ? 'js' : 'o'
+async function pull() {
+  if (logs.hidden || paused || document.hidden) return
+  try {
+    const t = await (await fetch(base + '/log?all=' + (all ? 1 : 0) + '&token=' + encodeURIComponent(token), { cache: 'no-store' })).text()
+    const q = filter.value.toLowerCase(), lines = t.split('\\n').filter(l => l && (!q || l.toLowerCase().includes(q)))
+    const atEnd = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40
+    pre.replaceChildren(...lines.map(l => { const s = document.createElement('div'); s.className = cls(l); s.textContent = l; return s }))
+    lineCount.textContent = lines.length + ' lines'
+    if (atEnd) pre.scrollTop = pre.scrollHeight
+  } catch {}
+}
+document.getElementById('logsToggle').onclick = e => { logs.hidden = !logs.hidden; e.target.classList.toggle('on', !logs.hidden); if (!logs.hidden) { pull(); clearInterval(timer2); timer2 = setInterval(pull, 2000) } else clearInterval(timer2) }
+document.getElementById('appOnly').onclick = e => { all = false; e.target.classList.add('on'); document.getElementById('allLines').classList.remove('on'); pull() }
+document.getElementById('allLines').onclick = e => { all = true; e.target.classList.add('on'); document.getElementById('appOnly').classList.remove('on'); pull() }
+document.getElementById('pause').onclick = e => { paused = !paused; e.target.textContent = paused ? 'Resume' : 'Pause'; if (!paused) pull() }
+filter.oninput = () => pull()
 // the device's own H.264 encoder over a WebSocket, decoded here: smooth, and cheap for the device
 function videoStream() {
   if (!('VideoDecoder' in window) || ${drives ? 'false' : 'true'}) return
@@ -120,6 +156,7 @@ const flush = () => { if (typed) send({ type: 'text', text: typed }); typed = ''
 const KEYMAP = { Backspace: 'delete', Enter: 'enter', Escape: 'back', Tab: 'tab', ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }
 document.addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return
   if (KEYMAP[e.key]) { flush(); send({ type: 'key', key: KEYMAP[e.key] }); e.preventDefault(); return }
   if (e.key.length === 1) { typed += e.key; clearTimeout(timer); timer = setTimeout(flush, 150); e.preventDefault() }
 })` : ''}

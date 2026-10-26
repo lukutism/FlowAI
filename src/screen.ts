@@ -106,3 +106,22 @@ export function video(d: DeviceState, size: { width: number; height: number }, o
   }
 }
 const viewers = new Map<string, number>()
+
+/** the emulators adb sees (ids such as emulator-5554), whoever started them */
+export async function emulators(): Promise<string[]> {
+  const p = Bun.spawn([adb(), 'devices'], { stdout: 'pipe', stderr: 'ignore', env: process.env })
+  const out = await new Response(p.stdout).text()
+  await p.exited
+  return out.split('\n').map(l => l.trim().split(/\s+/)).filter(x => x[1] === 'device' && /^emulator-\d+$/.test(x[0]!)).map(x => x[0]!)
+}
+
+/** the app's log on the device: the JS console (React Native) and errors; all: every line */
+export async function appLog(d: DeviceState, all = false, lines = 300): Promise<string[]> {
+  const argv = d.platform === 'android'
+    ? [adb(), '-s', d.id, 'logcat', '-d', '-t', String(lines), '-v', 'time', ...(all ? [] : ['ReactNativeJS:V', 'ReactNative:W', 'AndroidRuntime:E', '*:E'])]
+    : ['xcrun', 'simctl', 'spawn', d.id, 'log', 'show', '--last', '5m', '--style', 'compact', ...(all ? [] : ['--predicate', 'subsystem == "com.facebook.react.log" OR messageType == error'])]
+  const p = Bun.spawn(argv, { stdout: 'pipe', stderr: 'ignore', env: process.env })
+  const out = await new Response(p.stdout).text()
+  await p.exited
+  return out.split('\n').filter(Boolean).slice(-lines)
+}

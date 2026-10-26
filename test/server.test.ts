@@ -213,3 +213,25 @@ describe('the screen\'s connection after the service restarts', () => {
     expect(await c.send({ cmd: 'release', run: 'fso-9' })).toMatchObject({ ok: true })
   })
 })
+
+describe('the device page: logs and other devices', () => {
+  const withDevice = () => {
+    const t = start()
+    writeFileSync(join(t.data, 'runs', 'fso-1', 'device.json'), JSON.stringify({ run: 'fso-1', platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 8300, pids: [] }))
+    process.env.FLOW_ADB = join(import.meta.dir, 'fake-adb.ts'); process.env.FAKE_ADB_LOG = join(t.data, 'adb.log')
+    return { ...t, url: (p: string) => `http://127.0.0.1:${t.s.port}${p}${p.includes('?') ? '&' : '?'}token=secret-token` }
+  }
+  test("the app's log: its JS console and errors, from the run's own device", async () => {
+    const t = withDevice()
+    const text = await (await fetch(t.url('/device/fso-1/log'))).text()
+    expect(text).toContain('TypeError: x is undefined')
+    expect(require('node:fs').readFileSync(join(t.data, 'adb.log'), 'utf8')).toContain('"-s","emulator-5700","logcat"')
+  })
+  test('the devices to switch to: the runs\' own, then emulators no run holds; one of those can be opened too', async () => {
+    const t = withDevice()
+    expect(await (await fetch(t.url('/devices'))).json()).toEqual([{ name: 'fso-1', label: 'fso-1 · android emulator-5700' }, { name: 'emulator-5790', label: 'emulator-5790 · not a flow run' }])
+    expect((await fetch(t.url('/device/emulator-5790'))).status).toBe(200)
+    expect((await fetch(t.url('/device/emulator-5999'))).status).toBe(404)
+    expect((await fetch(`http://127.0.0.1:${t.s.port}/devices`)).status).toBe(401)
+  })
+})
