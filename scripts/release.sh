@@ -18,8 +18,11 @@ bun build --compile --minify src/main.ts --define "process.env.FLOW_RELEASE=\"$v
 
 # the binary does what the source does: the guard refuses a commit and lets ls through, the MCP server answers
 w="$(mktemp -d)"
-echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -am x\"},\"cwd\":\"$w\"}" | FLOW_WORKTREE="$w" dist/flow guard | grep -q '"deny"' || { echo "release: the built guard did not refuse a commit" >&2; exit 1; }
-[ -z "$(echo "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"ls\"},\"cwd\":\"$w\"}" | FLOW_WORKTREE="$w" dist/flow guard)" ] || { echo "release: the built guard refused ls" >&2; exit 1; }
+commit='{"tool_name":"Bash","tool_input":{"command":"git commit -am x"},"cwd":"'"$w"'"}'
+list='{"tool_name":"Bash","tool_input":{"command":"ls"},"cwd":"'"$w"'"}'
+echo "$commit" | FLOW_WORKTREE="$w" dist/flow guard | grep -q '"deny"' || { echo "release: the built guard did not refuse a commit" >&2; exit 1; }
+said="$(echo "$list" | FLOW_WORKTREE="$w" dist/flow guard)"
+[ -z "$said" ] || { echo "release: the built guard refused ls: $said" >&2; exit 1; }
 ( echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'; sleep 1 ) | FLOW_RUN=none FLOW_DATA="$w" dist/flow mcp | grep -q '"serverInfo"' || { echo "release: the built MCP server did not answer" >&2; exit 1; }
 rm -rf "$w"
 [ "$(dist/flow version)" = "$version" ] || { echo "release: the built binary says it is $(dist/flow version)" >&2; exit 1; }
