@@ -31,7 +31,7 @@ weekly windows, which flow reads from the CLI after every turn.
 |---|---|
 | `flow` | The screen: what needs you, every run, the slots (who holds each, for how long; who waits), the selected run's activity, your plan windows. Starts the background service if needed. |
 | `1`–`4` | Tabs: Runs, Queue (who waits for which slot, paused runs, plan deadlines), Metrics (per project), Projects (each project and what it is set to; `↵` opens its settings) |
-| Project settings | Sections: General, Tickets & PRs, Repos (per repo: checkout, bases, install, ticket match, checks, dev server, patch commands), Agents & limits, Permissions (flow's guard, always; the OS sandbox: on, strict, writable folders, commands outside it, network domains; the reviewer; the plan deadline), Devices, Customer patches, Naming. `⇥` sections/fields, space or `←→` change, `↵` edits a text or a list (`a` add, `x` remove), `S` shows the changes against the file and saves on `y`: the file is checked first (a mistake is named, nothing written), the old one kept as `.bak`, and new runs use it at once |
+| Project settings | Sections: General (also Local files: the main checkout's git-ignored files each worktree gets, such as `.claude`, `.mcp.json`, `.npmrc`; Not loaded: CLAUDE.md files above the worktrees meant for another tool), Tickets & PRs, Repos (per repo: checkout, bases, install, ticket match, checks, dev server, patch commands), Agents & limits, Permissions (flow's guard, always; the OS sandbox: on, strict, writable folders, commands outside it, network domains; the reviewer; the plan deadline; denied tools), Devices (also Headless), Customer patches, Naming. `⇥` sections/fields, space or `←→` change, `↵` edits a text or a list (`a` add, `x` remove), `S` shows the changes against the file and saves on `y`: the file is checked first (a mistake is named, nothing written), the old one kept as `.bak`, and new runs use it at once |
 | `p` | The project picker: all projects, or one (`fso`, `shop`, …) with its runs; the header shows which |
 | `↑` `↓` / `j` `k` | One cursor through Needs attention and the runs: up from the first run goes into Needs attention, down past its last item back to the runs; `⇥` jumps between them; the action keys work on what the cursor is on |
 | `n` | The new-run form. No ticket? Leave it empty and describe the task: the plan works from your words, the run and branch are named from their first line (`feat/…` or `fix/…`), and the PR is described by the agent's `pr.md` with no ticket linked. The project is the header's (asked only under all projects). Type the ticket and the rest is filled in from it, each still yours to change: kind (a bug or issue is a fix), base (its release tag), repos (its target platform and tags, by each repo's `match` pattern), customer patch (its customer or board, the app by its area or title through `patchApps`, checked against the base). Base and patch are lists you type into to search (base: every branch and tag, the suggestions first; a ref no branch matches is used as written). Also device, dev server (web and backend repos), model; what will happen and the free slots. It refuses what would fail and says why |
@@ -41,6 +41,7 @@ weekly windows, which flow reads from the CLI after every turn.
 | `p` in a run's detail | Port a shipped run to develop (also in the commands) |
 | `s` / `g` / `/` | Sort (newest, oldest, latest activity, tokens) / group by stage (`↵` on a group folds it) / filter: `project:fso status:needs-you stage:build` or any text; `esc` clears it |
 | `ctrl+k` or `:` | Commands: every action for the selected run, filters, sorts, tabs, typed to narrow |
+| `o` in a run's detail | The Agent pane reads like Claude Code: what the agent says (Markdown), each tool as `Name(args)` with what it returned under `⎿`, refusals in red, turn ends. Long prompts from flow and long tool output show their first lines; `o` shows all of them whole, `o` again folds them |
 | `↵` / `esc` | A run's detail / back. The run on the left (what it needs, plan and answers, verify and review, the files it changed, the timeline); the live panes on the right: Agent (the session; its message box right under it, a click on Agent types there), Metro (runs with a device), Dev server (runs with one), Shell (a real shell in the worktree: `i` types into it, `ctrl+]` leaves); `[` `]` switch panes, `v` splits a pane with the shell. A click on Plan, a review line or a file (or `P`) opens it as Markdown over the detail; a click on Changes or a changed file (or `d`) opens the change: `j`/`k` move line by line, `[` `]` file by file, `c` comments the line (as on a PR), `x` removes a comment, `S` sends them to the agent as one message (file, line, the code quoted, your words); comments not sent wait for the next time |
 
 The mouse works too: click a tab, a run (a second click opens it), an item's key hint, a confirm's answer, a command,
@@ -50,9 +51,17 @@ screen has the mouse, hold Option (Terminal, iTerm2) or Shift (most others).
 Narrow terminals (80–99 columns) drop the project and token columns, show the stage as a word and one line per item;
 below 80×24 the screen says how big it needs to be.
 
-The same as commands: `flow start | approve | message | ship | port | release | status | log` (`flow start` takes
+The same as commands: `flow start | approve | message | ship | port | release | stop | done | rm | device | status | log` (`flow start` takes
 `--repos a,b`, `--base`, `--kind bug|feature`, `--device android|ios`, `--dev-server`, `--patch <customer>/<app>`, `--model`). With the service running they go through it
-and follow the run until it needs you; without it they run in the terminal.
+and follow the run until it needs you; without it they run in the terminal. An open screen reconnects by itself when
+the service restarts.
+
+**Finishing a run.** `flow done <run>` (or Mark done in its commands) takes it off the attention list; `flow rm <run>`
+(Remove the run) stops its device and dev server, removes its worktrees and local branch (a PR's branch stays on the
+code host) and archives its folder under `runs/.removed`; work never shipped is refused unless you add `--force`.
+A removed run's id can start again, so a run whose setup failed doesn't use up its ticket. The service looks at
+each draft PR every 10 minutes: merged, the run is done and removed; closed, it is done and kept. `flow stop <run>`
+(Stop the agent's turn) ends a turn now; a message carries the run on.
 
 **Slots.** All runs on the machine share three kinds of slot: agent turns, builds (installs, verify, app builds) and
 devices. A run that has to wait shows what for ("waiting for a build slot"); a freed slot goes to the run that has
@@ -70,7 +79,9 @@ working from their common folder, verify per repo, and at ship one draft PR per 
    each with a default. A question marked `(held)` decides whether behaviour changes; only you answer it.
 3. **Plan gate.** No questions: the build starts at once. Questions: the run waits for you; at the deadline
    (30 minutes by default) the service takes the defaults, never for a held question.
-4. **Build.** The agent changes code in its worktree and leaves the changes uncommitted.
+4. **Build.** The agent changes code in its worktree and leaves the changes uncommitted. A message to the agent at any
+   stop (a question, a block, a cap, the ship gate, an open PR) carries the run on; afterwards flow puts the gate back,
+   verifying again first if the code changed.
 5. **Verify.** The project's checks run on the change and on the base (the same worktree with the change stashed).
    Only findings the base doesn't have count, so a base that is already red doesn't block. New findings go back
    to the agent; three reds in a row stop the run for you.
@@ -78,7 +89,9 @@ working from their common folder, verify per repo, and at ship one draft PR per 
    the ticket, the plan and the change, and answers with findings as JSON. Findings under 80% confidence are left
    out; the rest go to the agent to fix or explain. Three reviews with findings stop the run for you.
 7. **Ship (you).** flow commits (your commit hooks run), pushes without force, and opens a draft PR linked to the
-   ticket, described by the agent's `pr.md`. Merging stays yours.
+   ticket, described by the agent's `pr.md`. Merging stays yours. Code that changed after verify is verified again
+   instead of shipped. Shipping again after a failed push finishes the job; after a change on an open PR it pushes
+   to the same PR.
 8. **Port (optional).** The shipped commit is applied to another line in a new run, then verify, review and ship.
 
 ### A customer patch run
@@ -114,13 +127,24 @@ what it prints), `boot`, `ready` (polled until it exits 0), Metro, and `install`
 the run's Metro). The agent is told the device id and the Metro port. Ship stops and removes everything and frees
 the slot; `flow release <run>` does so earlier. A device that never becomes ready fails the setup with the last
 lines of its log. Placeholders: `{run} {id} {consolePort} {metroPort} {worktree} {runDir} {template}`.
+With `devices.headless` on, `{headless}` in the boot command becomes `-no-window -no-audio`: the emulator runs
+without its window. `flow device <run>` (or See the device in the browser) opens a page of the service with the
+device's screen, live from its own H.264 encoder: click to tap, drag to swipe, type to enter text, Back / Home /
+Apps / Dev menu. An iOS simulator is shown there but not driven (simctl has no input). The agent's shell gets
+`ANDROID_SERIAL` and `RCT_METRO_PORT`, so `adb` and the React Native CLI talk to the run's own device.
 `scripts/avd-clone.sh` (an Android AVD cloned copy-on-write from a template) and `scripts/android-dev-host.sh` (a
 React Native debug app pointed at another Metro port) are there for the Android commands.
 
 ## Safety
 
-- **The guard** (a PreToolUse hook flow adds to your settings): refuses commits, pushes, history rewrites, writes to
-  the tracker or code host, and edits outside the run's worktree and folder. It fails closed.
+- **The guard** (a PreToolUse hook flow adds to your settings): refuses commits, pushes, history rewrites, branch
+  moves and git config changes, writes to the tracker or code host (also through `az rest`, `gh api`), edits outside
+  the run's worktree (symlinks followed) and of `.git` or Claude Code's settings files. It reads a shell line the way
+  the shell does: quotes, `$(…)`, wrappers such as `env` or `timeout`, `bash -c`. It fails closed, also when it can't
+  start. Of the run's folder the agent may write only `plan.md` and `pr.md`; flow's token is not readable.
+- **Tickets are data:** their text reaches the agent inside a fence with a random name it can't close, with the rule
+  to name anything beyond the change instead of doing it.
+- **Denied tools** (per project, `denyTools`): an MCP server's write tools, as permission rules.
 - **The OS sandbox** (per project): shell commands can write only in the run's folders and the build caches.
 - **Never billed:** a session that isn't on your subscription is stopped before it does anything.
 - **Usage limits:** turns start only while both plan windows have room (90% / 95% by default); a turn that hits the
@@ -146,8 +170,9 @@ TypeScript on Bun. One process per run drives `claude -p --input-format stream-j
 | `device.ts` | A run's own device and Metro: ports, background processes, readiness, cleanup |
 | `sh.ts` | A project's shell commands, with placeholders |
 | `guard.ts`, `settings.ts` | The guard hook and each run's settings |
+| `screen.ts`, `screen-page.ts` | A run's device in the browser: frames, H.264, input through adb |
 | `service.ts`, `server.ts`, `client.ts`, `daemon.ts` | The background service, its socket and the connection |
-| `tui/` | The screen (OpenTUI + React) and its view model |
+| `tui/` | The screen (OpenTUI + React) and its view model; `tui/session.ts` the Agent pane |
 
 Tests: `bun test` (about 270, with a fake agent replaying sanitized real sessions, real git repos, stand-ins for
 `az`, `gh`, Jira, devices and Metro, and the screen driven by keys). `scripts/` holds real-world checks:
