@@ -121,6 +121,8 @@ export class FlowClient {
   close() { this.closing = true; this.ws.close() }
 
   private request(body: RequestBody): Promise<Extract<Message, { type: 'reply' }>['reply']> {
+    // while the service is away (restarting) a request is answered at once instead of waiting for good
+    if (!this.connected) return Promise.resolve({ ok: false, error: 'the flow service is not connected: try again in a moment' })
     const id = this.nextId++
     return new Promise(ok => {
       this.pending.set(id, ok)

@@ -101,10 +101,12 @@ export class Service {
    * After a restart the steps that were in flight are gone: their runs stop for the human, saying so (a message
    * carries them on), and devices still up count against the device slots again.
    */
-  recover() {
+  async recover() {
     for (const s of this.d.store.runs()) {
       if (!['running', 'waiting', 'paused'].includes(s.status)) continue
-      this.stopped(s.id, `flow's service restarted during ${s.stage}`)
+      // a change verify had set aside comes back first, or is named
+      const put = s.stage === 'verify' && this.d.projects[s.project] ? await this.pipeline(s.project).restoreStashes(s.id).catch(() => []) : []
+      this.stopped(s.id, `flow's service restarted during ${s.stage}${put.length ? ` (${put.join('; ')})` : ''}`)
     }
     for (const key of Object.keys(this.d.projects)) this.pipeline(key).adoptDevices()
   }

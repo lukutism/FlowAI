@@ -156,7 +156,7 @@ async function serveCmd() {
   const srv = serve({ service: svc, store: s, dataDir: DATA, port: 0, token: token(DATA) })
   announce(DATA, srv.port)
   console.log(`flow service on 127.0.0.1:${srv.port} (pid ${process.pid}); projects: ${Object.keys(projects).join(', ') || 'none'}`)
-  svc.recover()
+  await svc.recover()
   const tick = setInterval(() => svc.tick(), 30_000)
   svc.tick()
   // agents are stopped at once (their runs block and carry on after a message); waiting for every busy step

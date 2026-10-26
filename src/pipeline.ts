@@ -523,6 +523,25 @@ export class Pipeline {
     return agent
   }
 
+  /**
+   * A change verify set aside for its base run, left in a stash when the service stopped mid-way: put back while
+   * the worktree has nothing else, otherwise named for you. What it did, per repo.
+   */
+  async restoreStashes(run: string): Promise<string[]> {
+    if (!existsSync(join(this.runDir(run), 'run.json'))) return []
+    const out: string[] = []
+    for (const r of this.meta(run).repos) {
+      if (!existsSync(r.worktree)) continue
+      const list = new TextDecoder().decode(Bun.spawnSync(['git', 'stash', 'list', '--format=%gd %s'], { cwd: r.worktree }).stdout).split('\n')
+      const ref = list.find(l => l.endsWith('flow verify: base run'))?.split(' ')[0]
+      if (!ref) continue
+      if (changedFiles(r.worktree).length) { out.push(`${r.key}: verify set the change aside when the service stopped, and the worktree has changed since; it is in ${ref} (git stash list)`); continue }
+      const pop = Bun.spawnSync(['git', 'stash', 'pop', '--index', ref], { cwd: r.worktree, env: this.d.gitEnv })
+      out.push(pop.exitCode === 0 ? `${r.key}: the change was set aside by verify when the service stopped; it is back` : `${r.key}: the change verify set aside is in ${ref} and could not be put back (git stash list)`)
+    }
+    return out
+  }
+
   /** shipped and merged, or given up: the run is done (it leaves the attention list) */
   done(run: string, reason?: string) { this.must(run); this.d.store.append(run, reason ? 'engine' : 'human', { type: 'run.done', ...(reason ? { reason } : {}) }) }
 
@@ -565,7 +584,10 @@ export class Pipeline {
         removed.push(r.worktree)
       }
       Bun.spawnSync(['git', 'worktree', 'prune'], { cwd: repo, env: this.d.gitEnv })
-      Bun.spawnSync(['git', 'branch', '-D', m!.branch], { cwd: repo, env: this.d.gitEnv })
+      // the branch goes with the worktree this run made; without one (setup refused an existing branch, or the
+      // worktree was removed by hand) only when origin has all of it
+      const onOrigin = Bun.spawnSync(['git', 'merge-base', '--is-ancestor', `refs/heads/${m!.branch}`, `refs/remotes/origin/${m!.branch}`], { cwd: repo }).exitCode === 0
+      if (removed.includes(r.worktree) || onOrigin) Bun.spawnSync(['git', 'branch', '-D', m!.branch], { cwd: repo, env: this.d.gitEnv })
       try { rmdirSync(dirname(r.worktree)) } catch {} // the run's own folder, once empty
     }
     if (existsSync(dir)) {

@@ -143,7 +143,7 @@ describe('Service: after a restart, and when a step throws', () => {
     t.store.append('ex-8', 'human', { type: 'run.created', ticket: '#8', title: 'y', project: 'ex', base: 'origin/develop' })
     t.store.append('ex-8', 'engine', { type: 'setup.done' })
     t.store.append('ex-8', 'engine', { type: 'run.paused', window: '5h', until: 1 })
-    t.svc.recover()
+    await t.svc.recover()
     expect(t.store.state('ex-9')).toMatchObject({ status: 'failed', needs: { ask: expect.stringMatching(/restarted during setup/) } })
     expect(t.store.state('ex-8')).toMatchObject({ status: 'blocked', needs: { ask: expect.stringMatching(/restarted during plan.*message/) } })
   })

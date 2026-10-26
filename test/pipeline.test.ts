@@ -445,3 +445,32 @@ describe('pipeline: removing a run', () => {
     expect(t.store.state(run)).toMatchObject({ stage: 'done', status: 'done' })
   })
 })
+
+describe('pipeline: what the second review found', () => {
+  const ready = (d: { wt: string; run: string }) => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan())), turn(() => writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'))]
+  test('remove keeps a branch the run never made (setup refused it because it existed, with your commits on it)', async () => {
+    const t = setup(ready)
+    git(t.main, 'checkout', '-qb', 'fix/186278'); writeFileSync(join(t.main, 'mine.txt'), 'mine\n'); git(t.main, 'add', '.'); git(t.main, 'commit', '-qm', 'my own work'); git(t.main, 'checkout', '-q', 'develop')
+    await t.pipe.start(186278)
+    expect(t.store.state('example-186278')).toMatchObject({ status: 'failed' })
+    await t.pipe.remove('example-186278')
+    expect(git(t.main, 'log', '-1', '--format=%s', 'fix/186278')).toBe('my own work')
+  })
+  test('after a crash during verify\'s base run the change is back from its stash (it looked like "nothing to ship")', async () => {
+    const t = setup(ready)
+    const run = await t.pipe.start(186278)
+    git(t.wt, 'stash', 'push', '--include-untracked', '-m', 'flow verify: base run')
+    expect(existsSync(join(t.wt, 'src/b.ts'))).toBe(false)
+    expect(await t.pipe.restoreStashes(run)).toEqual([`mobile: the change was set aside by verify when the service stopped; it is back`])
+    expect(readFileSync(join(t.wt, 'src/b.ts'), 'utf8')).toBe('export const b = 2\n')
+    expect(git(t.wt, 'stash', 'list')).toBe('')
+  })
+  test('a stash left by verify while the worktree has new changes is left alone, and said', async () => {
+    const t = setup(ready)
+    const run = await t.pipe.start(186278)
+    git(t.wt, 'stash', 'push', '--include-untracked', '-m', 'flow verify: base run')
+    writeFileSync(join(t.wt, 'src/c.ts'), 'x\n')
+    expect((await t.pipe.restoreStashes(run))[0]).toMatch(/mobile: .*git stash list/)
+    expect(git(t.wt, 'stash', 'list')).toContain('flow verify: base run')
+  })
+})

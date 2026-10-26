@@ -304,15 +304,17 @@ describe('Run detail', () => {
   test('the plan, the ticket, the PR, the review open as Markdown over the detail', async () => {
     const t = await screen(runs, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nClamp the **remaining** quantity.\n\n## Approach\n- one\n- two\n' : n === 'pr.md' ? '# Fix picking\n\nVerified: yarn tsc → ok\n' : '') })
     try {
-      await t.press('enter', 'P'); await act(async () => { await Bun.sleep(80) })
-      const f = await t.frame()
+      await t.press('enter', 'P')
+      // the Markdown is rendered once the file came: wait for it rather than for a fixed time
+      const until = async (text: string) => { let f = ''; for (let i = 0; i < 40 && !(f = await t.frame()).includes(text); i++) await act(async () => { await Bun.sleep(25) }); return f }
+      const f = await until('Approach')
       expect(f).toContain('plan.md')
       expect(f).toContain('Approach')
       expect(f).not.toContain('## Approach')
       await t.press('esc')
       const p = at(await t.frame(), 'pr.md  ')
-      await act(async () => { await t.s.mockMouse.click(p.x, p.y) }); await act(async () => { await Bun.sleep(80) })
-      expect(await t.frame()).toContain('Verified: yarn tsc → ok')
+      await act(async () => { await t.s.mockMouse.click(p.x, p.y) })
+      expect(await until('Verified: yarn tsc → ok')).toContain('Verified: yarn tsc → ok')
     } finally { t.s.renderer.destroy() }
   })
   test('a click on Agent puts you in its message box, which stays above the shell when split', async () => {
