@@ -834,6 +834,28 @@ describe('the new-run form', () => {
       expect(t.f.sent[0]).toMatchObject({ cmd: 'start', task: 'Fix the walk', note: 'Use order 700216740\ntablet layout too', logins: 'email: tester@example.com\npassword: s3cret-pass\nlicense: LIC-1234' })
     } finally { t.s.renderer.destroy() }
   })
+  test("the run's environment: the ticket's suggestion filled in, a choice changed with ←→, a following one shown; sent with the start", async () => {
+    const vars = [
+      { name: 'CLOUD', label: 'Cloud', choices: ['https://qa.example.cloud', 'https://demo.example.cloud'], repos: ['mobile'] },
+      { name: 'APP_ID', label: 'App id', default: '0', repos: ['mobile'] },
+      { name: 'HUB', label: 'Portal HUB', from: 'CLOUD', repos: ['portal'] },
+    ]
+    const t = await screen(runs, undefined, { projects: [{ ...fso, vars }], query: query({ lookup: { ...found, customer: '', tags: [], vars: { CLOUD: 'https://qa.example.cloud' } } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      await keys(t, 'enter', 'tab')
+      const f = await t.frame()
+      expect(f).toContain('▸ 3 Login & environment')
+      expect(f).toMatch(/Cloud +https:\/\/qa\.example\.cloud +from the ticket/)
+      expect(f).toMatch(/App id +default: 0/)
+      expect(f).not.toContain('Portal HUB') // the run has no portal
+      await keys(t, 'tab', 'tab', 'right') // past email and password, onto Cloud
+      expect(await t.frame()).toMatch(/Cloud +https:\/\/demo\.example\.cloud/)
+      await keys(t, 'tab'); await typeIn(t, '12')
+      await keys(t, 'enter')
+      expect(t.f.sent[0]).toMatchObject({ cmd: 'start', ticket: 204598, vars: { CLOUD: 'https://demo.example.cloud', APP_ID: '12' } })
+    } finally { t.s.renderer.destroy() }
+  })
   test('no license field unless the project asks for one; shift+tab goes back a step', async () => {
     const t = await screen(runs, undefined, { projects: [fso], query: query() as FlowApi['query'] })
     try {

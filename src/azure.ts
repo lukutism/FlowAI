@@ -13,7 +13,7 @@ export const realAz: Az = async args => {
 }
 
 export interface AzureRef { org: string; project: string }
-export interface Ticket { id: number; key: string; title: string; kind: 'bug' | 'feature'; url: string; text: string; type?: string; board?: string; customer?: string; tags?: string[]; comments?: number; area?: string; platform?: string }
+export interface Ticket { id: number; key: string; title: string; kind: 'bug' | 'feature'; url: string; text: string; type?: string; board?: string; customer?: string; tags?: string[]; comments?: number; area?: string; platform?: string; environment?: string; application?: string }
 
 export function htmlToText(html: string): string {
   return html
@@ -49,6 +49,7 @@ export async function azureTicket(az: Az, t: AzureRef, id: number): Promise<Tick
     id, key: `#${id}`, title: String(f['System.Title'] ?? ''), kind: /bug|issue/i.test(f['System.WorkItemType'] ?? '') ? 'bug' : 'feature',
     url: `${t.org}/${project}/_workitems/edit/${id}`, text: sections.join('\n\n'),
     type: f['System.WorkItemType'] ?? '', board: project, customer: (f['Custom.CustomerName'] ?? '').trim(),
+    environment: (f['Custom.Environment'] ?? '').trim(), application: (f['Microsoft.VSTS.Feedback.ApplicationStartInformation'] ?? '').trim(),
     tags: (f['System.Tags'] ?? '').split(';').map(x => x.trim()).filter(Boolean), comments: comments.length, area: (f['Custom.SolutionArea'] ?? '').trim(), platform: (f['Custom.TargetPlatform'] ?? '').trim(),
   }
 }

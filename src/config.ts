@@ -48,7 +48,7 @@ const repo = z.object({
      * the run's own browser (agent-browser), through a proxy that sends localhost:<appPort> to the run's port: start
      * is opened first, hosts the other hosts the agent may open (with localhost); headed shows its window
      */
-    browser: z.object({ start: z.string().url().optional(), hosts: z.array(z.string()).default([]), appPort: z.number().int().default(3000), headed: z.boolean().default(false) }).optional(),
+    browser: z.object({ start: z.string().optional(), hosts: z.array(z.string()).default([]), appPort: z.number().int().default(3000), headed: z.boolean().default(false) }).optional(),
   }).optional(),
   /**
    * customer patches: apply puts the customer's patch in the new worktree, staged ({customer} {app} {base} {main});
@@ -127,6 +127,17 @@ const project = z.object({
    * has one (none is made), git-excluded, then sync run in the background to bring it to the run's branch
    */
   indexes: z.array(z.object({ dir: z.string(), sync: z.string().optional() })).default([]),
+  /**
+   * a run's environment, asked in the new-run form (or --var NAME=value) and suggested from the ticket: which cloud,
+   * which application. {NAME} in an app env's values and a browser's start page; empty keeps the template's value.
+   * from: follow another variable unless given; detect: a ticket field (environment, customer, application, tags),
+   * mapped by pattern (case-insensitive) to a value, or taken as it is; repos: the repos it is asked for
+   */
+  vars: z.array(z.object({
+    name: z.string().regex(/^[A-Z][A-Z0-9_]*$/), label: z.string().optional(), choices: z.array(z.string()).optional(), default: z.string().optional(),
+    from: z.string().optional(), repos: z.array(z.string()).optional(),
+    detect: z.object({ field: z.enum(['environment', 'customer', 'application', 'tags']), map: z.record(z.string(), z.string()).optional() }).optional(),
+  })).default([]),
   /** what tools write into a worktree and must not ship: added to git's local exclude list (.git/info/exclude), which the repo's main checkout and all its worktrees share, so it applies there too */
   ignore: z.array(z.string()).default(['.argent/']),
   /** the new run's Login step: email and password always; a license field for projects whose app needs one */
@@ -163,7 +174,11 @@ export type VerifyStep = Repo['verify'][number]
 
 export function parseProject(json: unknown, source: string): Project {
   const r = project.safeParse(json)
-  if (r.success) return r.data
+  if (r.success) {
+    // a variable follows only one named before it
+    for (const [i, v] of r.data.vars.entries()) if (v.from && !r.data.vars.slice(0, i).some(x => x.name === v.from)) throw new Error(`${source}: vars: ${v.name} follows ${v.from}, which is not one of the vars before it`)
+    return r.data
+  }
   throw new Error(r.error.issues.map(i => `${source}: ${i.path.join('.') || '(root)'}: ${i.message}`).join('\n'))
 }
 

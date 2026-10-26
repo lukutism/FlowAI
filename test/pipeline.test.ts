@@ -18,7 +18,7 @@ const TOOLS = `${process.execPath} ${join(import.meta.dir, 'fake-tools.ts')}`
 const result = (text = 'done') => JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: text, num_turns: 1, session_id: 's-1', usage: { input_tokens: 1000, output_tokens: 100 } })
 const turn = (effect?: (prompt: string) => void, text?: string): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), result(text)].join('\n'), effect })
 
-function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources; appEnv?: object; lenses?: string[]; ticket?: string } = {}) {
+function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { review?: FakeTurn[]; reviewOff?: boolean; release?: boolean; resources?: (store: EventStore) => Resources; appEnv?: object; lenses?: string[]; ticket?: string; vars?: object[]; fields?: Record<string, string> } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'flow-pipe-'))
   const origin = join(root, 'origin.git'), main = join(root, 'main')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'develop', origin])
@@ -30,7 +30,7 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   // a release line cut from develop (the base for release fixes that are later ported)
   if (o.release) git(main, 'push', '-q', 'origin', 'HEAD:refs/heads/patch/1.0')
   const project = parseProject({
-    key: 'example', name: 'Example', worktrees: join(root, 'worktrees'),
+    key: 'example', name: 'Example', worktrees: join(root, 'worktrees'), ...(o.vars ? { vars: o.vars } : {}),
     tracker: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' }, forge: { kind: 'azure', org: 'https://dev.azure.com/example', project: 'example' },
     // one lens unless a test asks for the three: each lens is a reviewer turn
     review: o.reviewOff ? { enabled: false } : { lenses: o.lenses ?? ['correctness'] },
@@ -42,7 +42,7 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   const azCalls: string[][] = []
   const az: Az = args => {
     azCalls.push(args)
-    if (args.includes('work-item')) return { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'Asset list crashes', 'System.WorkItemType': 'Bug', 'System.Description': o.ticket ?? '<p>It crashes.</p>' } }), err: '' }
+    if (args.includes('work-item')) return { code: 0, out: JSON.stringify({ fields: { 'System.Title': 'Asset list crashes', 'System.WorkItemType': 'Bug', 'System.Description': o.ticket ?? '<p>It crashes.</p>', ...o.fields } }), err: '' }
     if (args.includes('pr')) return { code: 0, out: JSON.stringify({ pullRequestId: 4711 }), err: '' }
     return { code: 0, out: '{"comments":[]}', err: '' }
   }
@@ -411,6 +411,27 @@ describe('port: the same fix onto another line', () => {
     expect((require('node:fs').statSync(join(t.runDir, 'logins.md')).mode & 0o777).toString(8)).toBe('600')
     expect((t.agents[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain('logins.md')
     await expect(t.pipe.ship(run)).rejects.toThrow(/test login is in src\/b\.ts/)
+  })
+  test("the run's environment: suggested by the ticket, given values win, filled into the app env and told to the agent", async () => {
+    const vars = [
+      { name: 'CLOUD', label: 'Cloud', choices: ['https://qa.example.cloud', 'https://demo.example.cloud'], detect: { field: 'environment', map: { '^qa': 'https://qa.example.cloud', '^demo': 'https://demo.example.cloud' } } },
+      { name: 'APP_ID', label: 'Application id', default: '0' },
+    ]
+    const appEnv = { file: '.env', from: '.env.example', set: { APP_HOST: '{CLOUD}', APP_ID: '{APP_ID}' } }
+    const make = () => {
+      const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))], { vars, appEnv, fields: { 'Custom.Environment': 'QA' } })
+      writeFileSync(join(t.main, '.env.example'), 'APP_HOST=https://develop.example.cloud\nAPP_ID=7\n'); git(t.main, 'add', '.'); git(t.main, 'commit', '-qm', 'env'); git(t.main, 'push', '-q', 'origin', 'HEAD:develop')
+      return t
+    }
+    const t = make()
+    expect((await t.pipe.lookup(186278)).vars).toEqual({ CLOUD: 'https://qa.example.cloud' })
+    await t.pipe.start(186278)
+    expect(readFileSync(join(t.wt, '.env'), 'utf8')).toBe('APP_HOST=https://qa.example.cloud\nAPP_ID=0\n')
+    expect((t.agents[0] as { appendSystemPrompt?: string }).appendSystemPrompt).toContain("This run's environment (the app's env and its browser use it; test there):\n- Cloud: https://qa.example.cloud\n- Application id: 0")
+    const u = make()
+    await u.pipe.start(186278, { vars: { CLOUD: 'https://demo.example.cloud', APP_ID: '12' } })
+    expect(readFileSync(join(u.wt, '.env'), 'utf8')).toBe('APP_HOST=https://demo.example.cloud\nAPP_ID=12\n')
+    await expect(make().pipe.start(186278, { vars: { NOPE: 'x' } })).rejects.toThrow(/no variable NOPE/)
   })
   test('only a shipped run can be ported, and only once per line', async () => {
     const t = setup(d => [turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: x? — default: y')))])

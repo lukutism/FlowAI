@@ -9,6 +9,8 @@ export interface Ticket {
   type?: string; board?: string; customer?: string; tags?: string[]; comments?: number
   /** the product area it belongs to (which app of a customer's); the platform it targets */
   area?: string; platform?: string
+  /** where it was seen (QA, Demo, …), and the application it names: a run's environment is suggested from them */
+  environment?: string; application?: string
 }
 
 /** Where tickets come from: it recognises its keys and reads a ticket. */

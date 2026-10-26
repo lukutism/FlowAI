@@ -16,9 +16,11 @@ export interface FormApi {
 export interface Lookup {
   run: string; exists: boolean; key: string; title: string; kind: 'bug' | 'feature'; type: string; url: string; board: string; customer: string; tags: string[]; comments: number
   area?: string; platform?: string
+  /** the run's environment as the ticket suggests it */
+  vars?: Record<string, string>
 }
 
-type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'email' | 'password' | 'license'
+type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'email' | 'password' | 'license' | `var:${string}`
 /** how many lines of the notes show at once (the last ones, as you type) */
 const NOTE_ROWS = 8
 const MODELS = ['default', 'opus', 'sonnet']
@@ -86,6 +88,9 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const [step, setStep] = useState<1 | 2 | 3>(1)
   const [note, setNote] = useState('')
   const [login, setLogin] = useState({ email: '', password: '', license: '' })
+  // the run's environment (the project's vars): what you set, and which you changed (the ticket's suggestion stays off those)
+  const [env, setEnv] = useState<Record<string, string>>({})
+  const [envTouched, setEnvTouched] = useState<Set<string>>(new Set())
   const [look, setLook] = useState<{ state: 'idle' | 'loading' | 'ok' | 'error'; data?: Lookup; error?: string }>({ state: 'idle' })
   const [bases, setBases] = useState<Record<string, string[]>>({})
   const [refs, setRefs] = useState<string[]>([])
@@ -140,6 +145,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (r.length && !touched.has('repos')) setRepos(r)
     const b = suggestBase(d.tags, bases[(r.length && !touched.has('repos') ? r : repos)[0] ?? ''] ?? []); if (b && !touched.has('base')) setBase(b)
     const s = suggestPatch(d, choices, p.patchApps); if (s && !touched.has('patch')) setPatch(s)
+    setEnv(e => ({ ...e, ...Object.fromEntries(Object.entries(d.vars ?? {}).filter(([k]) => !envTouched.has(k))) }))
   }, [look, bases, choices])
 
   // whether the chosen patch fits the base
@@ -165,7 +171,10 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', ...(ticket.trim() ? [] : ['task' as const]), 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
     ...(devRepos.length ? ['dev' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
   const loginFields: ('email' | 'password' | 'license')[] = ['email', 'password', ...(p?.license ? ['license' as const] : [])]
-  const move = (d: number) => { const list: Field[] = step === 3 ? loginFields : fields; setField(f => list[(list.indexOf(f) + d + list.length) % list.length]!) }
+  const envVars = (p?.vars ?? []).filter(v => !v.repos || v.repos.some(r => repos.includes(r)))
+  const stepThree: Field[] = [...loginFields, ...envVars.map(v => `var:${v.name}` as const)]
+  const move = (d: number) => { const list: Field[] = step === 3 ? stepThree : fields; setField(f => list[(list.indexOf(f) + d + list.length) % list.length]!) }
+  const setVar = (name: string, value: string) => { setEnvTouched(t => new Set([...t, name])); setEnv(e => ({ ...e, [name]: value })) }
   const cycle = <T,>(list: T[], cur: T, d: number): T => list[(list.indexOf(cur) + d + list.length) % list.length] ?? cur
 
   // the run's own checks: the ticket can be started (or the task is described), repos, a patch that fits
@@ -186,7 +195,8 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const go = (to: 1 | 2 | 3) => { if (to > 1 && step === 1 && !ready()) return; setProblem(''); setStep(to); if (to === 3) setField('email') }
   const start = () => {
     const logins = loginFields.filter(k => login[k].trim()).map(k => `${k}: ${login[k].trim()}`).join('\n')
-    const extra = { ...(note.trim() ? { note: note.trim() } : {}), ...(logins ? { logins } : {}) }
+    const vars = Object.fromEntries(envVars.map(v => [v.name, env[v.name]?.trim() ?? '']).filter(([, x]) => x))
+    const extra = { ...(note.trim() ? { note: note.trim() } : {}), ...(logins ? { logins } : {}), ...(Object.keys(vars).length ? { vars } : {}) }
     if (!ready()) return
     if (!p) return setProblem('no project: add one in ~/.config/flow/projects')
     if (!ticket.trim()) {
@@ -244,6 +254,16 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       if (n === 'tab' && key.shift && field === loginFields[0]) { go(2); return true }
       if ((n === 'tab' && !key.shift) || n === 'down') { move(1); return true }
       if ((n === 'tab' && key.shift) || n === 'up') { move(-1); return true }
+      if (field.startsWith('var:')) {
+        const v = envVars.find(x => `var:${x.name}` === field)
+        if (!v) return true
+        const cur = env[v.name] ?? ''
+        const dd = n === 'right' ? 1 : n === 'left' ? -1 : 0
+        if (v.choices?.length && dd) setVar(v.name, cycle(['', ...v.choices, ...(cur && !v.choices.includes(cur) ? [cur] : [])], cur, dd))
+        else if (n === 'backspace') setVar(v.name, v.choices?.length ? '' : cur.slice(0, -1))
+        else if (typed && typed !== ' ' && !v.choices?.length) setVar(v.name, cur + typed)
+        return true
+      }
       const k = field as 'email' | 'password' | 'license'
       if (n === 'backspace') setLogin(l => ({ ...l, [k]: l[k].slice(0, -1) }))
       else if (typed && typed !== ' ') setLogin(l => ({ ...l, [k]: l[k] + typed }))
@@ -283,6 +303,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     const one = text.replace(/\r?\n/g, ' ').trim()
     if (picking) return setPicking(x => x && { ...x, query: x.query + one, index: 0 })
     if (step === 2) return setNote(x => x + text.replace(/\r\n/g, '\n'))
+    if (step === 3 && field.startsWith('var:')) { const name = field.slice(4); return setVar(name, (env[name] ?? '') + one.replace(/\s+/g, '')) }
     if (step === 3) { const k = field as 'email' | 'password' | 'license'; return setLogin(l => ({ ...l, [k]: l[k] + one.replace(/\s+/g, '') })) }
     if (field === 'ticket') return setTicket(x => x + one.replace(/\s+/g, ''))
     if (field === 'task') return setTask(x => x + text.trim())
@@ -337,7 +358,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       <text><strong>{'  New run'}</strong>{fixed && p ? <span fg={C.accent}>{` · ${p.name}`}</span> : null}<span fg={C.faint}>{'   a ticket to a draft PR'}</span></text>
       <box flexDirection="row">
         <text>{'  '}</text>
-        {([[1, 'Run'], [2, 'Notes'], [3, 'Login']] as const).map(([n, label]) => (
+        {([[1, 'Run'], [2, 'Notes'], [3, envVars.length ? 'Login & environment' : 'Login']] as const).map(([n, label]) => (
           <Click key={n} on={() => go(n)}><text>
             <span fg={step === n ? C.accent : C.muted}>{step === n ? `▸ ${n} ` : `  ${n} `}</span><span fg={step === n ? C.text : C.secondary}>{step === n ? <strong>{label}</strong> : label}</span>
             <span fg={C.faint}>{n === 2 && note.trim() ? ` · ${note.trim().split('\n').length} line${note.trim().split('\n').length === 1 ? '' : 's'}` : n === 3 && loginFields.some(k => login[k]) ? ` · ${loginFields.filter(k => login[k]).length} set` : ''}{'      '}</span>
@@ -399,6 +420,18 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         {row('email', 'Email', <text fg={C.text}>{login.email}{field === 'email' ? <span fg={C.accent}>▏</span> : ''}{login.email ? '' : <span fg={C.faint}>the test user</span>}</text>)}
         {row('password', 'Password', <text fg={C.text}>{'•'.repeat(Math.min(login.password.length, 32))}{field === 'password' ? <span fg={C.accent}>▏</span> : ''}{login.password ? '' : <span fg={C.faint}>never shown</span>}</text>)}
         {p?.license ? row('license', 'License', <text fg={C.text}>{'•'.repeat(Math.min(login.license.length, 32))}{field === 'license' ? <span fg={C.accent}>▏</span> : ''}{login.license ? '' : <span fg={C.faint}>the app's license, if it asks for one</span>}</text>) : null}
+        {envVars.length ? <>
+          {blank}
+          <text fg={C.muted}>{"  The run's environment: where its app and browser point."}</text>
+          {blank}
+          {envVars.map(v => {
+            const f = `var:${v.name}` as const, cur = env[v.name] ?? ''
+            const follows = v.from ? (p?.vars ?? []).find(x => x.name === v.from) : undefined
+            const empty = follows && env[follows.name] ? `follows ${follows.label ?? follows.name}: ${env[follows.name]}` : v.default ? `default: ${v.default}` : "the template's value"
+            const hint = cur && look.data?.vars?.[v.name] === cur && !envTouched.has(v.name) ? 'from the ticket' : v.choices?.length ? '←→ choose' : ''
+            return row(f, v.label ?? v.name, <text fg={C.text}>{cur}{field === f && !v.choices?.length ? <span fg={C.accent}>▏</span> : ''}{cur ? '' : <span fg={C.faint}>{empty}</span>}</text>, hint)
+          })}
+        </> : null}
         {blank}
       </> : null}
       {blank}
@@ -407,7 +440,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         <text>{'  '}</text>
         {step === 1 ? <Click on={() => go(2)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Next: Notes '}</strong></text></box></Click> : null}
         {step === 3 ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Start run '}</strong></text></box></Click> : null}
-        {step === 2 ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ⇥ Next: Login '}</strong></text></box></Click> : null}
+        {step === 2 ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{envVars.length ? ' ⇥ Next: Login & environment ' : ' ⇥ Next: Login '}</strong></text></box></Click> : null}
         <text fg={C.muted}>{step === 1 ? '   ⇥ next field   ←→ choose   space toggle   ' : step === 2 ? '   ↵ new line   ⇧⇥ back   ' : '   ⇥ next field   ⇧⇥ back   '}</text>
         {step !== 3 ? <Click on={start}><text fg={C.muted}>{'ctrl+s start now   '}</text></Click> : null}
         <Click on={onCancel}><text fg={C.muted}>esc cancel</text></Click>

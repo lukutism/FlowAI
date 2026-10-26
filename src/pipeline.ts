@@ -17,6 +17,7 @@ import { commitMessage, parsePlan, planFacts, planGaps, prSummary } from './plan
 import { drift, prProblems } from './drift.ts'
 import { advisorPrompt, lookupPrompt, parseAdvice, type Advice } from './advisor.ts'
 import { Browsers } from './browser.ts'
+import { detectVars, fillVars, resolveVars } from './vars.ts'
 import { buildPrompt, contextPrompt, fenced, fixPrompt, planPrompt, planRetryPrompt, runBrief, type Brief } from './prompts.ts'
 import { callTool, toolList, type ToolDef } from './runtools.ts'
 import { memoryDir, saveLearnings } from './learnings.ts'
@@ -38,7 +39,9 @@ interface RunRepo { key: string; worktree: string; base: string }
 /** what a run needs beyond its events: kept as run.json in the run folder */
 interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string; model?: string
   /** a run without a ticket: a task described instead */
-  task?: boolean }
+  task?: boolean
+  /** the run's environment (the project's vars: given, suggested by the ticket, followed or default) */
+  vars?: Record<string, string> }
 
 export { slug } from './slug.ts'
 
@@ -165,7 +168,9 @@ export class Pipeline {
   async lookup(ticket: number | string) {
     const run = this.runId(ticket)
     const t = await this.tracker.read(this.tracker.parseKey(String(ticket))!.id)
-    return { run, exists: !!this.d.store.state(run), key: t.key, title: t.title, kind: t.kind, type: t.type ?? '', url: t.url, board: t.board ?? '', customer: t.customer ?? '', tags: t.tags ?? [], comments: t.comments ?? 0, area: t.area ?? '', platform: t.platform ?? '' }
+    return { run, exists: !!this.d.store.state(run), key: t.key, title: t.title, kind: t.kind, type: t.type ?? '', url: t.url, board: t.board ?? '', customer: t.customer ?? '', tags: t.tags ?? [], comments: t.comments ?? 0, area: t.area ?? '', platform: t.platform ?? '',
+      // the run's environment as the ticket suggests it (the form fills it in)
+      vars: detectVars(this.d.project.vars, t) }
   }
 
   /** a repo's bases to start from: its default, then the branches its release patterns match, newest version first */
@@ -203,7 +208,7 @@ export class Pipeline {
     return { ok: res.code === 0, text: tail(res.out || res.err, 1) }
   }
 
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string; note?: string; logins?: string } = {}): Promise<string> {
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string; note?: string; logins?: string; vars?: Record<string, string> } = {}): Promise<string> {
     const p = this.d.project
     const run = o.task?.trim() && !String(ticket).trim() ? this.taskRunId(o.task) : this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
@@ -231,7 +236,8 @@ export class Pipeline {
     // bases reach git and the project's shell commands: plain ref names only
     for (const r of repos) if (!/^[A-Za-z0-9][\w./-]*$/.test(r.base) || r.base.includes('..') || r.base.endsWith('/')) throw new Error(`base "${r.base}" is not a branch name`)
     const branch = task ? `${kind === 'bug' ? 'fix' : 'feat'}/${id}` : p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(task ? { task: true } : {}) }
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(task ? { task: true } : {}),
+      ...(p.vars.length ? { vars: resolveVars(p.vars, { ...detectVars(p.vars, t), ...o.vars }) } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
     // what you add before the start: a note into the agent's brief; test logins in a file only you can read, which
@@ -261,7 +267,7 @@ export class Pipeline {
         // before the device's build reads it: the app's env with this run's values (the license from the login step)
         if (c.appEnv) {
           const f = join(this.runDir(run), 'logins.md')
-          const set = writeAppEnv(r.worktree, c.appEnv, parseLogins(existsSync(f) ? readFileSync(f, 'utf8') : ''))
+          const set = writeAppEnv(r.worktree, this.appEnvFor(c.appEnv, m), parseLogins(existsSync(f) ? readFileSync(f, 'utf8') : ''))
           if (set) { logLine(log, `${r.key}: app env ${set}`); notes.push(`${r.key}: app env ${set}`) }
         }
       }
@@ -361,7 +367,7 @@ export class Pipeline {
     await this.building(run, () => createWorktree({ repo: c.path, worktree, branch: m.branch, base: from, install: c.install, localFiles: this.d.project.localFiles, indexes: this.d.project.indexes, ignore, log }))
     if (c.appEnv) {
       const f = join(this.runDir(run), 'logins.md')
-      const set = writeAppEnv(worktree, c.appEnv, parseLogins(existsSync(f) ? readFileSync(f, 'utf8') : ''))
+      const set = writeAppEnv(worktree, this.appEnvFor(c.appEnv, m), parseLogins(existsSync(f) ? readFileSync(f, 'utf8') : ''))
       if (set) logLine(log, `${key}: app env ${set}`)
     }
     // the agent's folder stays the one its session lives in; the repos list grows
@@ -701,7 +707,8 @@ export class Pipeline {
     // a tool such as verify can take minutes
     const env = { MCP_TOOL_TIMEOUT: '1800000', ...(dev ? { ...(dev.platform === 'android' ? { ANDROID_SERIAL: dev.id } : {}), RCT_METRO_PORT: String(dev.metroPort) } : {}) }
     const note = existsSync(join(dir, 'note.md')) ? readFileSync(join(dir, 'note.md'), 'utf8') : undefined
-    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run), otherRepos: this.d.project.repos.map(r => r.key).filter(k => !this.meta(run).repos.some(r => r.key === k)) })
+    const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run), otherRepos: this.d.project.repos.map(r => r.key).filter(k => !this.meta(run).repos.some(r => r.key === k)),
+      env: this.d.project.vars.filter(v => this.meta(run).vars?.[v.name]).map(v => `${v.label ?? v.name}: ${this.meta(run).vars![v.name]}`) })
     const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, mcpConfig, env, ...(m.model ? { model: m.model } : {}) })
     this.agents.set(run, agent)
     return agent
@@ -832,10 +839,19 @@ export class Pipeline {
   /** the tools of the run's agent (its flow MCP server) */
   tools(run: string): ToolDef[] { return toolList(this.d.project.tools, !!this.must(run).device, !!this.browserSpec(run)) }
 
-  /** the run's browser settings: its dev server's, when the run has a dev server running */
+  /** the run's browser settings: its dev server's, when the run has a dev server running; its start page filled */
   private browserSpec(run: string) {
     const s = this.must(run)
-    return s.devServer ? this.repoConfig(s.devServer.repo).devServer?.browser : undefined
+    const b = s.devServer ? this.repoConfig(s.devServer.repo).devServer?.browser : undefined
+    if (!b) return undefined
+    const start = b.start ? fillVars(b.start, this.meta(run).vars ?? {}) : ''
+    return { ...b, start: start || undefined }
+  }
+
+  /** a repo's app env with the run's values filled in; a value whose variables are all empty is not set */
+  private appEnvFor(spec: NonNullable<Repo['appEnv']>, m: Meta) {
+    const set = Object.fromEntries(Object.entries(spec.set).map(([k, v]) => [k, fillVars(v, m.vars ?? {})]).filter(([, v]) => v))
+    return { ...spec, set }
   }
 
   /** a tool call from the run's agent: on this run only */

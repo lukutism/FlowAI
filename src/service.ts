@@ -12,7 +12,7 @@ import type { Windows } from './usage.ts'
 
 export type Command =
   /** note: added to the agent's brief; logins: test logins, kept in a file only you can read */
-  | { cmd: 'start'; project: string; ticket: number | string; task?: string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; note?: string; logins?: string }
+  | { cmd: 'start'; project: string; ticket: number | string; task?: string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; note?: string; logins?: string; vars?: Record<string, string> }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
@@ -45,6 +45,8 @@ export interface ProjectSummary {
   maxParallel?: number; usage?: { fiveHour: number; week: number }; review?: boolean
   /** the new run's Login step asks for a license too */
   license?: boolean
+  /** the run environment's variables, for the new-run form */
+  vars?: { name: string; label?: string; choices?: string[]; default?: string; from?: string; repos?: string[] }[]
   sandbox?: { enabled: boolean; writable: number; domains: number; strict: boolean }
 }
 
@@ -171,7 +173,7 @@ export class Service {
       devices: (['android', 'ios'] as const).filter(x => p.devices?.[x]), patches: p.repos.filter(r => r.patches).map(r => r.key), deadlineMinutes: p.plan.deadlineMinutes,
       defaults: (p.repos.some(r => r.default) ? p.repos.filter(r => r.default) : p.repos.slice(0, 1)).map(r => r.key), devServers: p.repos.filter(r => r.devServer).map(r => r.key),
       repoMatch: Object.fromEntries(p.repos.filter(r => r.match).map(r => [r.key, r.match!])), patchApps: p.patchApps,
-      maxParallel: p.agent.maxParallel, usage: p.usage, review: p.review.enabled, license: p.login.license,
+      maxParallel: p.agent.maxParallel, usage: p.usage, review: p.review.enabled, license: p.login.license, vars: p.vars.map(({ detect: _, ...v }) => v),
       sandbox: p.sandbox ? (sb => ({ enabled: !!sb.enabled, writable: sb.filesystem?.allowWrite?.length ?? 0, domains: sb.network?.allowedDomains?.length ?? 0, strict: !!sb.network?.strictAllowlist }))(p.sandbox as { enabled?: boolean; filesystem?: { allowWrite?: string[] }; network?: { allowedDomains?: string[]; strictAllowlist?: boolean } }) : undefined }))
   }
 
@@ -212,7 +214,7 @@ export class Service {
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
         this.starting.set(run, c.project)
-        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, task: c.task, note: c.note, logins: c.logins }) })
+        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, task: c.task, note: c.note, logins: c.logins, ...(c.vars ? { vars: c.vars } : {}) }) })
         return { ok: true, run }
       }
       if (c.cmd === 'stop') {

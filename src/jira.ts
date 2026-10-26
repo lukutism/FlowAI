@@ -91,7 +91,7 @@ export function jiraTracker(t: JiraConfig, deps: JiraDeps = {}): Tracker {
       if (files.length) sections.push(`Attachments:\n${files.join('\n')}`)
       const k = j.key ?? key
       return { id: k, key: k, title: f.summary ?? '', kind: /bug/i.test(f.issuetype?.name ?? '') ? 'bug' : 'feature', url: `${t.site}/browse/${k}`, text: sections.join('\n\n'),
-        type: f.issuetype?.name ?? '', board: t.key.toUpperCase(), customer: '', tags: (f.labels ?? []) as string[], comments: comments.length }
+        type: f.issuetype?.name ?? '', board: t.key.toUpperCase(), customer: '', tags: (f.labels ?? []) as string[], comments: comments.length, environment: env.split('\n')[0]?.trim() ?? '' }
     },
   }
 }

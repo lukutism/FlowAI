@@ -4,7 +4,7 @@
  *
  *   flow                                                            the screen (starts the background service if needed)
  *   flow serve                                                      the background service: runs, deadlines, the screen's data
- *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--dev-server] [--patch <customer>/<app>] [--model <name>] [--note "<for the agent>"] [--logins-file <file>]   worktrees, plan; continues until it needs you
+ *   flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--dev-server] [--patch <customer>/<app>] [--model <name>] [--note "<for the agent>"] [--logins-file <file>] [--var NAME=value …]   worktrees, plan; continues until it needs you
  *   flow approve <run> [Q1=<answer> …]                             answer the plan's questions (defaults for the rest)
  *   flow message <run> "<text>"                                     to the run's agent; the run carries on afterwards
  *   flow port <run> [--to <branch>]                               the shipped fix onto another line (default develop)
@@ -181,6 +181,9 @@ async function uiCmd() {
 
 async function main(argv: string[]) {
   const [cmd, ...args] = argv
+  // --var NAME=value, as often as needed: the run's environment (the project's vars)
+  const vars: Record<string, string> = {}
+  for (let i = args.indexOf('--var'); i >= 0; i = args.indexOf('--var')) { const [k, ...v] = (args.splice(i, 2)[1] ?? '').split('='); if (k) vars[k] = v.join('=') }
   const f = flags(args, ['base', 'model', 'cwd', 'kind', 'to', 'repos', 'device', 'patch', 'note', 'logins-file'])
   const repos = f.repos ? f.repos.split(',').map(x => x.trim()).filter(Boolean) : undefined
   const service = ['start', 'approve', 'message', 'ship', 'port', 'release', 'done', 'rm', 'stop', 'add', 'sync'].includes(cmd ?? '') ? await connect(DATA).catch(() => null) : null
@@ -189,14 +192,14 @@ async function main(argv: string[]) {
     case 'serve': return serveCmd()
     case 'start': {
       const [project, ticket] = args
-      if (!project || !ticket) throw new Error('flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--patch <customer>/<app>] [--model <name>] [--note "…"] [--logins-file <file>]')
+      if (!project || !ticket) throw new Error('flow start <project> <ticket> [--repos a,b] [--base <ref>] [--kind bug|feature] [--device android|ios] [--patch <customer>/<app>] [--model <name>] [--note "…"] [--logins-file <file>] [--var NAME=value …]')
       const tk = /^\d+$/.test(ticket) ? Number(ticket) : ticket
       if (f.kind && f.kind !== 'bug' && f.kind !== 'feature') throw new Error('--kind is bug or feature')
       if (f.device && f.device !== 'android' && f.device !== 'ios') throw new Error('--device is android or ios')
       const device = f.device as 'android' | 'ios' | undefined
       // test logins from a file, so they don't stay in the shell's history
       const logins = f['logins-file'] ? readFileSync(f['logins-file'], 'utf8') : undefined
-      const extra = { ...(f.note ? { note: f.note } : {}), ...(logins ? { logins } : {}) }
+      const extra = { ...(f.note ? { note: f.note } : {}), ...(logins ? { logins } : {}), ...(Object.keys(vars).length ? { vars } : {}) }
       if (service) return viaService(service, { cmd: 'start', project, ticket: tk, base: f.base, kind: f.kind as 'bug' | 'feature' | undefined, repos, device, patch: f.patch, devServer: args.includes('--dev-server'), ...(f.model ? { model: f.model } : {}), ...extra }).finally(() => service.close())
       const s = store()
       const p = pipeline(s, project, f.model)

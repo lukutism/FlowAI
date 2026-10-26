@@ -86,6 +86,15 @@ the ticket (a labelled password, license key, token or PIN, or a password alone 
 ticket the agent reads keeps a pointer instead (also for a ticket it reads through its `ticket` tool), and the
 values are masked in the run's transcript and the Agent pane.
 
+**The run's environment.** A project's `vars` are the questions hwt asked at creation: which cloud the app talks to,
+which application, the portal's tenant (`{ "name": "CLOUD", "label": "Cloud", "choices": [...], "repos": ["mobile"],
+"detect": { "field": "environment", "map": { "^qa": "https://qa…" } } }`). The new run's third step (Login &
+environment) asks those of the run's repos: a choice with `←→`, a text typed; `flow start … --var NAME=value` the
+same. The ticket suggests values (`detect`: its environment, customer, application or tags, mapped by pattern or
+taken as they are), filled in and still yours to change; a variable with `from` follows another unless given (the
+portal's HUB follows the app's cloud); then its default; empty keeps the template's value. They fill `{NAME}` in an
+app env's `set` and a browser's `start`, and the agent's brief names them.
+
 **The app's env.** A repo's `appEnv` (`{ "file": ".env", "from": ".env.container.develop", "set": {…}, "login":
 { "license": "OPS_LICENSE_KEY" } }`) gives each run its own env file: written at setup, before the device's build,
 from the template with the fixed values and the login step's email, password or license in the named variables. It
