@@ -216,6 +216,19 @@ describe('Service: draft PRs merged or closed on the host', () => {
     expect(t.store.events('ex-1').map(e => e.type).slice(-2)).toEqual(['run.done', 'run.removed'])
     expect(calls.filter(c => c.includes('show'))).toHaveLength(1)
   })
+  test('removed while it is busy (a turn waiting hours for the usage window): removed now, not refused', async () => {
+    const t = setup(() => [])
+    t.store.append('ex-3', 'human', { type: 'run.created', ticket: '#3', title: 'x', project: 'ex', base: 'origin/develop' })
+    t.store.append('ex-3', 'engine', { type: 'setup.done' })
+    const orig = Pipeline.prototype.message
+    Pipeline.prototype.message = () => new Promise(() => {}) // a step that waits for good
+    try {
+      expect(t.svc.dispatch({ cmd: 'message', run: 'ex-3', text: 'go on' })).toMatchObject({ ok: true })
+      expect(t.svc.dispatch({ cmd: 'remove', run: 'ex-3' })).toMatchObject({ ok: true })
+      for (let i = 0; i < 20 && t.store.state('ex-3'); i++) await Bun.sleep(20)
+      expect(t.store.state('ex-3')).toBeUndefined()
+    } finally { Pipeline.prototype.message = orig }
+  })
   test('marked done by you (a resolution confirmed, a run given up): removed like a merged one, its device stopped', async () => {
     const t = setup(() => [])
     t.store.append('ex-2', 'human', { type: 'run.created', ticket: '#2', title: 'x', project: 'ex', base: 'origin/develop' })

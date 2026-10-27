@@ -244,6 +244,14 @@ export class Service {
         this.pipeline(owner).queueMessage(c.run, c.text)
         return { ok: true, run: c.run, note: `queued for ${c.run}: the agent gets it with its next turn` }
       }
+      // a run busy for a long while (a turn waiting hours for the usage window) is removed now, not refused: its agent
+      // stopped first; the step that waited finds the run gone
+      if (c.cmd === 'remove' && this.busy.has(c.run) && this.d.store.state(c.run)) {
+        const p = this.pipeline(this.d.store.state(c.run)!.project)
+        void (async () => { await p.closeAgent(c.run); await p.remove(c.run, { force: c.force }) })()
+          .catch(e => { for (const l of this.notices) l({ run: c.run, text: (e as Error).message }) })
+        return { ok: true, run: c.run }
+      }
       // a run just started may not be recorded yet (its ticket is still being read): it is busy, not missing
       if (this.busy.has(c.run)) throw new Error(`${c.run} is busy: wait for its current step to end`)
       const s = this.d.store.state(c.run)

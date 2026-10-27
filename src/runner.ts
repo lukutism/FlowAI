@@ -89,6 +89,9 @@ export class Runner {
   private async once(run: string, agent: RunAgent, prompt: string, own: boolean, from: 'flow' | 'you', who?: string): Promise<{ ok: boolean; text: string; reason: string; limited: boolean; blocked: boolean; empty?: boolean }> {
     const release = await this.turns.acquire(run)
     let rejected = false
+    // removed (or ended) while the turn waited for its slot or the usage window: nothing to do
+    const now = this.o.store.state(run)
+    if (!now || now.status === 'done' || now.status === 'failed') { release(); return { ok: false, text: '', reason: 'gone', limited: false, blocked: true } }
     try {
       this.o.onPrompt?.(run, prompt, own, from, who)
       for await (const e of agent.turn(prompt)) {
