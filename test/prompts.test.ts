@@ -91,6 +91,8 @@ describe('wording that once misled agents', () => {
     // data: only what's needed, never bulk or production; hwt's own instructions don't apply here
     expect(t).toMatch(/never download in bulk, crawl or load-test/i)
     expect(t).toMatch(/hwt .* don't apply/)
+    // ending a turn ends the step: waiting (a sync, a build) happens inside the turn
+    expect(t).toMatch(/Ending your turn ends the step/)
   })
   test('a run with a device: flow boots and restarts it, evidence comes full size from the device tool', () => {
     const t = runBrief({ ...m, device: { platform: 'android', id: 'emulator-5700', metroPort: 8300 } })

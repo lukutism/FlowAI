@@ -96,6 +96,20 @@ describe('a ticket to a draft PR', () => {
     expect(create[create.indexOf('--description') + 1]).toBe('## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings\nNot verified: the device — no device in this test')
     expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'pr' }, pr: { number: 4711 } })
   })
+  test('a message that leaves the plan unfinished (the agent ended its turn to wait) gets one retry before the run blocks', async () => {
+    const draft = '# Plan (WORKING DRAFT)\n\n## Working state\n- waiting for the sync\n'
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), draft)), turn(() => writeFileSync(join(d.run, 'plan.md'), draft)), // start: blocked
+      turn(() => writeFileSync(join(d.run, 'plan.md'), draft)), // the message: still a draft
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also guard the order list? — default: no'))), // the retry
+    ])
+    const run = await t.pipe.start(186278)
+    expect(t.store.state(run)).toMatchObject({ status: 'blocked' })
+    await t.pipe.message(run, 'carry on')
+    expect(t.agent.prompts[3]).toMatch(/Write the plan there now/)
+    expect(t.agent.prompts[3]).toMatch(/don't end the turn to wait/)
+    expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'plan' } })
+  })
   test('open questions: the run waits; approve with an answer, and the build turn is told it', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also guard the order list? — default: no'))),

@@ -668,8 +668,14 @@ export class Pipeline {
     const s = this.must(run)
     if (s.status !== 'running') return // the agent asked something back, or the run was done or failed already
     if (s.stage === 'plan') {
-      // the agent may have rewritten the plan: it is submitted again (with a new deadline)
-      const p = this.readPlan(run)
+      // the agent may have rewritten the plan: it is submitted again (with a new deadline); unfinished (it ended its
+      // turn to wait, say), it is asked for once more
+      let p = this.readPlan(run)
+      if ('problem' in p) {
+        const again = await this.runner.turn(run, planRetryPrompt(this.planFile(run), p.problem))
+        if (!again.ok || this.ended(run, again.text)) return
+        p = this.readPlan(run)
+      }
       if ('plan' in p) await this.submitPlan(run, p.plan)
       else this.d.store.append(run, 'engine', { type: 'run.blocked', reason: `the plan ${this.planFile(run)} ${p.problem}; message the agent, or write the plan yourself` })
     } else if (s.stage === 'build' || s.stage === 'verify' || s.stage === 'review') {
