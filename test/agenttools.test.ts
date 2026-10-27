@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { offSettings, toolsFromInit } from '../src/agenttools.ts'
+import { mcpStatus, offSettings, toolsFromInit } from '../src/agenttools.ts'
 
 // What a project's agents get (as you do: your plugins, skills, MCP servers, the repo's), read from a session's
 // first message; and what the project turns off, as the agents' own settings (yours stay as they are).
@@ -18,5 +18,10 @@ describe('the agents\' plugins, skills and MCP servers', () => {
       deniedMcpServers: [{ serverName: 'claude.ai Gmail' }], deny: ['mcp__claude_ai_Gmail'],
     })
     expect(offSettings({ plugins: [], skills: [], mcp: [] })).toEqual({})
+  })
+  test("each server's health as claude mcp list reports it (connected, needs auth, failed)", () => {
+    const out = ['Checking MCP server health…', '', 'claude.ai Gmail: https://gmailmcp.googleapis.com/mcp/v1 - ✔ Connected', 'plugin:figma:figma: https://mcp.figma.com/mcp (HTTP) - ✔ Connected',
+      'linear: https://mcp.linear.app/sse (SSE) - ! Needs authentication', 'broken: node x.js - a - b - ✗ Failed to connect'].join('\n')
+    expect(mcpStatus(out)).toEqual({ 'claude.ai Gmail': 'connected', 'plugin:figma:figma': 'connected', linear: 'needs auth', broken: 'failed' })
   })
 })

@@ -104,9 +104,17 @@ export function fields(section: Section, json: Json, repo = 0, tools?: AgentTool
     case 'Skills & MCP': {
       if (!tools) return [{ kind: 'heading', label: 'Looking…', hint: 'a session starts in the repo to see what the agents get (no usage)' }]
       // on unless the project turns it off; one off and since gone stays, to turn back on
+      // a server's health as Claude Code shows it in /mcp; a plugin's own servers on the plugin
+      const health = (s?: string) => (s === 'connected' ? '✔ connected' : s === 'needs auth' ? '! needs auth: sign in with /mcp in Claude Code' : s === 'failed' ? '✗ failed to connect' : s)
+      const hintOf = (kind: 'plugins' | 'skills' | 'mcp', x: { id: string; name: string }) => {
+        if (kind === 'mcp') return health(tools.status?.[x.name])
+        if (kind !== 'plugins') return undefined
+        const own = Object.entries(tools.status ?? {}).filter(([n]) => n.startsWith(`plugin:${x.name}:`)).map(([, s]) => health(s)!.split(':')[0])
+        return [x.id, ...(own.length ? [`its server: ${own.join(', ')}`] : [])].join(' · ')
+      }
       const items = (kind: 'plugins' | 'skills' | 'mcp', seen: { id: string; name: string }[]) => {
         const off = ((get(json, ['off', kind]) as string[] | undefined) ?? []).filter(x => !seen.some(y => y.id === x)).map(x => ({ id: x, name: x }))
-        return [...seen, ...off].sort((a, b) => a.name.localeCompare(b.name)).map(x => ({ kind: 'member' as const, label: x.name, path: ['off', kind], value: x.id, ...(x.id !== x.name ? { hint: x.id } : {}) }))
+        return [...seen, ...off].sort((a, b) => a.name.localeCompare(b.name)).map(x => { const hint = hintOf(kind, x); return { kind: 'member' as const, label: x.name, path: ['off', kind], value: x.id, ...(hint ? { hint } : {}) } })
       }
       return [
         { kind: 'heading', label: 'Plugins', hint: "yours, with their skills and servers; off: this project's agents don't get it" }, ...items('plugins', tools.plugins),

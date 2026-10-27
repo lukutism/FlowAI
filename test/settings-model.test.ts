@@ -81,6 +81,14 @@ describe('Skills & MCP: what the agents get, each on or off for this project', (
     expect(f.filter(x => x.kind === 'heading').map(x => x.label)).toEqual(['Plugins', 'Skills', 'MCP servers'])
     expect(f.filter(x => x.kind === 'member').map(x => [x.label, x.value])).toEqual([['crit', 'crit@crit'], ['agent-browser', 'agent-browser'], ['old-server', 'old-server'], ['pencil', 'pencil']])
   })
+  test("each server's health beside it, as in Claude Code: connected, needs auth (signed in with /mcp), failed; a plugin's own server on the plugin", () => {
+    const f = fields('Skills & MCP', { key: 'p' }, 0, { plugins: [{ id: 'figma@x', name: 'figma' }], skills: [], mcp: ['gmail', 'linear', 'broken'], status: { gmail: 'connected', linear: 'needs auth', broken: 'failed', 'plugin:figma:figma': 'needs auth' } })
+    const hint = (label: string) => f.find(x => x.kind === 'member' && x.label === label)?.hint
+    expect(hint('gmail')).toBe('✔ connected')
+    expect(hint('linear')).toMatch(/needs auth.*\/mcp/)
+    expect(hint('broken')).toMatch(/✗ failed/)
+    expect(hint('figma')).toMatch(/figma@x · its server: ! needs auth/)
+  })
   test('toggling one: into the off list, and out of it again', () => {
     const off = toggleMember({ key: 'p' }, ['off', 'skills'], 'agent-browser')
     expect(get(off, ['off', 'skills'])).toEqual(['agent-browser'])

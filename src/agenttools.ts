@@ -6,7 +6,11 @@ import { join } from 'node:path'
  * What a project's agents get beside flow's own tools: your plugins, skills and MCP servers, and the repo's, as in
  * your own sessions. A project can turn some off for its agents (their settings file; yours stay as they are).
  */
-export interface AgentTools { plugins: { id: string; name: string }[]; skills: string[]; mcp: string[] }
+export interface AgentTools {
+  plugins: { id: string; name: string }[]; skills: string[]; mcp: string[]
+  /** each MCP server's health, as `claude mcp list` reports it (connected, needs auth, failed) */
+  status?: Record<string, string>
+}
 export interface Off { plugins: string[]; skills: string[]; mcp: string[] }
 
 /**
@@ -19,6 +23,18 @@ export function toolsFromInit(init: { plugins?: { name: string }[]; skills?: str
   const skills = [...new Set((init.skills ?? []).filter(s => !s.includes(':')))].sort()
   const mcp = (init.mcp_servers ?? []).map(s => s.name).filter(n => !n.startsWith('plugin:') && n !== 'flow').sort()
   return { plugins, skills, mcp }
+}
+
+/** each server's health from `claude mcp list` (name: command - ✔ Connected): connected, needs auth or failed */
+export function mcpStatus(out: string): Record<string, string> {
+  const status: Record<string, string> = {}
+  for (const line of out.split('\n')) {
+    const m = /^(.+?): .* - [^\w\s]*\s*(.+)$/.exec(line.trim())
+    if (!m) continue
+    const s = m[2]!.toLowerCase()
+    status[m[1]!] = s.startsWith('connected') ? 'connected' : s.includes('auth') ? 'needs auth' : s.startsWith('failed') ? 'failed' : s
+  }
+  return status
 }
 
 /** what is off, as the agents' settings: plugins disabled, skills off, servers not started (and their tools denied) */
@@ -39,6 +55,8 @@ export async function discoverAgentTools(cwd: string, timeoutMs = 60_000): Promi
   const dir = mkdtempSync(join(tmpdir(), 'flow-tools-'))
   try {
     writeFileSync(join(dir, 'settings.json'), '{}')
+    // each server's health, checked meanwhile (the session's first message has them still connecting)
+    const health = (async () => { const h = Bun.spawn(['claude', 'mcp', 'list'], { cwd, stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' }); const t = setTimeout(() => h.kill(), timeoutMs); try { return mcpStatus(await new Response(h.stdout).text()) } finally { clearTimeout(t) } })()
     const p = Bun.spawn(['claude', '-p', '--output-format', 'stream-json', '--verbose', '--settings', join(dir, 'settings.json'), 'x'],
       { cwd, stdout: 'pipe', stderr: 'ignore', stdin: 'ignore', env: { ...process.env, ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' } })
     const timer = setTimeout(() => p.kill(), timeoutMs)
@@ -57,6 +75,6 @@ export async function discoverAgentTools(cwd: string, timeoutMs = 60_000): Promi
     const list = Bun.spawnSync(['claude', 'plugin', 'list', '--json'], { stdout: 'pipe', stderr: 'ignore' })
     let installed: { id: string }[] = []
     try { installed = JSON.parse(new TextDecoder().decode(list.stdout)) } catch {}
-    return toolsFromInit(init, installed)
+    return { ...toolsFromInit(init, installed), status: await health.catch(() => ({})) }
   } finally { rmSync(dir, { recursive: true, force: true }) }
 }
