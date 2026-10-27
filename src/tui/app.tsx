@@ -184,9 +184,9 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (r.device || r.devServer) a.push({ label: r.device ? 'Restart the device' : 'Restart the dev server', hint: r.device ? 'stop it, boot it again with the current settings, install the app' : 'stop it and start it again with the current settings', run: () => void send({ cmd: 'restartDevice', run: r.id }, `${r.ticket}: restarting its device`) })
       if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })
       if (r.status === 'running') a.push({ label: "Stop the agent's turn", hint: 'it ends now; a message carries the run on', run: () => void send({ cmd: 'stop', run: r.id }, `${r.ticket}: stopping the agent's turn`) })
-      if (r.status !== 'done') a.push({ label: 'Mark done', hint: r.pr ? 'merged, or given up: off the attention list' : 'given up: off the attention list', run: () => ask.done(r) })
+      // done removes the run as Remove does: it is its own command only to confirm a resolution (its learnings kept)
+      if (r.needs?.kind === 'resolution') a.push({ label: 'Confirm: no change needed', hint: "done and removed; what the agent learned is kept", run: () => ask.done(r) })
       a.push({ label: 'Remove the run', hint: 'device, worktrees with any work not shipped, local branch; folder archived', run: () => ask.remove(r) })
-      a.push({ label: 'Back to the runs', hint: 'esc', run: () => setMode({ kind: 'list' }) })
       a.push({ label: 'Quit', hint: 'q', run: () => { stopShells(); onQuit() } })
       return a
     }
@@ -194,7 +194,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     a.push({ label: 'Choose a project', hint: 'p', run: () => setMode({ kind: 'projects', index: 0 }) })
     // runs of one ticket (a release fix and its port) are told apart by their line
     for (const r of all.filter(x => x.status !== 'done' || x.updatedAt > t - 86_400_000)) a.push({ label: `Open ${r.ticket} ${line(r.base)} ${r.title}`, hint: `${r.project} · ${r.stage} · ${r.status}`, run: () => ask.open(r) })
-    if (state && state.status !== 'done') a.push({ label: `Mark ${state.ticket} done`, hint: 'merged, or given up: off the attention list', run: () => ask.done(state) })
+    if (state?.needs?.kind === 'resolution') a.push({ label: `Confirm ${state.ticket}: no change needed`, hint: "done and removed; what the agent learned is kept", run: () => ask.done(state) })
     if (state) a.push({ label: `Remove ${state.ticket} ${line(state.base)}`, hint: 'device, worktrees, local branch; folder archived', run: () => ask.remove(state) })
     a.push({ label: 'Show runs that need you', hint: 'status:needs-you', run: () => { setFilter('status:needs-you'); goTab('Runs') } })
     a.push({ label: 'Show failed and blocked runs', hint: 'status:failed,blocked', run: () => { setFilter('status:failed,blocked'); goTab('Runs') } })

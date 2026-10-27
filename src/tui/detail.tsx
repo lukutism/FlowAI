@@ -268,10 +268,12 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
     ...(data.plan ? [{ label: 'Open the plan', hint: 'P', run: () => setPopup({ kind: 'md', file: 'plan.md' }) }] : []),
     // the ticket's own page (Jira, Azure DevOps) when it has one; what the agent read of it in ticket.md
     ...(data.url ? [{ label: 'Open the ticket in the browser', hint: (() => { try { return new URL(data.url).host } catch { return data.url } })(), run: () => (api.openUrl ?? openInBrowser)(data.url) }] : []),
-    { label: 'Open the ticket as the agent read it', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) },
-    ...(data.pr ? [{ label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) }] : []),
+    // ticket.md and pr.md stay on the Open line; here only while there is no ticket page or PR to open instead
+    ...(data.url ? [] : [{ label: 'Open the ticket', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) }]),
+    ...(data.pr && !run.pr ? [{ label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) }] : []),
     ...(data.review ? [{ label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) }] : []),
-    ...panes.filter(x => x.key !== 'shell').map(x => ({ label: `Show ${x.label === 'Agent' ? "the agent's session" : x.label}`, hint: 'pane', run: () => { setPane(x.key); setFocus('none') } })),
+    // the agent's pane is where Message the agent goes; the shell has its own command
+    ...panes.filter(x => x.key !== 'shell' && x.key !== 'agent').map(x => ({ label: `Show ${x.label}`, hint: 'pane', run: () => { setPane(x.key); setFocus('none') } })),
     { label: 'Open the worktree in VS Code', hint: 'e', run: () => openEditor(data.worktree) },
     { label: 'Type in the shell', hint: 'i · in the worktree', run: () => { if (!showsShell) setPane('shell'); setFocus('shell') } },
     { label: split ? 'Unsplit' : 'Split with the shell', hint: 'v', run: () => setSplit(x => !x) },

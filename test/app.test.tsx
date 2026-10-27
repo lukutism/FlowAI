@@ -1145,11 +1145,13 @@ describe('removing a run and marking it done', () => {
       expect(t.f.sent).toEqual([{ cmd: 'remove', run: 'fso-104', force: true }])
     } finally { t.s.renderer.destroy() }
   })
-  test('mark done from the detail\'s commands', async () => {
-    const t = await screen()
+  test("a run's commands: done is a confirmation of no change needed only (done removes the run, as Remove does); no duplicates", async () => {
+    const t = await screen([base('fso-104', { stage: 'build', status: 'needs-you', needs: { kind: 'resolution', ask: 'no change needed: x' } }), base('fso-103', {})])
     try {
-      await t.press('ctrl+k', '1', '0', '4', 'enter')
-      await t.press('ctrl+k', ...'mark done'.split(''), 'enter')
+      await t.press('enter', 'ctrl+k')
+      const f = await t.frame()
+      for (const gone of ['Mark done', 'Back to the runs', "Show the agent's session"]) expect(f).not.toContain(gone)
+      await t.press(...'confirm'.split(''), 'enter')
       expect(t.f.sent).toEqual([{ cmd: 'done', run: 'fso-104' }])
     } finally { t.s.renderer.destroy() }
   })
