@@ -831,11 +831,40 @@ describe('the new-run form', () => {
       expect(f).not.toMatch(/Project +\(/)
     } finally { t.s.renderer.destroy() }
   })
+  test('no device, no dev server, no environment to choose: no Login step; Notes is the last, its button starts the run', async () => {
+    const t = await screen(runs, undefined, { projects: [shop], query: query({ lookup: { ...found, key: 'SHOP-740', run: 'shop-SHOP-740', customer: '', tags: [] } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, 'SHOP-740')
+      const n = await keys(t, 'enter')
+      expect(n).toContain('▸ 2 Notes')
+      expect(n).not.toContain('3 Login')
+      expect(n).toContain('Start run')
+      await keys(t, 'tab') // nothing after Notes
+      expect(await t.frame()).toContain('▸ 2 Notes')
+      const b = at(await t.frame(), 'Start run')
+      await act(async () => { await t.s.mockMouse.click(b.x + 1, b.y) }); await act(async () => { await Bun.sleep(30) })
+      expect(t.f.sent[0]).toMatchObject({ cmd: 'start', project: 'shop' })
+      expect(t.f.sent[0]).not.toHaveProperty('logins')
+    } finally { t.s.renderer.destroy() }
+  })
+  test('no device but an environment to choose: the third step is Environment only, no logins', async () => {
+    const vars = [{ name: 'CLOUD', label: 'Cloud', choices: ['https://qa.example.cloud'] }]
+    const t = await screen(runs, undefined, { projects: [{ ...fso, vars }], query: query({ lookup: { ...found, customer: '', tags: [] } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      const f = await keys(t, 'enter', 'tab')
+      expect(f).toContain('▸ 3 Environment')
+      expect(f).toContain('Cloud')
+      expect(f).not.toContain('Password')
+    } finally { t.s.renderer.destroy() }
+  })
   test('three steps: the run, notes as long as you like (enter is a new line), then logins; the password never shows', async () => {
     const t = await screen(runs, undefined, { projects: [{ ...fso, license: true }], query: query() as FlowApi['query'] })
     try {
       await t.press('n', 'enter')
       await typeIn(t, 'Fix the walk')
+      for (let i = 0; i < 12 && !(await t.frame()).match(/▌ Device/); i++) await keys(t, 'tab')
+      await keys(t, 'right') // android: the agent signs in on it, so the Login step is there
       expect(await keys(t, 'enter')).toContain('▸ 2 Notes')
       await typeIn(t, 'Use order ')
       expect(await t.frame()).toContain('Use order ▏') // the space shows as soon as it is typed
@@ -878,6 +907,8 @@ describe('the new-run form', () => {
     const t = await screen(runs, undefined, { projects: [{ ...fso, vars }], query: query({ lookup: { ...found, customer: '', tags: [], vars: { CLOUD: 'https://qa.example.cloud' } } }) as FlowApi['query'] })
     try {
       await t.press('n'); await typeIn(t, '204598')
+      for (let i = 0; i < 12 && !(await t.frame()).match(/▌ Device/); i++) await keys(t, 'tab')
+      await keys(t, 'right') // a device: the agent signs in on it
       await keys(t, 'enter', 'tab')
       const f = await t.frame()
       expect(f).toContain('▸ 3 Login & environment')
@@ -910,6 +941,8 @@ describe('the new-run form', () => {
     const t = await screen(runs, undefined, { projects: [fso], query: query() as FlowApi['query'] })
     try {
       await t.press('n', 'enter'); await typeIn(t, 'Fix the walk')
+      for (let i = 0; i < 12 && !(await t.frame()).match(/▌ Device/); i++) await keys(t, 'tab')
+      await keys(t, 'right') // a device: the agent signs in on it
       await keys(t, 'enter', 'tab')
       const f = await t.frame()
       expect(f).toContain('Password')
@@ -926,7 +959,7 @@ describe('the new-run form', () => {
       const f = await t.frame()
       expect(f).toMatch(/Task +Show the order number on the list▏/)
       expect(f).toContain('create feat/show-the-order-number-on-the-list from origin/develop in mobile')
-      await keys(t, 'enter', 'tab', 'enter') // Notes, Login, start
+      await keys(t, 'enter', 'ctrl+s') // Notes, the last step (no device: no Login), start
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: '', task: 'Show the order number on the list', base: 'origin/develop', kind: 'feature', repos: ['mobile'] }])
     } finally { t.s.renderer.destroy() }
   })

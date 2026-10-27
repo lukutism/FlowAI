@@ -176,9 +176,14 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const devRepos = (p?.devServers ?? []).filter(r => repos.includes(r))
   const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', ...(ticket.trim() ? [] : ['task' as const]), 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
     ...(devRepos.length ? ['dev' as const] : []), ...(device !== 'none' || dev ? ['headless' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
-  const loginFields: ('email' | 'password' | 'license')[] = ['email', 'password', ...(p?.license ? ['license' as const] : [])]
+  // test logins are for the app the agent signs into: on its device, or in the browser of its dev server
+  const signsIn = device !== 'none' || dev
+  const loginFields: ('email' | 'password' | 'license')[] = signsIn ? ['email', 'password', ...(p?.license ? ['license' as const] : [])] : []
   const envVars = (p?.vars ?? []).filter(v => !v.repos || v.repos.some(r => repos.includes(r)))
   const stepThree: Field[] = [...loginFields, ...envVars.map(v => `var:${v.name}` as const)]
+  // nothing to sign into and no environment to choose: Notes is the last step
+  const hasThree = stepThree.length > 0
+  const threeLabel = loginFields.length && envVars.length ? 'Login & environment' : loginFields.length ? 'Login' : 'Environment'
   const move = (d: number) => { const list: Field[] = step === 3 ? stepThree : fields; setField(f => list[(list.indexOf(f) + d + list.length) % list.length]!) }
   const setVar = (name: string, value: string) => { setEnvTouched(t => new Set([...t, name])); setEnv(e => ({ ...e, [name]: value })) }
   const cycle = <T,>(list: T[], cur: T, d: number): T => list[(list.indexOf(cur) + d + list.length) % list.length] ?? cur
@@ -198,7 +203,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (patch && check && !check.ok) { setStep(1); setField('patch'); setProblem('the customer patch does not fit this base: choose another base or no patch'); return false }
     return true
   }
-  const go = (to: 1 | 2 | 3) => { if (to > 1 && step === 1 && !ready()) return; setProblem(''); setStep(to); if (to === 3) setField('email') }
+  const go = (to: 1 | 2 | 3) => { if (to === 3 && !hasThree) return; if (to > 1 && step === 1 && !ready()) return; setProblem(''); setStep(to); if (to === 3) setField(stepThree[0]!) }
   const start = () => {
     const logins = loginFields.filter(k => login[k].trim()).map(k => `${k}: ${login[k].trim()}`).join('\n')
     const vars = Object.fromEntries(envVars.map(v => [v.name, env[v.name]?.trim() ?? '']).filter(([, x]) => x))
@@ -259,7 +264,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     }
     if (step === 3) {
       if (n === 'return') { start(); return true }
-      if (n === 'tab' && key.shift && field === loginFields[0]) { go(2); return true }
+      if (n === 'tab' && key.shift && field === stepThree[0]) { go(2); return true }
       if ((n === 'tab' && !key.shift) || n === 'down') { move(1); return true }
       if ((n === 'tab' && key.shift) || n === 'up') { move(-1); return true }
       if (field.startsWith('var:')) {
@@ -367,7 +372,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       <text><strong>{'  New run'}</strong>{fixed && p ? <span fg={C.accent}>{` · ${p.name}`}</span> : null}<span fg={C.faint}>{'   a ticket to a draft PR'}</span></text>
       <box flexDirection="row">
         <text>{'  '}</text>
-        {([[1, 'Run'], [2, 'Notes'], [3, envVars.length ? 'Login & environment' : 'Login']] as const).map(([n, label]) => (
+        {([[1, 'Run'], [2, 'Notes'], ...(hasThree ? [[3, threeLabel] as const] : [])] as const).map(([n, label]) => (
           <Click key={n} on={() => go(n)}><text>
             <span fg={step === n ? C.accent : C.muted}>{step === n ? `▸ ${n} ` : `  ${n} `}</span><span fg={step === n ? C.text : C.secondary}>{step === n ? <strong>{label}</strong> : label}</span>
             <span fg={C.faint}>{n === 2 && note.trim() ? ` · ${note.trim().split('\n').length} line${note.trim().split('\n').length === 1 ? '' : 's'}` : n === 3 && loginFields.some(k => login[k]) ? ` · ${loginFields.filter(k => login[k]).length} set` : ''}{'      '}</span>
@@ -426,6 +431,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         {blank}
       </> : null}
       {step === 3 ? <>
+        {loginFields.length ? <>
         {blank}
         <text fg={C.muted}>{'  Test logins for the device, all optional.'}</text>
         <text fg={C.faint}>{'  Kept in a file only you can read; the agent is pointed at it, and ship refuses a change or PR that contains them.'}</text>
@@ -433,6 +439,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         {row('email', 'Email', <text fg={C.text}>{login.email}{field === 'email' ? <span fg={C.accent}>▏</span> : ''}{login.email ? '' : <span fg={C.faint}>the test user</span>}</text>)}
         {row('password', 'Password', <text fg={C.text}>{'•'.repeat(Math.min(login.password.length, 32))}{field === 'password' ? <span fg={C.accent}>▏</span> : ''}{login.password ? '' : <span fg={C.faint}>never shown</span>}</text>)}
         {p?.license ? row('license', 'License', <text fg={C.text}>{'•'.repeat(Math.min(login.license.length, 32))}{field === 'license' ? <span fg={C.accent}>▏</span> : ''}{login.license ? '' : <span fg={C.faint}>the app's license, if it asks for one</span>}</text>) : null}
+        </> : null}
         {envVars.length ? <>
           {blank}
           <text fg={C.muted}>{"  The run's environment: where its app and browser point."}</text>
@@ -453,9 +460,10 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         <text>{'  '}</text>
         {step === 1 ? <Click on={() => go(2)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Next: Notes '}</strong></text></box></Click> : null}
         {step === 3 ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Start run '}</strong></text></box></Click> : null}
-        {step === 2 ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{envVars.length ? ' ⇥ Next: Login & environment ' : ' ⇥ Next: Login '}</strong></text></box></Click> : null}
+        {step === 2 && hasThree ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{` ⇥ Next: ${threeLabel} `}</strong></text></box></Click> : null}
+        {step === 2 && !hasThree ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ctrl+s Start run '}</strong></text></box></Click> : null}
         <text fg={C.muted}>{step === 1 ? '   ⇥ next field   ←→ choose   space toggle   ' : step === 2 ? '   ↵ new line   ←→↑↓ or a click move   ⇧⇥ back   ' : '   ⇥ next field   ⇧⇥ back   '}</text>
-        {step !== 3 ? <Click on={start}><text fg={C.muted}>{'ctrl+s start now   '}</text></Click> : null}
+        {step === 1 || (step === 2 && hasThree) ? <Click on={start}><text fg={C.muted}>{'ctrl+s start now   '}</text></Click> : null}
         <Click on={onCancel}><text fg={C.muted}>esc cancel</text></Click>
       </box>
     </box>
