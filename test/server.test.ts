@@ -199,8 +199,10 @@ describe('the screen\'s connection after the service restarts', () => {
     t.s.stop()
     await Bun.sleep(100)
     expect(c.connected).toBe(false)
-    // a request while it is away is answered at once, not left hanging
-    expect(await c.send({ cmd: 'release', run: 'fso-9' })).toMatchObject({ ok: false, error: expect.stringMatching(/not connected/) })
+    // a command sent while it is away (a message you typed) waits for it and goes once it is back; a read is
+    // answered at once, not left hanging
+    const sent = c.send({ cmd: 'release', run: 'fso-9' })
+    expect(await c.events('fso-9').catch((e: Error) => e.message)).toMatch(/not connected/)
     const store = new EventStore(':memory:')
     store.append('fso-9', 'human', { type: 'run.created', ticket: '#9', title: 'Nine', project: 'fso', base: 'origin/develop' })
     const s2 = serve({ service: fakeService().svc, store, dataDir: t.data, port: 0, token: 'secret-token' })
@@ -210,6 +212,7 @@ describe('the screen\'s connection after the service restarts', () => {
     expect(c.connected).toBe(true)
     expect([...c.runs.keys()]).toEqual(['fso-9'])
     expect(seen).toContain('snapshot')
+    expect(await sent).toMatchObject({ ok: true })
     expect(await c.send({ cmd: 'release', run: 'fso-9' })).toMatchObject({ ok: true })
   })
 })

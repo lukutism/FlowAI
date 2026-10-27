@@ -62,6 +62,7 @@ export class FlowClient {
         try {
           this.ws = await FlowClient.open(t.url, t.token, m => this.take(m), () => this.dropped())
           this.connected = true
+          for (const f of this.back.splice(0)) f()
           return
         } catch {}
       }
@@ -71,7 +72,14 @@ export class FlowClient {
 
   listen(fn: (m: Message) => void) { this.listeners.add(fn); return () => { this.listeners.delete(fn) } }
 
-  send(c: Command): Promise<Reply> { return this.request(c) as Promise<Reply> }
+  /** a command: sent while the service is away (restarting), it waits for it to come back, a minute at most */
+  async send(c: Command): Promise<Reply> {
+    if (!this.connected && this.again && !this.closing) await new Promise<void>(ok => { const t = setTimeout(ok, 60_000); this.back.push(() => { clearTimeout(t); ok() }) })
+    if (!this.connected) return { ok: false, error: 'the flow service is not back after a minute: not sent; try again' } as Reply
+    return this.request(c) as Promise<Reply>
+  }
+  /** commands waiting for the service to come back */
+  private back: (() => void)[] = []
 
   async events(run: string): Promise<RunEvent[]> {
     const r = await this.request({ cmd: 'events', run })
