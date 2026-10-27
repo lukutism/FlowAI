@@ -9,7 +9,7 @@ import { loginValues, maskLogins } from './redact.ts'
  */
 export type Said = { kind: 'prompt'; from: 'flow' | 'you'; text: string }
 /** who: which other agent wrote it, when not the run's own (a review lens, the advisor) */
-export type Entry = (Exclude<AgentEvent, { kind: 'usage' }> | Said) & { at: number; own: boolean; who?: string }
+export type Entry = (Exclude<AgentEvent, { kind: 'usage' } | { kind: 'step' }> | Said) & { at: number; own: boolean; who?: string }
 
 const file = (dataDir: string, run: string) => join(dataDir, 'runs', run, 'transcript.jsonl')
 

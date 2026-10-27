@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeAgent, type FakeTurn } from '../src/agent/fake.ts'
@@ -167,6 +167,37 @@ describe("the agent's own device", () => {
       expect(deny).toEqual(expect.arrayContaining(['mcp__argent__boot-device', 'mcp__argent__stop-all-simulator-servers']))
       expect(deny).not.toContain('mcp__argent')
     } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})
+
+describe('a run paused for a long while (a usage window)', () => {
+  test('gives its device back, and has it booted again shortly before it goes on (or when it does)', async () => {
+    const t = setup({ consoleStart: 25900, metroStart: 28900 })
+    const run = await t.pipe.start(5, { device: 'android' })
+    try {
+      t.store.append(run, 'engine', { type: 'run.paused', window: 'week', until: Date.now() + 10 * 60_000 })
+      expect(await t.pipe.parkDevice(run)).toBe(false) // a short pause keeps it
+      t.store.append(run, 'engine', { type: 'run.paused', window: 'week', until: Date.now() + 3 * 3600_000 })
+      expect(await t.pipe.parkDevice(run)).toBe(true)
+      expect(t.store.state(run)!.device).toBeUndefined()
+      expect(t.slots.snapshot().holders.devices).toEqual([])
+      expect(await t.pipe.unparkDevice(run)).toBe(false) // hours to go
+      t.store.append(run, 'engine', { type: 'run.resumed' })
+      expect(await t.pipe.unparkDevice(run)).toBe(true)
+      expect(t.store.state(run)!.device).toMatchObject({ id: 'emulator-25900' })
+      expect(t.store.events(run).filter(e => e.type === 'run.note').map(e => (e as { text: string }).text).join('\n')).toMatch(/stopped while the run waits[\s\S]*booted again/)
+      expect(await t.pipe.unparkDevice(run)).toBe(false)
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+  test('a setup while the usage window is closed for hours parks the device instead of booting it', async () => {
+    const t = setup({ consoleStart: 25920, metroStart: 28920 })
+    const run = await t.pipe.start(5)
+    t.pipe.runner.ingest.windows = { week: { utilization: 1, resetsAt: (Date.now() + 3 * 3600_000) / 1000, status: 'rejected' } }
+    expect(await t.pipe.bootOrPark(run, 'android', join(t.run, '..', '..', '..', 'wt', '5', 'mobile'))).toBe('parked')
+    expect(existsSync(join(t.run, 'device.parked'))).toBe(true)
+    expect(t.slots.snapshot().holders.devices).toEqual([])
+    t.pipe.runner.ingest.windows = {}
+    rmSync(join(t.run, 'device.parked'))
   })
 })
 

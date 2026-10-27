@@ -52,7 +52,8 @@ const PROJECTS = process.env.FLOW_PROJECTS ?? join(homedir(), '.config', 'flow',
 const hhmm = (ms: number) => new Date(ms).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 const day = (ms: number) => new Date(ms).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })
 const k = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`)
-const win = (name: string, w: Window | undefined, fmt: (ms: number) => string) => (w ? `${name} ${Math.round(w.utilization * 100)}% (resets ${fmt(w.resetsAt * 1000)})` : `${name} –`)
+// a window whose reset has passed: its last reading is stale until the next turn reports it
+const win = (name: string, w: Window | undefined, fmt: (ms: number) => string) => (!w ? `${name} –` : w.resetsAt * 1000 <= Date.now() ? `${name} reset at ${fmt(w.resetsAt * 1000)}` : `${name} ${Math.round(w.utilization * 100)}% (resets ${fmt(w.resetsAt * 1000)})`)
 const windowsLine = (w: Windows) => `plan: ${win('5h', w.fiveHour, hhmm)} · ${win('week', w.week, day)}`
 
 function showAgent(e: AgentEvent) {
@@ -70,7 +71,8 @@ function showEvent(e: RunEvent) {
 /** what the run needs next, as the command to type */
 function next(s: RunState): string {
   const n = s.needs
-  if (!n) return s.status === 'done' ? (s.patch ? `done: patch ${s.patch.customer}/${s.patch.app} written back` : 'done') : `${s.stage} · ${s.status}`
+  if (!n) return s.status === 'done' ? (s.patch ? `done: patch ${s.patch.customer}/${s.patch.app} written back` : 'done')
+    : `${s.stage} · ${s.status}${s.status === 'waiting' && s.waitingFor ? ` for ${s.waitingFor}` : s.status === 'paused' && s.pausedUntil ? ` until ${hhmm(s.pausedUntil)}` : ''}`
   if (n.kind === 'plan') {
     const qs = s.plan?.questions.map(q => `  ${q.id}${q.held ? ' (held)' : ''} ${q.text} — default: ${q.default}`).join('\n') ?? ''
     // the deadline is applied by the background service (flow serve); without it flow waits for you

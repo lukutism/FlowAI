@@ -16,6 +16,8 @@ export type AgentEvent =
   | { kind: 'compaction'; trigger: string; before: number; after: number }
   | { kind: 'usage'; windows: { fiveHour?: Window; week?: Window } }
   | { kind: 'result'; ok: boolean; text: string; turns: number; reason: string; session: string; tokens: Tokens }
+  /** one model call of the turn (its message id; the same call repeats on each of its blocks) */
+  | { kind: 'step'; id: string; session: string; tokens: Tokens }
 
 type Json = Record<string, any>
 
@@ -45,6 +47,8 @@ export function parseLine(line: string): AgentEvent[] {
   }
   if (e.type === 'assistant') {
     const out: AgentEvent[] = []
+    const u: Json | undefined = e.message?.usage
+    if (u && e.message?.id && !e.parent_tool_use_id) out.push({ kind: 'step', id: String(e.message.id), session: String(e.session_id ?? ''), tokens: { input: Number(u.input_tokens ?? 0), output: Number(u.output_tokens ?? 0), cacheRead: Number(u.cache_read_input_tokens ?? 0), cacheWrite: Number(u.cache_creation_input_tokens ?? 0) } })
     for (const b of (e.message?.content ?? []) as Json[]) {
       if (b.type === 'tool_use') out.push({ kind: 'tool', id: String(b.id), name: String(b.name), input: b.input ?? {} })
       else if (b.type === 'text' && b.text) out.push({ kind: 'text', text: String(b.text) })

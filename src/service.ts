@@ -210,7 +210,7 @@ export class Service {
       const cfg = this.d.projects[project]
       if (!cfg) throw new Error(`no project ${project}`)
       p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, makeReviewer: this.d.makeReviewer, resources: this.slots, gitEnv: this.d.gitEnv, now: this.d.now,
-        tap: (run, e, own, who) => { this.d.tap?.(run, e); if (e.kind !== 'usage') this.record(run, { ...e, at: (this.d.now ?? Date.now)(), own, ...(who ? { who } : {}) }) },
+        tap: (run, e, own, who) => { this.d.tap?.(run, e); if (e.kind !== 'usage' && e.kind !== 'step') this.record(run, { ...e, at: (this.d.now ?? Date.now)(), own, ...(who ? { who } : {}) }) },
         onPrompt: (run, text, own, from, who) => this.record(run, { kind: 'prompt', from, text, at: (this.d.now ?? Date.now)(), own, ...(who ? { who } : {}) }),
         onWindows: w => { this.lastWindows = w; for (const l of this.windowsListeners) l(w) } })
       if (!Object.keys(this.lastWindows).length) this.lastWindows = p.runner.ingest.windows
@@ -293,11 +293,13 @@ export class Service {
         continue
       }
     }
-    // a run's emulator that stopped on its own is booted again, beside whatever its run is doing
+    // a run's emulator that stopped on its own is booted again, beside whatever its run is doing; one whose run is
+    // paused for a long while is stopped (the slot goes to another run) and booted again shortly before it goes on
     for (const s of this.d.store.runs()) {
-      if (!s.device || this.reviving.has(s.id)) continue
+      if (this.reviving.has(s.id) || s.status === 'done' || s.status === 'failed' || !this.d.projects[s.project]) continue
+      const p = this.pipeline(s.project)
       this.reviving.add(s.id)
-      void this.pipeline(s.project).reviveDevice(s.id)
+      void (async () => { if (s.device) { if (!(await p.reviveDevice(s.id))) await p.parkDevice(s.id) } else await p.unparkDevice(s.id) })()
         .catch(e => { for (const l of this.notices) l({ run: s.id, text: `the device could not be booted again: ${(e as Error).message}` }) })
         .finally(() => this.reviving.delete(s.id))
     }

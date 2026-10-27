@@ -27,7 +27,7 @@ import type { Resources } from './resources.ts'
 import { Runner, type RunAgent } from './runner.ts'
 import { writeRunSettings } from './settings.ts'
 import type { EventStore } from './store.ts'
-import type { Windows } from './usage.ts'
+import { canStartTurn, type Windows } from './usage.ts'
 import { changedFiles, verify } from './verify.ts'
 
 /** the run's flow MCP server (its tools) */
@@ -84,6 +84,9 @@ export interface PipelineDeps {
   /** how long a run's dev server may take to listen (default 5 minutes) */
   devServerReadyTimeoutMs?: number
 }
+
+/** a pause longer than this gives the run's device back; it boots again this long before the pause ends */
+const PARK_MS = 45 * 60_000, UNPARK_MS = 5 * 60_000
 
 /**
  * A ticket from intake to draft PRs: a worktree per repo, plan turn, the plan gate, build, verify against the base
@@ -321,7 +324,7 @@ export class Pipeline {
       }
     }
     if (m.platform) {
-      try { await this.bootDevice(run, m.platform, m.repos[0]!.worktree) } catch (e) {
+      try { await this.bootOrPark(run, m.platform, m.repos[0]!.worktree) } catch (e) {
         this.d.store.append(run, 'engine', { type: 'setup.failed', reason: `device: ${(e as Error).message}` })
         return false
       }
@@ -514,6 +517,47 @@ export class Pipeline {
     } finally { this.rebooting.delete(run) }
   }
   private rebooting = new Set<string>()
+
+  /**
+   * A run paused for a long while (a usage window) gives its device back, so another run can have the slot; it is
+   * booted again shortly before the run goes on (unparkDevice). Kept in device.parked (the platform).
+   */
+  async parkDevice(run: string): Promise<boolean> {
+    const s = this.d.store.state(run), now = (this.d.now ?? Date.now)()
+    if (!s?.device || s.status !== 'paused' || !s.pausedUntil || s.pausedUntil - now < PARK_MS || this.rebooting.has(run)) return false
+    writeFileSync(join(this.runDir(run), 'device.parked'), s.device.platform)
+    await this.releaseDevice(run)
+    this.d.store.append(run, 'engine', { type: 'run.note', text: `the device was stopped while the run waits for its usage window (until ${new Date(s.pausedUntil).toTimeString().slice(0, 5)}); it boots again shortly before` })
+    return true
+  }
+
+  /** at setup: the device booted, or parked when the usage window keeps the run from going on for a long while */
+  async bootOrPark(run: string, platform: 'android' | 'ios', worktree: string): Promise<'booted' | 'parked'> {
+    const now = (this.d.now ?? Date.now)(), gate = canStartTurn(this.runner.ingest.windows, now, this.d.project.usage)
+    if (gate.ok || gate.until - now < PARK_MS) { await this.bootDevice(run, platform, worktree); return 'booted' }
+    writeFileSync(join(this.runDir(run), 'device.parked'), platform)
+    this.d.store.append(run, 'engine', { type: 'run.note', text: `the device boots shortly before the usage window opens (${new Date(gate.until).toTimeString().slice(0, 5)}), not now` })
+    return 'parked'
+  }
+
+  /** a parked device booted again: the run goes on within minutes, or already has */
+  async unparkDevice(run: string): Promise<boolean> {
+    const f = join(this.runDir(run), 'device.parked'), s = this.d.store.state(run), now = (this.d.now ?? Date.now)()
+    if (!existsSync(f) || !s || this.rebooting.has(run)) return false
+    if (s.status === 'done' || s.status === 'failed') { rmSync(f, { force: true }); return false }
+    if (s.status === 'paused' && s.pausedUntil && s.pausedUntil - now > UNPARK_MS) return false
+    // just set up and about to pause: the window, not the status, says when it goes on
+    const gate = canStartTurn(this.runner.ingest.windows, now, this.d.project.usage)
+    if (!gate.ok && gate.until - now > UNPARK_MS) return false
+    const platform = readFileSync(f, 'utf8').trim() as 'android' | 'ios'
+    rmSync(f, { force: true })
+    this.rebooting.add(run)
+    try { await this.bootDevice(run, platform, this.meta(run).repos[0]!.worktree) } finally { this.rebooting.delete(run) }
+    const d = this.d.store.state(run)?.device
+    this.d.store.append(run, 'engine', { type: 'run.note', text: `the device was booted again for the run to go on, as ${d?.id}` })
+    this.queueMessage(run, `While the run waited, flow stopped your device; it is booted again as ${d?.id}, the app installed, Metro on ${d?.metroPort}: launch the app again before you go on.`)
+    return true
+  }
   private revived = new Map<string, number>()
   private stopping = new Set<string>()
 
