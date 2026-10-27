@@ -16,6 +16,7 @@ export interface Decision { deny: true; reason: string }
 const SHIP = 'flow ships the change itself after verify and review (commit, push, draft PR); keep your changes in the working tree'
 const TRACKER = 'flow writes to the tracker and the code host itself; only read them'
 const SECRET = 'flow\'s own files (its token) are not for the agent'
+const KEYCHAIN = "the user's keychain holds their own secrets, not the run's: the run's test logins are in its logins.md, and the ticket tool reads the ticket"
 const DEVICE = "the run's device is flow's: it boots and stops it. If it is gone or broken, call flow's device tool with action restart and wait; never boot or kill an emulator yourself"
 
 /** $'…' (ANSI-C quoting) from i, just after the quote: its text with the escapes decoded, and the index after it */
@@ -244,6 +245,7 @@ function checkWords(words: string[], depth: number): Decision | null {
   }
   const [p = '', ...rest] = w
   if (p === 'git' && gitWrites(rest)) return { deny: true, reason: SHIP }
+  if (basename(p) === 'security' && /^(find-(generic|internet|certificate)-password|find-identity|dump-keychain|export|unlock-keychain|show-keychain-info)$/.test(rest[0] ?? '')) return { deny: true, reason: KEYCHAIN }
   // an emulator booted or killed by hand: a second copy of the run's AVD, or another run's (or your own) gone
   if (basename(p) === 'emulator' && !rest.every(a => /^-(list-avds|help.*|version|accel-check)$/.test(a))) return { deny: true, reason: DEVICE }
   if (basename(p) === 'adb' && rest.some((a, i) => a === 'emu' && rest[i + 1] === 'kill')) return { deny: true, reason: DEVICE }

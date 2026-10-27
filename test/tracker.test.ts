@@ -32,8 +32,15 @@ describe('jiraTracker', () => {
   test('the issue as the agent reads it: Markdown from Jira\'s document format, comments newest first, attachments named', async () => {
     const tk = await t.read('SGL-692')
     expect(tk).toMatchObject({ id: 'SGL-692', key: 'SGL-692', title: 'New success modal text', kind: 'feature', url: 'https://example.atlassian.net/browse/SGL-692' })
-    expect(tk.text).toBe(['Description:', 'Show **Ačiū**\n\n- LT and EN', '', 'Comments (newest first):', '2026-10-05 QA: web and app', '2026-10-01 PO: older', '', 'Attachments:', '- design.png (image/png) https://example.atlassian.net/att/1'].join('\n'))
+    expect(tk.text).toBe(['Description:', 'Show **Ačiū**\n\n- LT and EN', '', 'Comments (newest first):', '2026-10-05 QA: web and app', '2026-10-01 PO: older', '', 'Attachments (download one into the run folder with the ticket tool: attachment <its link>):', '- design.png (image/png) https://example.atlassian.net/att/1'].join('\n'))
     expect(calls[0]).toEqual({ url: expect.stringContaining('/rest/api/3/issue/SGL-692?fields='), auth: `Basic ${btoa('me@example.com:tok')}` })
+  })
+  test("an attachment flow downloads for the agent (signed in, Jira's own host only): the agent never holds the token", async () => {
+    const got: string[] = []
+    const a = jiraTracker(jira, { secret: () => 'tok', fetch: async (url, init) => { got.push(`${url} ${new Headers(init?.headers).get('Authorization')}`); return new Response(new Uint8Array([1, 2, 3])) } })
+    expect([...(await a.attachment!('https://example.atlassian.net/att/1'))]).toEqual([1, 2, 3])
+    expect(got).toEqual([`https://example.atlassian.net/att/1 Basic ${btoa('me@example.com:tok')}`])
+    await expect(a.attachment!('https://elsewhere.example.com/att/1')).rejects.toThrow(/not an attachment on example\.atlassian\.net/)
   })
   test('no token in the keychain: says how to store one, and never shows a token', async () => {
     const none = jiraTracker(jira, { secret: () => '', fetch: async () => Response.json(issue) })
@@ -63,12 +70,12 @@ describe('githubForge', () => {
     expect(calls[0]).toEqual(expect.arrayContaining(['pr', 'create', '-R', 'OWNER/shop-web-app', '--draft', '--base', 'main', '--head', 'SGL-692', '--title', 'SGL-692']))
     expect(body).toBe('https://example.atlassian.net/browse/SGL-692')
   })
-  test('the state of a PR from gh: OPEN, MERGED, CLOSED', async () => {
-    for (const [state, want] of [['OPEN', 'open'], ['MERGED', 'merged'], ['CLOSED', 'closed']] as const) {
+  test('the state of a PR from gh: OPEN (a draft or ready), MERGED, CLOSED', async () => {
+    for (const [state, want, isDraft] of [['OPEN', 'open', false], ['OPEN', 'draft', true], ['MERGED', 'merged', false], ['CLOSED', 'closed', false]] as const) {
       const calls: string[][] = []
-      const gh: Gh = args => { calls.push(args); return { code: 0, out: JSON.stringify({ state }), err: '' } }
+      const gh: Gh = args => { calls.push(args); return { code: 0, out: JSON.stringify({ state, isDraft }), err: '' } }
       expect(await githubForge({ kind: 'github', owner: 'OWNER' }, gh).prState({ number: 57, url: 'https://github.com/OWNER/shop-web-app/pull/57' })).toBe(want)
-      expect(calls[0]).toEqual(['pr', 'view', '57', '-R', 'OWNER/shop-web-app', '--json', 'state'])
+      expect(calls[0]).toEqual(['pr', 'view', '57', '-R', 'OWNER/shop-web-app', '--json', 'state,isDraft'])
     }
   })
   test('gh not logged in says so', async () => {

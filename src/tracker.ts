@@ -17,6 +17,8 @@ export interface Ticket {
 export interface Tracker {
   parseKey(arg: string): { id: number | string; key: string } | null
   read(id: number | string): Promise<Ticket>
+  /** one of a ticket's attachments, by its link, downloaded with flow's own sign-in (the agent never holds it) */
+  attachment?(url: string): Promise<Uint8Array>
 }
 
 export function azureTracker(az: Az, t: { org: string; project: string }): Tracker {

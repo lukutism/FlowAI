@@ -694,6 +694,18 @@ export class Pipeline {
     const v = this.must(run).verifiedTree
     return v === undefined || (await this.content(this.meta(run))) !== v
   }
+  /** the files that changed since the verified tree, by repo (named when the run has several) */
+  private async changedFilesSinceVerify(run: string): Promise<string[]> {
+    const m = this.meta(run), was = (this.must(run).verifiedTree ?? '').split(',')
+    const out: string[] = []
+    for (const [i, r] of m.repos.entries()) {
+      const now = await contentHash(r.worktree)
+      if (!was[i] || !now || was[i] === now) continue
+      const d = Bun.spawnSync(['git', 'diff-tree', '-r', '--name-only', was[i]!, now], { cwd: r.worktree })
+      for (const f of new TextDecoder().decode(d.stdout).split('\n').filter(Boolean)) out.push(m.repos.length > 1 ? `${r.key}: ${f}` : f)
+    }
+    return out
+  }
 
   /** a commit, a push and a draft PR for each repo the run changed */
   async ship(run: string): Promise<{ number: number; url: string }[]> {
@@ -703,7 +715,8 @@ export class Pipeline {
     if (!gate) throw new Error(`${run} is not ready to ship (${s.stage}, ${s.status}${s.needs ? `: ${s.needs.ask}` : ''})`)
     // never ship what was not verified: a change since (an edit by hand) is verified again first
     if (s.verifiedTree !== undefined && (await this.changedSinceVerify(run))) {
-      this.d.store.append(run, 'engine', { type: 'build.done', reason: 'changed after it was verified; ship once it is ready again' })
+      const files = await this.changedFilesSinceVerify(run)
+      this.d.store.append(run, 'engine', { type: 'build.done', reason: `changed after it was verified${files.length ? ` (${files.slice(0, 6).join(', ')}${files.length > 6 ? `, ${files.length - 6} more` : ''})` : ''}; ship once it is ready again` })
       await this.verifyLoop(run)
       return []
     }
@@ -1037,6 +1050,7 @@ export class Pipeline {
       end: (kind, text) => { this.ends.set(run, { kind, text }) },
       addRepo: (key: string) => this.addRepo(run, key, undefined, { byAgent: true }),
       ...(m.platform ? { restartDevice: () => this.rebootDevice(run, 'the agent asked for it') } : {}),
+      ...(this.tracker.attachment ? { attachment: (url: string) => this.tracker.attachment!(url) } : {}),
       ...(this.browserSpec(run) ? { browser: (action: string, a: { target?: string; text?: string }) => this.browsers.act({ run, runDir: dir, devPort: this.must(run).devServer!.port, spec: this.browserSpec(run)! }, action, a) } : {}),
     }, this.d.project.tools, name, args)
   }

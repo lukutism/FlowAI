@@ -576,6 +576,8 @@ describe('pipeline: a message at any gate carries the run on, and flow puts the 
     writeFileSync(join(t.wt, 'src/b.ts'), 'export const b = 2 // ERR by hand\n')
     expect(await t.pipe.ship(run)).toEqual([])
     expect(t.azCalls.some(a => a.includes('create'))).toBe(false)
+    // it says what changed (an editor writing into a tracked file looks like nothing happened otherwise)
+    expect(t.store.events(run).find(e => e.type === 'build.done' && 'reason' in e && e.reason)).toMatchObject({ reason: expect.stringMatching(/changed after it was verified \(src\/b\.ts\)/) })
     expect(t.agent.prompts[2]).toContain('ERR by hand')
     expect(t.store.state(run)).toMatchObject({ stage: 'ship', needs: { kind: 'ship' } })
   })

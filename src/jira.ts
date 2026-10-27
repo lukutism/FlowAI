@@ -61,12 +61,12 @@ export const adfToMarkdown = (doc: unknown): string => (doc && typeof doc === 'o
 
 export function jiraTracker(t: JiraConfig, deps: JiraDeps = {}): Tracker {
   const tokenHelp = `https://id.atlassian.com/manage-profile/security/api-tokens, then: security add-generic-password -U -s ${t.keychain} -a ${t.email} -w`
-  const get = async (path: string) => {
+  const get = async (path: string, accept = 'application/json') => {
     const token = (deps.secret ?? keychain)(t.keychain)
     if (!token) throw new Error(`no Jira token in the keychain (${t.keychain}): create one at ${tokenHelp}`)
     let r: Response
     try {
-      r = await (deps.fetch ?? fetch)(`${t.site}${path}`, { headers: { Authorization: `Basic ${btoa(`${t.email}:${token}`)}`, Accept: 'application/json' }, signal: AbortSignal.timeout(30_000) })
+      r = await (deps.fetch ?? fetch)(`${t.site}${path}`, { headers: { Authorization: `Basic ${btoa(`${t.email}:${token}`)}`, Accept: accept }, signal: AbortSignal.timeout(accept === 'application/json' ? 30_000 : 300_000) })
     } catch (e) { throw new Error(`can't reach Jira (${t.site}): ${(e as Error).message.split('\n')[0]}`) }
     if (r.status === 401 || r.status === 403) throw new Error(`Jira rejected the token (${r.status}): create a new one at ${tokenHelp}`)
     return r
@@ -88,10 +88,19 @@ export function jiraTracker(t: JiraConfig, deps: JiraDeps = {}): Tracker {
         .map(c => `${String(c.created).slice(0, 10)} ${c.author?.displayName ?? 'unknown'}: ${adfToMarkdown(c.body).replace(/\n+/g, ' ')}`)
       if (comments.length) sections.push(`Comments (newest first):\n${comments.join('\n')}`)
       const files = ((f.attachment ?? []) as any[]).map(a => `- ${a.filename} (${a.mimeType}) ${a.content}`)
-      if (files.length) sections.push(`Attachments:\n${files.join('\n')}`)
+      if (files.length) sections.push(`Attachments (download one into the run folder with the ticket tool: attachment <its link>):\n${files.join('\n')}`)
       const k = j.key ?? key
       return { id: k, key: k, title: f.summary ?? '', kind: /bug/i.test(f.issuetype?.name ?? '') ? 'bug' : 'feature', url: `${t.site}/browse/${k}`, text: sections.join('\n\n'),
         type: f.issuetype?.name ?? '', board: t.key.toUpperCase(), customer: '', tags: (f.labels ?? []) as string[], comments: comments.length, environment: env.split('\n')[0]?.trim() ?? '' }
+    },
+    async attachment(url) {
+      // only Jira's own links: the token goes nowhere else
+      if (!url.startsWith(`${t.site}/`)) throw new Error(`${url} is not an attachment on ${new URL(t.site).host}`)
+      const r = await get(url.slice(t.site.length), '*/*')
+      if (!r.ok) throw new Error(`Jira answered ${r.status} for the attachment`)
+      const b = new Uint8Array(await r.arrayBuffer())
+      if (b.length > 200_000_000) throw new Error('the attachment is over 200 MB')
+      return b
     },
   }
 }

@@ -292,3 +292,13 @@ describe("guard: the run's device is flow's to boot and stop", () => {
       expect(bash(c)).toBeNull()
   })
 })
+
+describe("guard: the user's keychain is not the agent's", () => {
+  test('reading passwords or dumping a keychain is refused; the ticket tool is what to use', () => {
+    for (const c of ['security find-generic-password -s hwt-jira', 'security find-generic-password -s x -w', 'security find-internet-password -s github.com', '/usr/bin/security dump-keychain', 'security export -k login.keychain'])
+      expect(bash(c)?.reason).toMatch(/keychain/)
+  })
+  test('other security subcommands are fine', () => {
+    expect(bash('security cms -D -i profile.mobileprovision')).toBeNull()
+  })
+})
