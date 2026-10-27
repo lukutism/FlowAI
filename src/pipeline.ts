@@ -1054,7 +1054,7 @@ export class Pipeline {
         return fenced('ticket', `# ${t.key} ${t.title}\n${t.url}\n\n${red.text}`).text
       },
       end: (kind, text) => { this.ends.set(run, { kind, text }) },
-      addRepo: (key: string) => this.addRepo(run, key, undefined, { byAgent: true }),
+      addRepo: (key: string) => this.addRepo(run, key, undefined, { byAgent: true }), otherRepos: this.otherRepos(run),
       ...(m.platform ? { restartDevice: () => this.rebootDevice(run, 'the agent asked for it') } : {}),
       ...(this.tracker.attachment ? { attachment: (url: string) => this.tracker.attachment!(url) } : {}),
       ...(this.browserSpec(run) ? { browser: (action: string, a: { target?: string; text?: string }) => this.browsers.act({ run, runDir: dir, devPort: this.must(run).devServer!.port, spec: this.browserSpec(run)! }, action, a) } : {}),

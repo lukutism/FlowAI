@@ -18,3 +18,10 @@ describe('the ticket tool: an attachment', () => {
     expect(await callTool(host(), [], 'ticket', { attachment: 'https://x/y' })).toMatchObject({ ok: false, text: expect.stringMatching(/can't download attachments/) })
   })
 })
+
+describe('add_repo without its repo', () => {
+  test('says which repos it can add, instead of "no repo"', async () => {
+    const h = host({ addRepo: async () => 'added', otherRepos: ['web', 'admin'] })
+    expect(await callTool(h, [], 'add_repo', {})).toMatchObject({ ok: false, text: 'add_repo needs the repo: one of web, admin' })
+  })
+})

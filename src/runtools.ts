@@ -24,6 +24,8 @@ export interface ToolHost {
   end(kind: 'ask' | 'resolve' | 'block', text: string): void
   /** a repo the run lacks, added (its worktree on the run's branch): where it is */
   addRepo?(key: string): Promise<string>
+  /** the project's repos the run lacks (what add_repo can add) */
+  otherRepos?: string[]
   /** one of the ticket's attachments by its link, downloaded by flow (absent: the tracker can't) */
   attachment?(url: string): Promise<Uint8Array>
   /** the run's device stopped and booted again by flow (the app installed, Metro the same): what it is now */
@@ -68,7 +70,11 @@ export async function callTool(h: ToolHost, project: ProjectTool[], name: string
       return { ok: true, text: r.ok ? 'verify: no new findings against the base.' : `verify: ${r.findings.length} new finding${r.findings.length === 1 ? '' : 's'} against the base (file|rule|message):\n${r.findings.map(f => `- ${f}`).join('\n')}` }
     }
     if (name === 'device') return await device(h, a('action'), a('name'))
-    if (name === 'add_repo') return h.addRepo ? { ok: true, text: await h.addRepo(a('repo')) } : { ok: false, text: 'no other repos can be added to this run' }
+    if (name === 'add_repo') {
+      if (!h.addRepo) return { ok: false, text: 'no other repos can be added to this run' }
+      if (!a('repo')) return { ok: false, text: `add_repo needs the repo: one of ${(h.otherRepos ?? []).join(', ')}` }
+      return { ok: true, text: await h.addRepo(a('repo')) }
+    }
     if (name === 'browser') return h.browser ? await h.browser(a('action'), { target: a('target'), text: a('text') }) : { ok: false, text: 'this run has no browser (its dev server has none configured)' }
     if (name === 'logs') {
       const log = a('log')
