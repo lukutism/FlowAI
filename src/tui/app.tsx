@@ -45,7 +45,8 @@ type Tab = (typeof TABS)[number]
 type Mode =
   | { kind: 'list' }
   // back: asked from the run's detail, which stays on screen and comes back afterwards
-  | { kind: 'approve'; run: string; editing: boolean; text: string; back?: boolean }
+  // picks: the choice made for each question with options (its default at first); at: the question the arrows move
+  | { kind: 'approve'; run: string; editing: boolean; text: string; back?: boolean; picks?: Record<string, string>; at?: number }
   | { kind: 'ship'; run: string; back?: boolean }
   | { kind: 'remove'; run: string; back?: boolean }
   | { kind: 'message'; run: string; text: string; back?: boolean }
@@ -138,7 +139,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
 
   // what a key (or the palette) does to a run
   const ask = {
-    approve: (r: RunState) => (r.needs?.kind === 'plan' ? setMode({ kind: 'approve', run: r.id, editing: false, text: '', back: !!detailId }) : setNotice(`${r.ticket}: no plan is waiting for you`)),
+    approve: (r: RunState) => (r.needs?.kind === 'plan' ? setMode({ kind: 'approve', run: r.id, editing: false, text: '', back: !!detailId, at: 0,
+      picks: Object.fromEntries((r.plan?.questions ?? []).filter(q => q.options?.length).map(q => [q.id, q.default])) }) : setNotice(`${r.ticket}: no plan is waiting for you`)),
     ship: (r: RunState) => (r.needs?.kind === 'ship' || (r.needs?.kind === 'patch' && r.patch) ? setMode({ kind: 'ship', run: r.id, back: !!detailId }) : setNotice(`${r.ticket} is not ready to ship`)),
     message: (r: RunState) => setMode({ kind: 'message', run: r.id, text: '', back: !!detailId }),
     port: (r: RunState) => (can(r).port ? void send({ cmd: 'port', run: r.id }, `porting ${r.ticket} to ${line(defaultBaseOf(r) ?? '')}`) : setNotice(r.pr ? `${r.ticket} is on its project's default line: nothing to port` : `${r.ticket} has no PR to port yet`)),
@@ -245,7 +247,18 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       void send({ cmd: 'approve', run: mode.run, answers }, `plan approved: ${mode.run}`)
     })
     if (mode.kind === 'approve') {
-      if (typed === 'y') return void send({ cmd: 'approve', run: mode.run }, `plan approved with the defaults: ${mode.run}`)
+      // a question with options is a choice: ↑↓ to the question, ←→ (or a click on one) to pick
+      const qs = api.runs.get(mode.run)?.plan?.questions ?? [], at = Math.min(mode.at ?? 0, Math.max(0, qs.length - 1)), q = qs[at]
+      if (typed.startsWith('pick:')) { const [, id, ...v] = typed.split(':'); return setMode({ ...mode, at: Math.max(0, qs.findIndex(x => x.id === id)), picks: { ...mode.picks, [id!]: v.join(':') } }) }
+      if (name === 'up' || name === 'down') return setMode({ ...mode, at: Math.max(0, Math.min(qs.length - 1, at + (name === 'up' ? -1 : 1))) })
+      if ((name === 'left' || name === 'right') && q?.options?.length) {
+        const o = q.options, cur = Math.max(0, o.indexOf(mode.picks?.[q.id] ?? q.default))
+        return setMode({ ...mode, picks: { ...mode.picks, [q.id]: o[(cur + (name === 'right' ? 1 : o.length - 1)) % o.length]! } })
+      }
+      if (typed === 'y' || name === 'return') {
+        const answers = Object.fromEntries(Object.entries(mode.picks ?? {}).filter(([id, v]) => qs.find(x => x.id === id)?.default !== v))
+        return void (Object.keys(answers).length ? send({ cmd: 'approve', run: mode.run, answers }, `plan approved: ${mode.run}`) : send({ cmd: 'approve', run: mode.run }, `plan approved with the defaults: ${mode.run}`))
+      }
       if (typed === 'e') return setMode({ ...mode, editing: true, text: '' })
       if (typed === 'n' || name === 'escape') return setMode(after(mode))
       return
@@ -469,8 +482,18 @@ function Confirm({ mode, run, resources, onKey }: { mode: Mode; run?: RunState; 
   if (mode.kind === 'approve' && mode.editing) return <text>{'          '}<span fg={C.warning}>Answers </span><span fg={C.text}>{mode.text}▏</span><span fg={C.muted}>   e.g. Q1=yes Q2=no · ↵ approve · esc cancel</span></text>
   if (mode.kind === 'approve') return (
     <box flexDirection="column">
-      <text>{'          '}<strong>{`Approve ${run.ticket} with the defaults and start the build?`}</strong><span fg={C.secondary}>{queue}</span></text>
-      {(run.plan?.questions ?? []).map(q => <text key={q.id} fg={C.secondary}>{`            ${q.id}${q.held ? ' (held)' : ''} ${q.text} → ${q.default}`}</text>)}
+      <text>{'          '}<strong>{`Approve ${run.ticket} with ${Object.entries(mode.picks ?? {}).some(([id, v]) => run.plan?.questions.find(x => x.id === id)?.default !== v) ? 'these answers' : 'the defaults'} and start the build?`}</strong><span fg={C.secondary}>{queue}</span></text>
+      {(run.plan?.questions ?? []).map((q, i) => {
+        const mark = (run.plan?.questions.some(x => x.options?.length) ? (i === (mode.at ?? 0) ? '▸ ' : '  ') : '')
+        if (!q.options?.length) return <text key={q.id} fg={C.secondary}>{`          ${mark}${q.id}${q.held ? ' (held)' : ''} ${q.text} → ${q.default}`}</text>
+        const pick = mode.picks?.[q.id] ?? q.default
+        return (
+          <box key={q.id} flexDirection="row">
+            <text fg={i === (mode.at ?? 0) ? C.text : C.secondary}>{`          ${mark}${q.id}${q.held ? ' (held)' : ''} ${q.text}  `}</text>
+            {q.options.map(o => <Click key={o} on={() => onKey(`pick:${q.id}:${o}`)}><text fg={o === pick ? C.accent : C.secondary}>{`  ${o === pick ? '(•)' : '( )'} ${o}`}</text></Click>)}
+          </box>
+        )
+      })}
       <box flexDirection="row"><text>{'          '}</text><Hint k="y" label="approve" tone={C.warning} on={() => onKey('y')} /><Hint k="e" label="other answers" on={() => onKey('e')} /><Hint k="n" label="cancel" on={() => onKey('n')} /></box>
     </box>
   )

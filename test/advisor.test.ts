@@ -37,3 +37,13 @@ describe('lookupPrompt', () => {
     expect(p).toMatch(/then stop/i)
   })
 })
+
+describe('a question with options', () => {
+  const qs = [{ id: 'Q1', text: 'Which list?', default: 'only the asset list', held: false, options: ['only the asset list', 'both lists'] }]
+  test('the advisor is shown them and answers with one; an answer that is none of them is not taken (the default holds)', () => {
+    expect(advisorPrompt({ key: '#1', title: 't', ticket: 'x', plan: 'p', questions: qs })).toContain('Q1: Which list? (options: only the asset list | both lists; default: only the asset list)')
+    const ok = parseAdvice('ok\n\n```json\n[{"id": "Q1", "answer": "Both lists", "reason": "the ticket says lists"}]\n```', qs)
+    expect(ok.answers.Q1).toEqual({ answer: 'both lists', reason: 'the ticket says lists' })
+    expect(parseAdvice('x\n\n```json\n[{"id": "Q1", "answer": "neither", "reason": "r"}]\n```', qs).answers).toEqual({})
+  })
+})

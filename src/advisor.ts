@@ -19,9 +19,9 @@ The plan:
 ${o.plan}
 
 The open questions:
-${o.questions.map(q => `- ${q.id}: ${q.text} (default: ${q.default})`).join('\n')}
+${o.questions.map(q => `- ${q.id}: ${q.text} (${q.options?.length ? `options: ${q.options.join(' | ')}; ` : ''}default: ${q.default})`).join('\n')}
 
-For each question: if the answer is something the agent can find out itself with its tools (data on a test tenant, the code, a linked ticket), say how in "lookup" instead of guessing. Otherwise give your answer and why, from the ticket, the code and the plan; the default when nothing better holds.
+For each question: if the answer is something the agent can find out itself with its tools (data on a test tenant, the code, a linked ticket), say how in "lookup" instead of guessing. Otherwise give your answer and why, from the ticket, the code and the plan; the default when nothing better holds. A question with options is answered with one of them, as written.
 
 Answer with a short note, then exactly one fenced block:
 \`\`\`json
@@ -35,12 +35,17 @@ export function parseAdvice(text: string, questions: Question[]): Advice {
   const items = JSON.parse(block) as unknown
   if (!Array.isArray(items)) throw new Error('the json block is not an array')
   const ids = new Set(questions.map(q => q.id))
+  // a question with options takes one of them (as written there); another answer is not taken: the default holds
+  const fit = (id: string, a: string) => { const o = questions.find(q => q.id === id)?.options; return !o?.length ? a : o.find(x => x.toLowerCase() === a.toLowerCase()) }
   const out: Advice = { answers: {}, lookups: [] }
   for (const x of items as Record<string, unknown>[]) {
     const id = String(x?.id ?? '')
     if (!ids.has(id)) continue
     if (typeof x.lookup === 'string' && x.lookup.trim()) out.lookups.push({ id, how: x.lookup.trim().slice(0, 500) })
-    else if (typeof x.answer === 'string' && x.answer.trim()) out.answers[id] = { answer: x.answer.trim().slice(0, 500), reason: String(x.reason ?? '').trim().slice(0, 500) }
+    else if (typeof x.answer === 'string' && x.answer.trim()) {
+      const answer = fit(id, x.answer.trim().slice(0, 500))
+      if (answer) out.answers[id] = { answer, reason: String(x.reason ?? '').trim().slice(0, 500) }
+    }
   }
   return out
 }

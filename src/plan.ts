@@ -2,7 +2,8 @@ import type { Question } from './run.ts'
 
 /**
  * The agent's plan (plan.md in the run folder): a first paragraph that says what will change, then sections.
- * "## Open questions" lists `- Q1: <question> — default: <answer>`; `(held)` after the id marks a question that
+ * "## Open questions" lists `- Q1: <question> [— options: <a> | <b>] — default: <answer>` (with options, one of
+ * them); `(held)` after the id marks a question that
  * decides whether behaviour changes, which only the human answers. "none" means no questions.
  */
 export function parsePlan(md: string): { summary: string; questions: Question[] } {
@@ -16,7 +17,14 @@ export function parsePlan(md: string): { summary: string; questions: Question[] 
     const id = m[1]?.toUpperCase() ?? `Q${questions.length + 1}`
     const d = /^(.*?)\s*[—–-]+\s*default:\s*(.+)$/i.exec(m[3]!.trim())
     if (!d) throw new Error(`${id} has no default ("— default: <answer>"): flow needs one to proceed when you don't answer`)
-    questions.push({ id, text: d[1]!.trim(), default: d[2]!.trim(), held: !!m[2] })
+    // options to choose from (— options: a | b): the default is one of them, and why it is, kept apart
+    const o = /^(.*?)\s*[—–-]+\s*options:\s*(.+)$/i.exec(d[1]!.trim())
+    if (!o) { questions.push({ id, text: d[1]!.trim(), default: d[2]!.trim(), held: !!m[2] }); continue }
+    const options = o[2]!.split('|').map(x => x.trim()).filter(Boolean)
+    const given = d[2]!.trim(), pick = options.filter(x => given.toLowerCase().startsWith(x.toLowerCase())).sort((a, b) => b.length - a.length)[0]
+    if (!pick) throw new Error(`${id}'s default "${given}" is not one of its options (${options.join(', ')})`)
+    const why = given.slice(pick.length).replace(/^\s*(because\b|[—–:-])?\s*/i, '').trim()
+    questions.push({ id, text: o[1]!.trim(), options, default: pick, ...(why ? { why } : {}), held: !!m[2] })
   }
   return { summary, questions }
 }

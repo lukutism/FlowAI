@@ -81,8 +81,9 @@ ${k.bug ? 'Repro: live | test | mocked | not-reproduced — <what you did; mocke
 <each reversible choice you made yourself, one a line: what you chose and why>
 
 ## Open questions
-- Q1: <a product decision the ticket and the code leave open> — default: <the choice you would ship> because <why>
-(nobody may answer: an advisor decides open questions after a short wait, so give the default you would stand behind.
+- Q1: <a product decision the ticket and the code leave open> — options: <one> | <another> — default: <the one you would ship> because <why>
+(when the answer is a choice, list the options, the default one of them: they are shown to choose from; leave
+"— options:" out only when the answer is free text. Nobody may answer: an advisor decides open questions after a short wait, so give the default you would stand behind.
 Add "(held)" after the id, as in "Q2 (held):", only when shipping either answer unconfirmed could harm users or
 their data: a held question waits for a human, maybe for days)
 or: - none — <why nothing is open>

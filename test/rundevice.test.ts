@@ -165,6 +165,8 @@ describe("the agent's own device", () => {
       expect(t.store.events(run).find(e => e.type === 'run.note')).toMatchObject({ text: expect.stringMatching(/the agent asked for it/) })
       const deny = JSON.parse(readFileSync((t.made[0] as { settings: string }).settings, 'utf8')).permissions.deny as string[]
       expect(deny).toEqual(expect.arrayContaining(['mcp__argent__boot-device', 'mcp__argent__stop-all-simulator-servers']))
+      // waiting and scheduling outside the turn: ending a turn ends the step, and flow schedules the run
+      expect(deny).toEqual(expect.arrayContaining(['Monitor', 'ScheduleWakeup', 'CronCreate', 'RemoteTrigger', 'Workflow']))
       expect(deny).not.toContain('mcp__argent')
     } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
   })

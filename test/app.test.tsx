@@ -42,7 +42,7 @@ async function screen(list = runs, size = { width: 130, height: 34 }, more: Part
   const frame = async () => { await act(async () => { await Bun.sleep(1) }); await s.renderOnce(); return s.captureCharFrame() }
   // a lone Escape is only known after a short pause (it could start a key sequence), so wait for it
   const press = async (...keys: string[]) => {
-    for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : k === 'ctrl+k' ? s.mockInput.pressKey('k', { ctrl: true }) : k === 'down' ? s.mockInput.pressArrow('down') : k === 'tab' ? s.mockInput.pressKey('\t') : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
+    for (const k of keys) await act(async () => { k === 'enter' ? s.mockInput.pressEnter() : k === 'esc' ? s.mockInput.pressEscape() : k === 'ctrl+k' ? s.mockInput.pressKey('k', { ctrl: true }) : k === 'down' ? s.mockInput.pressArrow('down') : k === 'up' ? s.mockInput.pressArrow('up') : k === 'right' ? s.mockInput.pressArrow('right') : k === 'left' ? s.mockInput.pressArrow('left') : k === 'tab' ? s.mockInput.pressKey('\t') : s.mockInput.pressKey(k); if (k === 'esc') await Bun.sleep(80) })
     return frame()
   }
   // content that loads (a file, a reply) arrives when it arrives: wait for it, up to 3s, rather than a fixed pause
@@ -72,6 +72,21 @@ describe('Runs screen', () => {
       expect(f).toContain('Q1 Also guard the order list? → no')
       await t.press('y')
       expect(t.f.sent).toEqual([{ cmd: 'approve', run: 'fso-105' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('questions with options: each a choice, its default picked; ↑↓ to a question, ←→ or a click to pick, y approves with the picks', async () => {
+    const t = await screen([base('fso-105', { stage: 'plan', status: 'needs-you', needs: { kind: 'plan', ask: '2 open questions', held: false },
+      plan: { summary: 's', questions: [{ id: 'Q1', text: 'Which list?', default: 'the asset list', held: false, options: ['the asset list', 'both lists'] }, { id: 'Q2', text: 'Log it?', default: 'no', held: false, options: ['yes', 'no'] }] } })])
+    try {
+      const f = await t.press('a')
+      expect(f).toMatch(/▸ Q1 Which list\? +\(•\) the asset list +\( \) both lists/)
+      expect(f).toMatch(/  Q2 Log it\? +\( \) yes +\(•\) no/)
+      await t.press('right') // Q1: both lists
+      const p = at(await t.frame(), '( ) yes')
+      await act(async () => { await t.s.mockMouse.click(p.x + 1, p.y) }); await act(async () => { await Bun.sleep(30) })
+      expect(await t.frame()).toMatch(/▸ Q2 Log it\? +\(•\) yes/)
+      await t.press('y')
+      expect(t.f.sent).toEqual([{ cmd: 'approve', run: 'fso-105', answers: { Q1: 'both lists', Q2: 'yes' } }])
     } finally { t.s.renderer.destroy() }
   })
   test('an answer with spaces is kept whole: Q1=only the list Q2=no', async () => {

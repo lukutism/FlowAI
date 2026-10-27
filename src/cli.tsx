@@ -74,7 +74,7 @@ function next(s: RunState): string {
   if (!n) return s.status === 'done' ? (s.patch ? `done: patch ${s.patch.customer}/${s.patch.app} written back` : 'done')
     : `${s.stage} · ${s.status}${s.status === 'waiting' && s.waitingFor ? ` for ${s.waitingFor}` : s.status === 'paused' && s.pausedUntil ? ` until ${hhmm(s.pausedUntil)}` : ''}`
   if (n.kind === 'plan') {
-    const qs = s.plan?.questions.map(q => `  ${q.id}${q.held ? ' (held)' : ''} ${q.text} — default: ${q.default}`).join('\n') ?? ''
+    const qs = s.plan?.questions.map(q => `  ${q.id}${q.held ? ' (held)' : ''} ${q.text}${q.options?.length ? ` — options: ${q.options.join(' | ')}` : ''} — default: ${q.default}`).join('\n') ?? ''
     // the deadline is applied by the background service (flow serve); without it flow waits for you
     const when = n.held ? 'held for you: no deadline' : n.deadline ? `defaults at ${hhmm(n.deadline)} if flow serve is running; otherwise it waits for you` : ''
     return `plan needs you (${when})\n${qs}\n  → flow approve ${s.id} ${s.plan?.questions.map(q => `${q.id}=…`).join(' ')}`

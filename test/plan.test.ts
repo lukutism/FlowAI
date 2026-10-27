@@ -23,6 +23,11 @@ describe('parsePlan', () => {
       { id: 'Q2', text: 'Drop the extension-field refresh?', default: 'no', held: true },
     ])
   })
+  test('a question with its options: the default is one of them (its reason kept apart); a default that is none of them is an error', () => {
+    const p = parsePlan(plan('- Q1: Which list gets the guard? — options: only the asset list | both lists | none — default: Only the asset list because the ticket names it'))
+    expect(p.questions).toEqual([{ id: 'Q1', text: 'Which list gets the guard?', options: ['only the asset list', 'both lists', 'none'], default: 'only the asset list', why: 'the ticket names it', held: false }])
+    expect(() => parsePlan(plan('- Q1: Which? — options: a | b — default: c'))).toThrow(/Q1's default "c" is not one of its options \(a, b\)/)
+  })
   test('"none" (with or without a reason) means no questions; so does a missing section', () => {
     expect(parsePlan(plan('none — the ticket says what to do')).questions).toEqual([])
     expect(parsePlan('# Plan\n\nJust do it.\n').questions).toEqual([])

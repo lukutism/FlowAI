@@ -7,7 +7,8 @@ export type Stage = 'setup' | 'plan' | 'build' | 'verify' | 'review' | 'ship' | 
 export type Status = 'running' | 'waiting' | 'needs-you' | 'paused' | 'blocked' | 'failed' | 'done'
 export type Actor = 'human' | 'agent' | 'engine'
 
-export interface Question { id: string; text: string; default: string; held: boolean }
+/** options: what to choose from (the default is one of them); why: the agent's reason for the default */
+export interface Question { id: string; text: string; default: string; held: boolean; options?: string[]; why?: string }
 
 export type EventBody =
   | { type: 'run.created'; ticket: string; title: string; project: string; base: string; repos?: string[] }
