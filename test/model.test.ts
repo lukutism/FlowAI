@@ -254,7 +254,7 @@ describe('canDo: what a run takes now (the key line and the commands offer only 
 describe('a PR marked ready for review', () => {
   test('is no longer called a draft', () => {
     const r = { id: 'r', ticket: 'SHOP-7', title: 't', project: 'shop', base: 'origin/main', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review PR #7' }, pr: { number: 7, url: 'u' }, loops: { verify: 0, verifyRuns: 0, review: 0 }, tokens: 0, compactions: 0, createdAt: 0, updatedAt: 0 } as RunState
-    expect(attention([r], 1)[0]!.label).toBe('Draft PR')
+    expect(attention([r], 1)[0]!).toMatchObject({ label: 'Draft PR', key: 'o', action: 'openPr' }) // its action: the PR in the browser
     expect(attention([{ ...r, prDraft: false }], 1)[0]!.label).toBe('PR ready for review')
     expect(rows([{ ...r, prDraft: false }], 1)[0]!.status).toBe('PR ready')
   })

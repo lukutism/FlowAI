@@ -1166,6 +1166,25 @@ describe('the device in the browser', () => {
   })
 })
 
+describe('a run with a PR', () => {
+  test('o opens the PR in the browser from the attention item and the run list; in the run, the palette does (o there shows a whole tool output)', async () => {
+    const opened: string[] = []
+    const url = 'https://dev.azure.com/acme/hub/_git/hub/pullrequest/4711'
+    const t = await screen([base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url } })], undefined, { openUrl: (u: string) => { opened.push(u) } })
+    try {
+      const f = await t.frame()
+      expect(f).toContain('o open PR')
+      const p = at(f, 'o open PR')
+      await act(async () => { await t.s.mockMouse.click(p.x, p.y) }); await act(async () => { await Bun.sleep(30) })
+      expect(opened).toEqual([url])
+      await t.press('o')
+      expect(opened).toHaveLength(2)
+      await t.press('enter', 'ctrl+k', ...'PR #4711 in the browser'.split(''), 'enter')
+      expect(opened).toHaveLength(3)
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
 describe("the ticket's own page", () => {
   test('opened in the browser from the run (a click on ticket, or the palette); ticket.md stays one click away', async () => {
     const opened: string[] = []

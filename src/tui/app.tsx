@@ -34,6 +34,8 @@ export interface FlowApi extends DetailApi, FormApi {
 const C = { text: '#DDE2E8', secondary: '#A3ABB5', muted: '#6D7681', faint: '#434A54', accent: '#78A6EC', success: '#72C08A', warning: '#E2B35F', danger: '#EC7A70', selected: '#1B2533', inactive: '#171B21', panel: '#161A20' }
 const TONE = { accent: C.accent, warning: C.warning, danger: C.danger, success: C.success, muted: C.muted }
 
+/** a link's host, or the link itself when it isn't one (it is shown, never parsed into a crash) */
+const hostOf = (url: string) => { try { return new URL(url).host } catch { return url } }
 const openUrl = (url: string) => { try { Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url], { stdout: 'ignore', stderr: 'ignore' }) } catch {} }
 
 const fit = (s: string, n: number) => (n <= 0 ? '' : s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s.padEnd(n))
@@ -144,6 +146,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     port: (r: RunState) => (can(r).port ? void send({ cmd: 'port', run: r.id }, `porting ${r.ticket} to ${line(defaultBaseOf(r) ?? '')}`) : setNotice(r.pr ? `${r.ticket} is on its project's default line: nothing to port` : `${r.ticket} has no PR to port yet`)),
     release: (r: RunState) => (r.device ? void send({ cmd: 'release', run: r.id }, `stopping ${r.ticket}'s device`) : setNotice(`${r.ticket} has no device`)),
     open: (r: RunState) => setMode({ kind: 'detail', run: r.id }),
+    // the run's PRs on the code host, in the browser
+    openPr: (r: RunState) => { const prs = r.prs?.length ? r.prs : r.pr ? [r.pr] : []; if (!prs.length) return setNotice(`${r.ticket} has no PR yet`); for (const p of prs) (api.openUrl ?? openUrl)(p.url); setNotice(`${r.ticket}: ${prs.map(p => `PR #${p.number}`).join(', ')} opened in the browser`) },
     remove: (r: RunState, force = false) => setMode({ kind: 'remove', run: r.id, force, back: !!detailId }),
     done: (r: RunState) => void send({ cmd: 'done', run: r.id }, `${r.ticket} marked done`),
   }
@@ -174,6 +178,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         if (missingRepos(r).length) a.push({ label: 'Add a repo', hint: `${missingRepos(r).join(', ')} · its own worktree on the run's branch`, run: () => setPal({ text: '', index: 0, sub: 'repos' }) })
         if (!r.pr) a.push({ label: 'Sync with the base', hint: "fetch, merge the base under the agent's change (kept uncommitted)", run: () => void send({ cmd: 'sync', run: r.id }, `${r.ticket}: syncing with its base`) })
       }
+      for (const p of (r.prs?.length ? r.prs : r.pr ? [r.pr] : []) as { url: string; number: number; repo?: string }[]) a.push({ label: `Open PR #${p.number} in the browser`, hint: p.repo ?? hostOf(p.url), run: () => { (api.openUrl ?? openUrl)(p.url); setNotice(`${r.ticket}: PR #${p.number} opened in the browser`) } })
       if (r.device && api.pageUrl) a.push({ label: 'See the device in the browser', hint: `${r.device.platform === 'android' ? 'see it and use it' : 'see it'} · ${r.device.id}`, run: () => { (api.openUrl ?? openUrl)(api.pageUrl!(`/device/${r.id}`)); setNotice(`${r.ticket}: the device opened in the browser`) } })
       if (!r.device && r.status !== 'done' && r.status !== 'failed') for (const pl of api.projects?.find(p => p.key === r.project)?.devices ?? []) a.push({ label: `Add a device: ${pl}`, hint: "its own emulator, Metro and the app from the run's worktree; the agent's next turn has it", run: () => void send({ cmd: 'restartDevice', run: r.id, add: pl }, `${r.ticket}: adding its ${pl} device`) })
       if (r.device || r.devServer) a.push({ label: r.device ? 'Restart the device' : 'Restart the dev server', hint: r.device ? 'stop it, boot it again with the current settings, install the app' : 'stop it and start it again with the current settings', run: () => void send({ cmd: 'restartDevice', run: r.id }, `${r.ticket}: restarting its device`) })
@@ -314,6 +319,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     if (name === 'return') return ask.open(state)
     if (typed === 'a') return ask.approve(state)
     if (typed === 'S') return ask.ship(state)
+    if (typed === 'o') return ask.openPr(state)
     if (typed === 'm') return ask.message(state)
   }
   useKeyboard(key => handle(key.name, key.sequence && key.sequence.length === 1 && key.sequence >= ' ' ? key.sequence : '', key.ctrl, key))
@@ -445,7 +451,7 @@ function Attention({ items, shown, two, inline, mode, runs, resources, onItem, o
                 <span fg={TONE[a.tone]}> ◆ {fit(a.label, 15)}</span><span fg={C.secondary}>{fit(a.when, 18)}</span>
               </text>
             </Click>
-            <Click on={() => onItem(a, true)}><text><strong>{a.key}</strong><span fg={C.secondary}> {a.action}</span></text></Click>
+            <Click on={() => onItem(a, true)}><text><strong>{a.key}</strong><span fg={C.secondary}> {a.action === 'openPr' ? 'open PR' : a.action}</span></text></Click>
           </box>
           {two ? <Click on={() => onItem(a, false)}><text fg={C.muted}>{`          ${a.detail.slice(0, 110)}`}</text></Click> : null}
           {inline === a.run ? <Confirm mode={mode} run={runs.get(a.run)} resources={resources} onKey={onKey} /> : null}

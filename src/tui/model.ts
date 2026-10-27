@@ -19,7 +19,7 @@ export interface AttentionItem {
   run: string; ticket: string; title: string; project: string; line: string
   label: string; detail: string; when: string
   /** the key that acts on it, and what it does */
-  key: 'a' | 'm' | 'S' | '↵'; action: 'approve' | 'message' | 'ship' | 'open'
+  key: 'a' | 'm' | 'S' | '↵' | 'o'; action: 'approve' | 'message' | 'ship' | 'open' | 'openPr'
   tone: 'warning' | 'danger' | 'success' | 'accent'
 }
 
@@ -31,7 +31,7 @@ const LABELS: Record<Needs['kind'], [label: string, key: AttentionItem['key'], a
   verify: ['Verify stuck', 'm', 'message', 'danger'],
   review: ['Review cap', 'm', 'message', 'danger'],
   ship: ['Ready to ship', 'S', 'ship', 'success'],
-  pr: ['Draft PR', '↵', 'open', 'accent'],
+  pr: ['Draft PR', 'o', 'openPr', 'accent'],
   patch: ['Write-back checked', 'S', 'ship', 'success'],
   resolution: ['No change needed', 'm', 'message', 'accent'],
 }

@@ -267,7 +267,7 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
     // what the run has written so far: each only once it is there
     ...(data.plan ? [{ label: 'Open the plan', hint: 'P', run: () => setPopup({ kind: 'md', file: 'plan.md' }) }] : []),
     // the ticket's own page (Jira, Azure DevOps) when it has one; what the agent read of it in ticket.md
-    ...(data.url ? [{ label: 'Open the ticket in the browser', hint: new URL(data.url).host, run: () => (api.openUrl ?? openInBrowser)(data.url) }] : []),
+    ...(data.url ? [{ label: 'Open the ticket in the browser', hint: (() => { try { return new URL(data.url).host } catch { return data.url } })(), run: () => (api.openUrl ?? openInBrowser)(data.url) }] : []),
     { label: 'Open the ticket as the agent read it', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) },
     ...(data.pr ? [{ label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) }] : []),
     ...(data.review ? [{ label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) }] : []),
