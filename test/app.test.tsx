@@ -445,21 +445,19 @@ describe('the command palette', () => {
       expect(await t.press('enter')).toContain('← esc  #103')
     } finally { t.s.renderer.destroy() }
   })
-  test('in a run\'s detail: that run\'s commands, and the detail stays open under it', async () => {
+  test("in a run's detail: only the commands with no key or button there, and the detail stays open under it", async () => {
     const list = [base('fso-104', { base: 'origin/patch/3.18.41', stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url: 'u' } })]
     const t = await screen(list, undefined, { file: async (_r, n) => (n === 'plan.md' ? '# Plan\n\nThe walk.\n' : ''), ...{ projects: [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile'], devices: [], patches: [], deadlineMinutes: 30, defaultBase: 'origin/develop' }] } })
     try {
       const f = await t.press('enter', 'ctrl+k')
       expect(f).toContain('#104 commands')
-      for (const c of ['Message the agent', 'Open the change', 'Open the plan', 'Open the worktree in VS Code', 'Type in the shell', 'Port to develop']) expect(f).toContain(c)
+      // the rest have a key or a button in the detail: m, d, P, e, i, p, the Open line, the PR in the header
+      expect(f).toContain('#104 commands · 2 results')
+      expect(f).toContain('Remove the run')
+      for (const c of ['Open the change', 'Open the plan', 'Open the worktree in VS Code', 'Port to develop', 'in the browser']) expect(f).not.toContain(c)
       expect(f).not.toContain('Group by stage')
-      expect(f).not.toContain('Open the review') // no review yet
-      expect(f).not.toContain('dropping work') // one Remove; f in its question removes work not shipped too
-      expect(f).toContain('Port to develop') // a release-line fix: its project's default line
       expect(await t.press('esc')).toContain('← esc  #104') // still the detail
-      await t.press('ctrl+k', ...'plan'.split(''), 'enter')
-      expect(await t.until('The walk.')).toContain('The walk.')
-      await t.press('esc', 'ctrl+k', ...'port'.split(''), 'enter')
+      expect(await t.press('p')).toBeDefined()
       expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
     } finally { t.s.renderer.destroy() }
   })
@@ -643,8 +641,8 @@ describe('the mouse', () => {
     const t = await screen(list, undefined, { projects: [{ key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile'], devices: [], patches: [], deadlineMinutes: 30, defaultBase: 'origin/develop' }] })
     try {
       await t.press('enter', 'ctrl+k')
-      await click(t, 'Port to develop')
-      expect(t.f.sent).toEqual([{ cmd: 'port', run: 'fso-104' }])
+      await click(t, 'Remove the run')
+      expect(await t.frame()).toContain('Remove #104?')
     } finally { t.s.renderer.destroy() }
   })
 })
@@ -1158,13 +1156,14 @@ describe('removing a run and marking it done', () => {
 })
 
 describe('the device in the browser', () => {
-  test('a run with a device: its commands open the device\'s page', async () => {
+  test("a run with a device: b, or the button in its header, opens the device's page", async () => {
     const opened: string[] = []
     const t = await screen([base('fso-105', { device: { platform: 'android', id: 'emulator-5580', metroPort: 8090 } })], undefined, { pageUrl: (p: string) => `http://127.0.0.1:1${p}?token=t`, openUrl: (u: string) => { opened.push(u) } })
     try {
-      await t.press('enter', 'ctrl+k', ...'browser'.split(''), 'enter')
+      await t.press('enter')
+      const p = at(await t.frame(), 'b see it ↗')
+      await act(async () => { await t.s.mockMouse.click(p.x + 1, p.y) }); await act(async () => { await Bun.sleep(30) })
       expect(opened).toEqual(['http://127.0.0.1:1/device/fso-105?token=t'])
-      expect(await t.frame()).toContain('b see it')
       await t.press('esc', 'enter', 'b')
       expect(opened).toHaveLength(2)
     } finally { t.s.renderer.destroy() }
@@ -1172,7 +1171,7 @@ describe('the device in the browser', () => {
 })
 
 describe('a run with a PR', () => {
-  test('o opens the PR in the browser from the attention item and the run list; in the run, the palette does (o there shows a whole tool output)', async () => {
+  test('o opens the PR in the browser from the attention item and the run list; in the run, its header does (o there shows a whole tool output)', async () => {
     const opened: string[] = []
     const url = 'https://dev.azure.com/acme/hub/_git/hub/pullrequest/4711'
     const t = await screen([base('fso-104', { stage: 'ship', status: 'needs-you', needs: { kind: 'pr', ask: 'review' }, pr: { number: 4711, url } })], undefined, { openUrl: (u: string) => { opened.push(u) } })
@@ -1184,14 +1183,16 @@ describe('a run with a PR', () => {
       expect(opened).toEqual([url])
       await t.press('o')
       expect(opened).toHaveLength(2)
-      await t.press('enter', 'ctrl+k', ...'PR #4711 in the browser'.split(''), 'enter')
+      await t.press('enter')
+      const h = at(await t.frame(), 'draft PR #4711 ↗')
+      await act(async () => { await t.s.mockMouse.click(h.x + 1, h.y) }); await act(async () => { await Bun.sleep(30) })
       expect(opened).toHaveLength(3)
     } finally { t.s.renderer.destroy() }
   })
 })
 
 describe("the ticket's own page", () => {
-  test('opened in the browser from the run (a click on ticket, or the palette); ticket.md stays one click away', async () => {
+  test('opened in the browser from the run (a click on ticket ↗); ticket.md stays one click away', async () => {
     const opened: string[] = []
     const t = await screen([base('fso-105', {})], undefined, { openUrl: (u: string) => { opened.push(u) }, file: async (_r: string, n: string) => (n === 'run.json' ? JSON.stringify({ worktree: '/w', url: 'https://dev.azure.com/acme/hub/_workitems/edit/105' }) : '') })
     try {
@@ -1201,8 +1202,6 @@ describe("the ticket's own page", () => {
       const p = at(f, 'ticket ↗')
       await act(async () => { await t.s.mockMouse.click(p.x, p.y) }); await act(async () => { await Bun.sleep(30) })
       expect(opened).toEqual(['https://dev.azure.com/acme/hub/_workitems/edit/105'])
-      await t.press('ctrl+k', ...'ticket in'.split(''), 'enter')
-      expect(opened).toHaveLength(2)
     } finally { t.s.renderer.destroy() }
   })
 })

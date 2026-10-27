@@ -127,7 +127,7 @@ export type DetailKeys = (key: KeyEvent, typed: string) => boolean
 function Click({ on, children }: { on: () => void; children: ReactNode }) { return <box onMouseDown={on}>{children}</box> }
 const Row = ({ l }: { l: Line; w?: number }) => <text>{l.length ? l.map(([t, c], i) => <span key={i} fg={c || undefined}>{t}</span>) : ' '}</text>
 
-export function RunDetail({ api, run, now, width, height, message, can, bind, onMessage, onBack, onKey, bindCommands, bindPaste }: {
+export function RunDetail({ api, run, now, width, height, message, can, bind, onMessage, onBack, onKey, bindCommands, bindPaste, onDevicePage }: {
   api: DetailApi; run: RunState; now: number; width: number; height: number; message: string
   /** what the run takes now: approve, ship and port are on the key line only then */
   can?: { approve: boolean; ship: boolean; port: boolean }
@@ -138,6 +138,8 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
   bindCommands?: (c: (() => PaletteAction[]) | null) => void
   /** pasted text: into the shell (as a terminal paste) or the message box */
   bindPaste?: (f: ((text: string, bytes: Uint8Array) => void) | null) => void
+  /** the run's device page opened in the browser (b) */
+  onDevicePage?: () => void
   /** the screen hands its keys here first */
   bind: (keys: DetailKeys | null) => void
   onMessage: (text: string) => Promise<boolean> | void
@@ -261,23 +263,8 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
   }
   useEffect(() => { bind(keys); return () => bind(null) })
   // what the palette offers in the detail: its pop-ups and panes
-  const commands = (): PaletteAction[] => [
-    { label: 'Message the agent', hint: 'm', run: () => { setPane(p => (split ? p : 'agent')); setFocus('message') } },
-    { label: 'Open the change', hint: 'd · comment on its lines', run: () => setPopup({ kind: 'diff' }) },
-    // what the run has written so far: each only once it is there
-    ...(data.plan ? [{ label: 'Open the plan', hint: 'P', run: () => setPopup({ kind: 'md', file: 'plan.md' }) }] : []),
-    // the ticket's own page (Jira, Azure DevOps) when it has one; what the agent read of it in ticket.md
-    ...(data.url ? [{ label: 'Open the ticket in the browser', hint: (() => { try { return new URL(data.url).host } catch { return data.url } })(), run: () => (api.openUrl ?? openInBrowser)(data.url) }] : []),
-    // ticket.md and pr.md stay on the Open line; here only while there is no ticket page or PR to open instead
-    ...(data.url ? [] : [{ label: 'Open the ticket', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) }]),
-    ...(data.pr && !run.pr ? [{ label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) }] : []),
-    ...(data.review ? [{ label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) }] : []),
-    // the agent's pane is where Message the agent goes; the shell has its own command
-    ...panes.filter(x => x.key !== 'shell' && x.key !== 'agent').map(x => ({ label: `Show ${x.label}`, hint: 'pane', run: () => { setPane(x.key); setFocus('none') } })),
-    { label: 'Open the worktree in VS Code', hint: 'e', run: () => openEditor(data.worktree) },
-    { label: 'Type in the shell', hint: 'i · in the worktree', run: () => { if (!showsShell) setPane('shell'); setFocus('shell') } },
-    { label: split ? 'Unsplit' : 'Split with the shell', hint: 'v', run: () => setSplit(x => !x) },
-  ]
+  // what the palette offers in the detail: nothing that has a key or a button here (those are on the screen)
+  const commands = (): PaletteAction[] => []
   useEffect(() => { bindCommands?.(commands); return () => bindCommands?.(null) })
   const paste = (text: string, bytes: Uint8Array) => {
     if (focus === 'shell' && shell && !shell.ended && term) shell.proc?.terminal?.write(term.encodePaste(bytes))
@@ -357,14 +344,17 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
         <span fg={C.secondary}>{`${run.ticket}  `}</span><strong>{fit(run.title, Math.max(10, W - run.ticket.length - 40))}</strong>
         <span fg={C.muted}>{`   ${run.project} · ${lineOf(run.base)}`}</span>
       </text>
-      <text>
-        <span fg={C.accent}>{` ${track(run)}  `}</span><span fg={C.accent}>{`${run.stage} · ${run.status} ${duration(now - run.updatedAt)}`}</span>
-        <span fg={C.muted}>{`   ${tokens(run.tokens)} tokens${run.cached ? ` (+${tokens(run.cached)} from cache)` : ''} · ${run.compactions} compaction${run.compactions === 1 ? '' : 's'}`}</span>
-        {run.device ? <span fg={C.secondary}>{`   ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</span> : null}
-        {run.device ? <span fg={C.accent}>{'   b see it'}</span> : null}
-        {run.patch ? <span fg={C.secondary}>{`   patch ${run.patch.customer}/${run.patch.app}`}</span> : null}
-        {run.pr ? <span fg={C.success}>{`   ${run.prDraft === false ? 'PR' : 'draft PR'} #${run.pr.number}`}</span> : null}
-      </text>
+      {/* one line: the device's page and the PR (each of them) open in the browser from it */}
+      <box flexDirection="row">
+        <text>
+          <span fg={C.accent}>{` ${track(run)}  `}</span><span fg={C.accent}>{`${run.stage} · ${run.status} ${duration(now - run.updatedAt)}`}</span>
+          <span fg={C.muted}>{`   ${tokens(run.tokens)} tokens${run.cached ? ` (+${tokens(run.cached)} from cache)` : ''} · ${run.compactions} compaction${run.compactions === 1 ? '' : 's'}`}</span>
+          {run.device ? <span fg={C.secondary}>{`   ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</span> : null}
+          {run.patch ? <span fg={C.secondary}>{`   patch ${run.patch.customer}/${run.patch.app}`}</span> : null}
+        </text>
+        {run.device && onDevicePage ? <Click on={onDevicePage}><text fg={C.accent}>{'   b see it ↗'}</text></Click> : null}
+        {(run.prs?.length ? run.prs : run.pr ? [run.pr] : []).map(p => <Click key={p.url} on={() => (api.openUrl ?? openInBrowser)(p.url)}><text fg={C.success}>{`   ${run.prDraft === false ? 'PR' : 'draft PR'} #${p.number} ↗`}</text></Click>)}
+      </box>
       {rule}
       <box flexDirection="row" height={body}>
         <box flexDirection="column" width={left}>

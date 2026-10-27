@@ -34,8 +34,6 @@ export interface FlowApi extends DetailApi, FormApi {
 const C = { text: '#DDE2E8', secondary: '#A3ABB5', muted: '#6D7681', faint: '#434A54', accent: '#78A6EC', success: '#72C08A', warning: '#E2B35F', danger: '#EC7A70', selected: '#1B2533', inactive: '#171B21', panel: '#161A20' }
 const TONE = { accent: C.accent, warning: C.warning, danger: C.danger, success: C.success, muted: C.muted }
 
-/** a link's host, or the link itself when it isn't one (it is shown, never parsed into a crash) */
-const hostOf = (url: string) => { try { return new URL(url).host } catch { return url } }
 const openUrl = (url: string) => { try { Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url], { stdout: 'ignore', stderr: 'ignore' }) } catch {} }
 
 const fit = (s: string, n: number) => (n <= 0 ? '' : s.length > n ? `${s.slice(0, Math.max(0, n - 1))}…` : s.padEnd(n))
@@ -169,17 +167,12 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
     const inDetail = mode.kind === 'detail' ? api.runs.get(mode.run) : undefined
     if (inDetail) {
       const r = inDetail
-      if (r.needs?.kind === 'plan') a.push({ label: 'Approve the plan', hint: 'a · with the defaults, or other answers', run: () => ask.approve(r) })
-      if (r.needs?.kind === 'ship' || r.needs?.kind === 'patch') a.push({ label: r.patch ? (r.needs.kind === 'patch' ? 'Write the patch back' : 'Check the write-back') : 'Ship', hint: r.patch ? 'S' : 'S · commit, push, draft PR', run: () => ask.ship(r) })
+      // only what has no key or button in the detail (approve, ship, port, the PR and the device page are there)
       a.push(...(detailCmds.current?.() ?? []))
-      // a port is to develop: a run on develop has nothing to port
-      if (can(r).port) a.push({ label: `Port to ${line(defaultBaseOf(r) ?? '')}`, hint: 'p', run: () => ask.port(r) })
       if (r.status !== 'done' && r.status !== 'failed') {
         if (missingRepos(r).length) a.push({ label: 'Add a repo', hint: `${missingRepos(r).join(', ')} · its own worktree on the run's branch`, run: () => setPal({ text: '', index: 0, sub: 'repos' }) })
         if (!r.pr) a.push({ label: 'Sync with the base', hint: "fetch, merge the base under the agent's change (kept uncommitted)", run: () => void send({ cmd: 'sync', run: r.id }, `${r.ticket}: syncing with its base`) })
       }
-      for (const p of (r.prs?.length ? r.prs : r.pr ? [r.pr] : []) as { url: string; number: number; repo?: string }[]) a.push({ label: `Open PR #${p.number} in the browser`, hint: p.repo ?? hostOf(p.url), run: () => { (api.openUrl ?? openUrl)(p.url); setNotice(`${r.ticket}: PR #${p.number} opened in the browser`) } })
-      if (r.device && api.pageUrl) a.push({ label: 'See the device in the browser', hint: `${r.device.platform === 'android' ? 'see it and use it' : 'see it'} · ${r.device.id}`, run: () => { (api.openUrl ?? openUrl)(api.pageUrl!(`/device/${r.id}`)); setNotice(`${r.ticket}: the device opened in the browser`) } })
       if (!r.device && r.status !== 'done' && r.status !== 'failed') for (const pl of api.projects?.find(p => p.key === r.project)?.devices ?? []) a.push({ label: `Add a device: ${pl}`, hint: "its own emulator, Metro and the app from the run's worktree; the agent's next turn has it", run: () => void send({ cmd: 'restartDevice', run: r.id, add: pl }, `${r.ticket}: adding its ${pl} device`) })
       if (r.device || r.devServer) a.push({ label: r.device ? 'Restart the device' : 'Restart the dev server', hint: r.device ? 'stop it, boot it again with the current settings, install the app' : 'stop it and start it again with the current settings', run: () => void send({ cmd: 'restartDevice', run: r.id }, `${r.ticket}: restarting its device`) })
       if (r.device || r.devServer) a.push({ label: 'Stop the device and dev server', hint: [r.device ? `${r.device.platform} ${r.device.id}` : '', r.devServer ? r.devServer.url : ''].filter(Boolean).join(' · '), run: () => ask.release(r) })
@@ -366,7 +359,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   if (detailRun) return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => handle('', 'p')} />
-      <RunDetail api={api} run={detailRun} now={t} width={width} height={height - (inline ? 2 : 0)} message={message} can={can(detailRun)} bind={k => { detailKeys.current = k }}
+      <RunDetail api={api} run={detailRun} now={t} width={width} height={height - (inline ? 2 : 0)} message={message} can={can(detailRun)} onDevicePage={detailRun.device && api.pageUrl ? () => { (api.openUrl ?? openUrl)(api.pageUrl!(`/device/${detailRun.id}`)); setNotice(`${detailRun.ticket}: the device opened in the browser`) } : undefined} bind={k => { detailKeys.current = k }}
         onMessage={text => send({ cmd: 'message', run: detailRun.id, text }, `message sent to ${detailRun.id}`)} onBack={() => setMode({ kind: 'list' })} onKey={k => (k === 'palette' ? handle('k', '', true) : handle('', k))} bindCommands={c => { detailCmds.current = c }} bindPaste={f => { pasteTo.current = f }} />
       {inline ? <Confirm mode={mode} run={detailRun} resources={api.resources} onKey={k => handle('', k)} /> : null}
       {mode.kind === 'message' ? <Bar mode={mode} run={detailRun} message="" compact={!L.tabNames} tab={tab} onKey={handle} /> : null}
