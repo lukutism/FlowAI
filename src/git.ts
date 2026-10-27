@@ -48,6 +48,16 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
   const own = new Set((o.indexes ?? []).map(x => x.dir.replace(/\/$/, '')))
   const linked = await linkLocal(o.repo, o.worktree, (o.localFiles ?? []).filter(f => !own.has(f.replace(/\/$/, ''))))
   if (linked.length) notes.push(`linked ${linked.join(', ')} from the main checkout`)
+  // a folder linked in is a symlink here, which a folder-only rule (.argent/) doesn't match: each one git would see
+  // as new is excluded by its exact path, or ship would commit the link
+  const seen = [] as string[]
+  for (const rel of linked) if ((await run(['git', 'check-ignore', '-q', rel], o.worktree)).code !== 0) seen.push(`/${rel}`)
+  if (seen.length) {
+    const ex = resolve(o.worktree, (await run(['git', 'rev-parse', '--git-path', 'info/exclude'], o.worktree)).out)
+    const have = existsSync(ex) ? readFileSync(ex, 'utf8') : ''
+    mkdirSync(dirname(ex), { recursive: true })
+    writeFileSync(ex, `${have}${have && !have.endsWith('\n') ? '\n' : ''}${seen.join('\n')}\n`)
+  }
   for (const x of indexes) {
     const src = join(o.repo, x.dir), dst = join(o.worktree, x.dir)
     if (existsSync(dst)) continue // tracked on this branch

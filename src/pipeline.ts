@@ -287,6 +287,12 @@ export class Pipeline {
     await this.planStep(run, existsSync(f) ? readFileSync(f, 'utf8') : m.title)
   }
 
+  /** a plan step a restart of flow cut off before the agent's session began: sent again */
+  async restartPlan(run: string) {
+    const f = join(this.runDir(run), 'ticket.md')
+    await this.planStep(run, existsSync(f) ? readFileSync(f, 'utf8') : this.meta(run).title)
+  }
+
   /** a worktree per repo; false (and setup.failed) when one can't be made */
   private async setup(run: string, m: Meta): Promise<boolean> {
     const notes: string[] = []
@@ -474,7 +480,7 @@ export class Pipeline {
    */
   async reviveDevice(run: string): Promise<boolean> {
     const f = join(this.runDir(run), 'device.json'), spec = this.d.project.devices
-    if (!spec || !existsSync(f) || this.stopping.has(run)) return false
+    if (!spec || !existsSync(f) || this.stopping.has(run) || this.rebooting.has(run)) return false
     const d = JSON.parse(readFileSync(f, 'utf8')) as DeviceState, s = this.d.store.state(run)
     const boot = spec[d.platform]?.bootStays ? livePids(d.pids)[0] : undefined
     if (!boot || !s?.device || s.status === 'done' || s.status === 'failed' || alive(boot)) return false
@@ -488,13 +494,26 @@ export class Pipeline {
       return false
     }
     this.revived.set(run, times)
-    await this.releaseDevice(run)
-    await this.bootDevice(run, d.platform, this.meta(run).repos[0]!.worktree)
-    const now = this.d.store.state(run)?.device
-    this.d.store.append(run, 'engine', { type: 'run.note', text: `${was}; booted again as ${now?.id ?? d.id}` })
-    this.queueMessage(run, `Your emulator ${d.id} stopped${why ? ` (${why})` : ''} and flow booted it again as ${now?.id ?? d.id}, the app installed, Metro on ${now?.metroPort ?? d.metroPort}: launch the app again before you go on; what was on the screen and in the app's storage is gone.`)
+    const now = await this.rebootDevice(run, was)
+    this.queueMessage(run, `Your emulator ${d.id} stopped${why ? ` (${why})` : ''} and flow booted it again: ${now} Launch the app again before you go on; what was on the screen and in the app's storage is gone.`)
     return true
   }
+
+  /** the run's device stopped and booted again (the app installed), its agent's turn going on: what it is now */
+  async rebootDevice(run: string, why: string): Promise<string> {
+    if (this.rebooting.has(run)) return 'flow is booting the device again already: wait a minute, then take a screenshot'
+    this.rebooting.add(run)
+    try {
+      const m = this.meta(run), platform = this.d.store.state(run)?.device?.platform ?? m.platform
+      if (!platform) throw new Error(`${run} has no device`)
+      await this.releaseDevice(run)
+      await this.bootDevice(run, platform, m.repos[0]!.worktree)
+      const now = this.d.store.state(run)?.device
+      this.d.store.append(run, 'engine', { type: 'run.note', text: `the device was booted again (${why}) as ${now?.id}` })
+      return `${now?.id} is up with the app installed, Metro on ${now?.metroPort}.`
+    } finally { this.rebooting.delete(run) }
+  }
+  private rebooting = new Set<string>()
   private revived = new Map<string, number>()
   private stopping = new Set<string>()
 
@@ -784,7 +803,8 @@ export class Pipeline {
     // a run without a device of its own must not drive the ones running here (the human's, other runs'): they run
     // the main checkout's code through its Metro, not this change. argent is off for it, adb points at no device
     const dev = this.d.store.state(run)?.device
-    const denyTools = [...this.d.project.denyTools, ...(dev ? [] : ['mcp__argent'])]
+    // with a device, argent drives it but never boots one or stops the shared servers: flow owns the run's device
+    const denyTools = [...this.d.project.denyTools, ...(dev ? ['mcp__argent__boot-device', 'mcp__argent__stop-all-simulator-servers'] : ['mcp__argent'])]
     const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')
@@ -966,6 +986,7 @@ export class Pipeline {
       },
       end: (kind, text) => { this.ends.set(run, { kind, text }) },
       addRepo: (key: string) => this.addRepo(run, key, undefined, { byAgent: true }),
+      ...(m.platform ? { restartDevice: () => this.rebootDevice(run, 'the agent asked for it') } : {}),
       ...(this.browserSpec(run) ? { browser: (action: string, a: { target?: string; text?: string }) => this.browsers.act({ run, runDir: dir, devPort: this.must(run).devServer!.port, spec: this.browserSpec(run)! }, action, a) } : {}),
     }, this.d.project.tools, name, args)
   }

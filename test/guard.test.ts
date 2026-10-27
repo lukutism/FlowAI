@@ -281,3 +281,14 @@ describe('guard: what real agents ran that is fine (3,416 commands of hwt agents
     'git worktree add ../x',
   ])('refused: %s', c => expect(bash(c)).toMatchObject({ deny: true }))
 })
+
+describe("guard: the run's device is flow's to boot and stop", () => {
+  test('booting an emulator, or killing one, is refused with what to do instead', () => {
+    for (const c of ['emulator -avd flow-x -port 5700', '~/Library/Android/sdk/emulator/emulator -avd x &', 'adb -s emulator-5554 emu kill', 'adb emu kill; adb devices', 'avdmanager create avd -n x -k y', 'sh -c "emulator -avd x"'])
+      expect(bash(c)?.reason).toMatch(/device tool with action restart/)
+  })
+  test('reading devices and driving the run\'s own is fine', () => {
+    for (const c of ['adb devices', 'adb -s emulator-5700 shell input tap 1 2', 'emulator -list-avds', 'adb -s emulator-5700 emu avd name', 'grep -rn emulator src'])
+      expect(bash(c)).toBeNull()
+  })
+})

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { contentHash, createWorktree, pending, shipChange } from '../src/git.ts'
@@ -148,6 +148,14 @@ describe('createWorktree: the setup log', () => {
 })
 
 describe('createWorktree: indexes the run gets its own copy of', () => {
+  test('a folder linked in (argent\'s .argent) is a symlink in the worktree: still out of the change, where a folder-only rule misses it', async () => {
+    const p = project()
+    mkdirSync(join(p.main, '.argent'), { recursive: true }); writeFileSync(join(p.main, '.argent', 'flow.yml'), 'x')
+    writeFileSync(join(p.main, '.git', 'info', 'exclude'), '.argent/\n')
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/7', base: 'origin/develop', localFiles: ['.argent'], ignore: ['/.argent/'] })
+    expect(lstatSync(join(p.wt, '.argent')).isSymbolicLink()).toBe(true)
+    expect(git(p.wt, 'status', '--porcelain')).toBe('')
+  })
   test("cloned from the main checkout, not linked (writes stay the run's), excluded from git; its sync runs in the background", async () => {
     const p = project()
     mkdirSync(join(p.main, '.codegraph'), { recursive: true }); writeFileSync(join(p.main, '.codegraph', 'codegraph.db'), 'index of develop')

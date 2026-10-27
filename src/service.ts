@@ -116,23 +116,28 @@ export class Service {
   }
 
   /**
-   * After a restart the steps that were in flight are gone: a setup is done again, an agent is told to carry on (its
-   * session resumes), a ship stops for the human, saying so; devices still up count against the device slots again.
+   * After a restart the steps that were in flight are gone: a setup is done again, a plan with no session yet starts
+   * again, an agent is told to carry on (its session resumes), a ship stops for the human, saying so; devices still up
+   * count against the device slots again.
    */
   async recover() {
-    const carry: { id: string; project: string; stage: string }[] = [], redo: typeof carry = []
+    const carry: { id: string; project: string; stage: string; put: string[] }[] = [], redo: typeof carry = [], replan: typeof carry = []
     for (const s of this.d.store.runs()) {
       if (!['running', 'waiting', 'paused'].includes(s.status)) continue
       // a change verify had set aside comes back first, or is named
       const put = s.stage === 'verify' && this.d.projects[s.project] ? await this.pipeline(s.project).restoreStashes(s.id).catch(() => []) : []
-      // a setup is done again from the start; an agent's session resumes where it was: it is told to carry on; a ship waits for you
-      if (s.stage === 'setup' && this.d.projects[s.project]) { redo.push(s); continue }
-      this.stopped(s.id, `flow's service restarted during ${s.stage}${put.length ? ` (${put.join('; ')})` : ''}`)
-      if (s.stage !== 'ship' && this.d.projects[s.project]) carry.push(s)
+      const r = { id: s.id, project: s.project, stage: s.stage, put }
+      // a ship waits for you; a setup is done again from the start; a plan with no session yet gets its step again;
+      // otherwise the agent's session resumes where it was: it is told to carry on (the run goes on, not blocked)
+      if (s.stage === 'ship' || !this.d.projects[s.project]) this.stopped(s.id, `flow's service restarted during ${s.stage}${put.length ? ` (${put.join('; ')})` : ''}`)
+      else if (s.stage === 'setup') redo.push(r)
+      else if (s.stage === 'plan' && !s.session) replan.push(r)
+      else carry.push(r)
     }
     for (const key of Object.keys(this.d.projects)) this.pipeline(key).adoptDevices()
     for (const s of redo) this.act(s.id, () => this.pipeline(s.project).redoSetup(s.id))
-    for (const s of carry) this.act(s.id, () => this.pipeline(s.project).message(s.id, `flow restarted (a new release of flow) while you were working on ${s.stage === 'plan' ? 'the plan' : 'this step'}: your session is resumed. Carry on where you left off and end the turn the usual way.`, 'flow'))
+    for (const s of replan) this.act(s.id, () => this.pipeline(s.project).restartPlan(s.id))
+    for (const s of carry) this.act(s.id, () => this.pipeline(s.project).message(s.id, `flow restarted (a new release of flow) while you were working on ${s.stage === 'plan' ? 'the plan' : 'this step'}: your session is resumed${s.put.length ? ` (${s.put.join('; ')})` : ''}. Carry on where you left off and end the turn the usual way.`, 'flow'))
   }
 
   /** a run whose step ended without a decision: blocked with the reason (a failed setup can't be carried on) */

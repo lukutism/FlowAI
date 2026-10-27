@@ -86,7 +86,17 @@ describe('wording that once misled agents', () => {
     expect(t).not.toMatch(/ask it with the ask tool|ask for it with the ask tool/)
     expect(t).not.toContain('three ways above')
     expect(t).toContain('Your shell is zsh')
+    expect(t).toContain("--include='*.ts'") // a concrete example: the abstract rule was ignored
     expect(t).toContain('rather than checking out or copying the base')
+    // data: only what's needed, never bulk or production; hwt's own instructions don't apply here
+    expect(t).toMatch(/never download in bulk, crawl or load-test/i)
+    expect(t).toMatch(/hwt .* don't apply/)
+  })
+  test('a run with a device: flow boots and restarts it, evidence comes full size from the device tool', () => {
+    const t = runBrief({ ...m, device: { platform: 'android', id: 'emulator-5700', metroPort: 8300 } })
+    expect(t).toMatch(/gone, frozen or broken: call the device tool's restart/)
+    expect(t).toMatch(/never boot or kill an emulator yourself/)
+    expect(t).toMatch(/device tool's screenshot \(full size\)/)
   })
   test('a task is called a task, never "Ticket  " with no key; the plan has a Decisions log', () => {
     const r = reviewPrompt({ key: '', title: 'Rename the export button', ticket: 'Rename it.', plan: 'p', change: 'c' })

@@ -122,8 +122,8 @@ describe('an emulator that stops on its own', () => {
       await Bun.sleep(100)
       expect(await t.pipe.reviveDevice(run)).toBe(true)
       expect(t.store.events(run).filter(e => e.type === 'device.ready')).toHaveLength(2)
-      expect(t.store.events(run).find(e => e.type === 'run.note')).toMatchObject({ text: expect.stringMatching(/emulator-25840 stopped \(detected a hanging thread 'QEMU2 main loop'.*\); booted again/) })
-      expect(t.pipe.takeQueued(run).join()).toMatch(/emulator-25840 stopped .* booted it again .* launch the app/)
+      expect(t.store.events(run).find(e => e.type === 'run.note')).toMatchObject({ text: expect.stringMatching(/booted again \(emulator-25840 stopped \(detected a hanging thread 'QEMU2 main loop'.*\)\) as emulator-25840/) })
+      expect(t.pipe.takeQueued(run).join()).toMatch(/emulator-25840 stopped .* booted it again: emulator-25840 is up .* Launch the app again/)
       expect(t.slots.snapshot().holders.devices).toEqual([run])
       await t.pipe.releaseDevice(run)
       expect(await t.pipe.reviveDevice(run)).toBe(false)
@@ -150,6 +150,22 @@ describe('a setup cut off by a restart', () => {
       expect(existsSync(join(wt, 'half.txt'))).toBe(false)
       expect(t.store.events(run).find(e => e.type === 'run.note')).toMatchObject({ text: expect.stringMatching(/setup .*again/) })
       expect(t.store.state(run)!.stage).not.toBe('setup')
+    } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
+  })
+})
+
+describe("the agent's own device", () => {
+  test('restart through flow\'s device tool: booted again while the turn goes on; argent may drive it but not boot one', async () => {
+    const t = setup({ consoleStart: 25880, metroStart: 28880 })
+    const run = await t.pipe.start(5, { device: 'android' })
+    try {
+      const r = await t.pipe.callTool(run, 'device', { action: 'restart' })
+      expect(r).toMatchObject({ ok: true, text: expect.stringMatching(/emulator-25880 is up with the app installed, Metro on 28880/) })
+      expect(t.store.events(run).filter(e => e.type === 'device.ready')).toHaveLength(2)
+      expect(t.store.events(run).find(e => e.type === 'run.note')).toMatchObject({ text: expect.stringMatching(/the agent asked for it/) })
+      const deny = JSON.parse(readFileSync((t.made[0] as { settings: string }).settings, 'utf8')).permissions.deny as string[]
+      expect(deny).toEqual(expect.arrayContaining(['mcp__argent__boot-device', 'mcp__argent__stop-all-simulator-servers']))
+      expect(deny).not.toContain('mcp__argent')
     } finally { await t.pipe.releaseDevice(run).catch(() => {}) }
   })
 })
