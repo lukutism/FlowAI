@@ -17,7 +17,7 @@ const tail = (s: string, n = 6) => s.split('\n').slice(-n).join('\n')
  * The run's own git worktree on a new branch from its base. node_modules is cloned from the user's main checkout
  * (copy-on-write on APFS, so instant and separate), then the project's install brings it in line with the base.
  */
-export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[]; ignore?: string[]; log?: string; indexes?: { dir: string; sync?: string }[] }): Promise<{ notes: string[] }> {
+export async function createWorktree(o: { repo: string; worktree: string; branch: string; base: string; install?: string; localFiles?: string[]; ignore?: string[]; log?: string; indexes?: { dir: string; sync?: string }[]; editorFiles?: string[] }): Promise<{ notes: string[] }> {
   const notes: string[] = []
   const started = Date.now(), secs = (t: number) => `${Math.round((Date.now() - t) / 1000)}s`
   logLine(o.log, `fetching origin in ${o.repo}`)
@@ -33,6 +33,12 @@ export async function createWorktree(o: { repo: string; worktree: string; branch
     await run(['git', 'worktree', 'prune'], o.repo)
     await run(['git', 'branch', '-D', o.branch], o.repo)
     throw new Error(`git worktree add failed: ${tail(add.err)}`)
+  }
+  // tracked files an editor or its build tooling rewrites with your machine's paths (Eclipse's Gradle prefs): their
+  // rewrites aren't the change (skip-worktree: git leaves them out of status, so out of ship, verify and removal)
+  if (o.editorFiles?.length) {
+    const files = (await run(['git', 'ls-files', '--', ...o.editorFiles.map(g => `:(glob)${g}`)], o.worktree)).out.split('\n').filter(Boolean)
+    if (files.length) await run(['git', 'update-index', '--skip-worktree', '--', ...files], o.worktree)
   }
   // what tools write into a worktree (argent's .argent/) stays out of the change: git's local exclude list
   const indexes = (o.indexes ?? []).filter(x => existsSync(join(o.repo, x.dir)))

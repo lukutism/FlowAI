@@ -148,6 +148,14 @@ describe('createWorktree: the setup log', () => {
 })
 
 describe('createWorktree: indexes the run gets its own copy of', () => {
+  test("tracked files an editor rewrites (Eclipse's Gradle prefs) don't count as the change: not in status, so not shipped and no block on removal", async () => {
+    const p = project()
+    mkdirSync(join(p.main, 'mod', '.settings'), { recursive: true }); writeFileSync(join(p.main, 'mod', '.settings', 'org.eclipse.buildship.core.prefs'), 'java.home=/a\n')
+    git(p.main, 'add', '.'); git(p.main, 'commit', '-qm', 'prefs'); git(p.main, 'push', '-q', 'origin', 'HEAD:develop')
+    await createWorktree({ repo: p.main, worktree: p.wt, branch: 'fix/8', base: 'origin/develop', editorFiles: ['**/.settings/org.eclipse.buildship.core.prefs'] })
+    writeFileSync(join(p.wt, 'mod', '.settings', 'org.eclipse.buildship.core.prefs'), 'java.home=/Users/me/jdk\n')
+    expect(git(p.wt, 'status', '--porcelain')).toBe('')
+  })
   test('a folder linked in (argent\'s .argent) is a symlink in the worktree: still out of the change, where a folder-only rule misses it', async () => {
     const p = project()
     mkdirSync(join(p.main, '.argent'), { recursive: true }); writeFileSync(join(p.main, '.argent', 'flow.yml'), 'x')
