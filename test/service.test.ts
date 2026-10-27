@@ -216,6 +216,15 @@ describe('Service: draft PRs merged or closed on the host', () => {
     expect(t.store.events('ex-1').map(e => e.type).slice(-2)).toEqual(['run.done', 'run.removed'])
     expect(calls.filter(c => c.includes('show'))).toHaveLength(1)
   })
+  test('marked done by you (a resolution confirmed, a run given up): removed like a merged one, its device stopped', async () => {
+    const t = setup(() => [])
+    t.store.append('ex-2', 'human', { type: 'run.created', ticket: '#2', title: 'x', project: 'ex', base: 'origin/develop' })
+    t.store.append('ex-2', 'engine', { type: 'setup.done' })
+    t.store.append('ex-2', 'agent', { type: 'run.resolved', summary: 'no change needed', text: '' })
+    expect(t.svc.dispatch({ cmd: 'done', run: 'ex-2' })).toMatchObject({ ok: true })
+    await t.svc.idle()
+    expect(t.store.events('ex-2').map(e => e.type).slice(-2)).toEqual(['run.done', 'run.removed'])
+  })
   test('merged on a release line with no port yet: done, not removed, saying so (the fix still has to reach the default line)', async () => {
     const merged = (args: string[]) => (args.includes('show') && args.includes('pr') ? { code: 0, out: '{"status":"completed"}', err: '' } : undefined)
     const t = setup(() => [], merged)

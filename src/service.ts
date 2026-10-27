@@ -257,7 +257,17 @@ export class Service {
         this.act(run, async () => { await p.port(c.run, to) })
         return { ok: true, run }
       }
-      if (c.cmd === 'done') { p.done(c.run); return { ok: true, run: c.run } }
+      if (c.cmd === 'done') {
+        p.done(c.run)
+        // done is done: the run goes as after a merge, unless it still has work to ship or a port to make (then its
+        // device stops, and the notice says why it stays)
+        this.act(c.run, async () => {
+          const lines = p.unported(c.run)
+          if (lines.length) { await p.releaseDevice(c.run); throw new Error(`kept: no port to ${lines.join(', ')} yet (flow port ${c.run} --to ${lines[0]}); remove it after`) }
+          try { await p.remove(c.run) } catch (e) { await p.releaseDevice(c.run); throw new Error(`kept, its device stopped: ${(e as Error).message}`) }
+        })
+        return { ok: true, run: c.run }
+      }
       const run = c.run
       const step = c.cmd === 'approve' ? () => p.approve(run, c.answers ?? {}) : c.cmd === 'message' ? () => p.message(run, c.text) : c.cmd === 'release' ? () => p.releaseDevice(run) : c.cmd === 'restartDevice' ? () => p.restartDevice(run, c.add)
         : c.cmd === 'addRepo' ? () => p.addRepo(run, c.repo, c.base).then(() => {}) : c.cmd === 'sync' ? () => p.sync(run).then(() => {})
