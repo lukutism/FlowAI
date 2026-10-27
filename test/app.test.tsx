@@ -355,7 +355,7 @@ describe('Run detail', () => {
       expect(f).toContain('typing in Shell')
       await act(async () => { t.s.mockInput.pressKey(']', { ctrl: true }) })
       f = await t.frame()
-      expect(f).toContain('esc back   d diff   P plan   [ ] pane')
+      expect(f).toContain('esc back   d diff   [ ] pane') // no plan written in this run: no P
       f = await t.press('v')
       expect(f).toContain('split on')
       expect(f).toContain('No agent session recorded for this run yet.')
@@ -1098,13 +1098,15 @@ describe('the run detail acts on its own run', () => {
 })
 
 describe('the shell pane of a run without its worktree', () => {
-  test('says so instead of crashing the screen (setup failed, or the worktree was removed)', async () => {
+  test('has no shell to open (setup failed, or the worktree was removed): no Shell pane, i does nothing', async () => {
     const gone = base('fso-9', { stage: 'setup', status: 'failed', needs: { kind: 'setup', ask: 'base origin/x not found' } })
     const t = await screen([gone], { width: 130, height: 34 }, { file: async (_run: string, name: string) => (name === 'run.json' ? JSON.stringify({ worktree: '/nonexistent/flow/9/mobile' }) : '') })
     try {
-      await t.press('enter')
+      await t.press('enter'); await act(async () => { await Bun.sleep(30) })
       const f = await t.press('i')
-      expect(f).toContain('The worktree is not there')
+      expect(f).not.toContain('Shell')
+      expect(f).not.toContain('i shell')
+      expect(f).not.toContain('typing in Shell')
     } finally { stopShells(); t.s.renderer.destroy() }
   })
 })
@@ -1152,6 +1154,28 @@ describe('removing a run and marking it done', () => {
       await t.press(...'confirm'.split(''), 'enter')
       expect(t.f.sent).toEqual([{ cmd: 'done', run: 'fso-104' }])
     } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe("a run's keys and buttons follow its state", () => {
+  test('done, its worktree gone, no plan written: no plan, diff, shell, code, split or message; a working run with a plan has them', async () => {
+    const t = await screen([base('fso-104', { stage: 'done', status: 'done' })], undefined, { file: async (_r: string, n: string) => (n === 'run.json' ? JSON.stringify({ worktree: '/nonexistent/flow/104/mobile' }) : '') })
+    try {
+      await t.press('enter'); await act(async () => { await Bun.sleep(30) })
+      const f = await t.frame()
+      for (const k of ['P plan', 'd diff', 'i shell', 'e code', 'v split', 'm message', 'plan.md', 'pr.md', 'Message the agent…']) expect(f).not.toContain(k)
+      expect(f).toContain('ticket.md')
+      await t.press('P', 'm')
+      expect(await t.frame()).not.toContain('typing a message')
+    } finally { t.s.renderer.destroy() }
+    const dir = mkdtempSync(join(tmpdir(), 'flow-keys-'))
+    const u = await screen([base('fso-105', { stage: 'build', status: 'running' })], undefined, { file: async (_r: string, n: string) => (n === 'run.json' ? JSON.stringify({ worktree: dir }) : n === 'plan.md' ? '# Plan\n\nx\n' : '') })
+    try {
+      await u.press('enter'); await act(async () => { await Bun.sleep(30) })
+      const f = await u.frame()
+      for (const k of ['P plan', 'd diff', 'i shell', 'e code', 'v split', 'm message', 'plan.md']) expect(f).toContain(k)
+      expect(f).not.toContain('pr.md') // not written yet
+    } finally { u.s.renderer.destroy() }
   })
 })
 

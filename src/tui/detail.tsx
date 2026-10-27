@@ -146,6 +146,8 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
 }) {
   // a run setting up (or whose setup failed) opens on its Setup pane: what it is doing, step by step
   const settingUp = run.stage === 'setup'
+  // what is there to act on: the keys and buttons follow it (a done run's worktree is gone; a done or failed run takes no message)
+  const canMessage = run.status !== 'done' && run.status !== 'failed'
   const [pane, setPane] = useState<Pane>(settingUp ? 'setup' : 'agent')
   /** a pop-up over the detail: a file as Markdown, or the change to comment on */
   const [popup, setPopup] = useState<Target | null>(null)
@@ -225,8 +227,10 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
   useEffect(() => { if (shell && !shell.ended) shell.proc?.terminal?.resize(right - 2, shellRows) }, [shell, right, shellRows])
 
   // the panes this run has: Metro only with a device, the dev server only when it has one (a web or backend run)
+  // the worktree is there (run.json names it); not known yet: a run that isn't done has one
+  const hasTree = data.worktree ? existsSync(data.worktree) : run.status !== 'done'
   const panes: { key: Pane; label: string }[] = [...(settingUp ? [{ key: 'setup' as const, label: 'Setup' }] : []), { key: 'agent', label: 'Agent' },
-    ...(run.device ? [{ key: 'metro' as const, label: 'Metro' }] : []), ...(run.devServer ? [{ key: 'devserver' as const, label: 'Dev server' }] : []), { key: 'shell', label: 'Shell' }]
+    ...(run.device ? [{ key: 'metro' as const, label: 'Metro' }] : []), ...(run.devServer ? [{ key: 'devserver' as const, label: 'Dev server' }] : []), ...(hasTree ? [{ key: 'shell' as const, label: 'Shell' }] : [])]
   const order = panes.map(p => p.key)
   const openPane = (k: Pane) => { setPane(k); setFocus(k === 'agent' ? 'message' : 'none') }
   const keys: DetailKeys = (key, typed) => {
@@ -252,13 +256,14 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
       setPane(panes[(Math.max(0, order.indexOf(top)) + (typed === ']' ? 1 : order.length - 1)) % order.length]!.key)
       return true
     }
-    if (typed === 'v') { setSplit(x => !x); return true }
+    if (typed === 'v') { if (hasTree) setSplit(x => !x); return true }
     if (typed === 'o') { setFull(x => !x); return true }
-    if (typed === 'e') { openEditor(data.worktree); return true }
-    if (typed === 'd') { setPopup({ kind: 'diff' }); return true }
-    if (typed === 'P') { setPopup({ kind: 'md', file: 'plan.md' }); return true }
+    if (typed === 'e') { if (hasTree) openEditor(data.worktree); return true }
+    if (typed === 'd') { if (hasTree) setPopup({ kind: 'diff' }); return true }
+    if (typed === 'P') { if (data.plan) setPopup({ kind: 'md', file: 'plan.md' }); return true }
+    if (typed === 'i' && !hasTree) return true
     if (typed === 'i') { if (shells.get(run.id)?.ended) { shells.delete(run.id); redraw(x => x + 1) } if (!showsShell) setPane('shell'); setFocus('shell'); return true }
-    if (typed === 'm') { setPane(p => (split ? p : 'agent')); setFocus('message'); return true }
+    if (typed === 'm') { if (canMessage) { setPane(p => (split ? p : 'agent')); setFocus('message') } return true }
     return false
   }
   useEffect(() => { bind(keys); return () => bind(null) })
@@ -324,9 +329,9 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
   }
   // the message box: always right under the agent's session (above the shell when split)
   const msgBox = (
-    <box flexDirection="column" onMouseDown={() => setFocus('message')}>
+    <box flexDirection="column" onMouseDown={() => { if (canMessage) setFocus('message') }}>
       <text fg={C.faint}>{'─'.repeat(right)}</text>
-      <text>{focus === 'message' ? <><span fg={C.accent}>{' › '}</span><span fg={C.text}>{draft}▏</span><span fg={C.faint}>   ↵ send · esc leave</span></> : <><span fg={C.accent}>{' › '}</span><span fg={C.faint}>Message the agent… (m, or click)</span></>}</text>
+      <text>{focus === 'message' ? <><span fg={C.accent}>{' › '}</span><span fg={C.text}>{draft}▏</span><span fg={C.faint}>   ↵ send · esc leave</span></> : canMessage ? <><span fg={C.accent}>{' › '}</span><span fg={C.faint}>Message the agent… (m, or click)</span></> : <span fg={C.faint}>{`   the run is ${run.status}: no agent takes a message`}</span>}</text>
     </box>
   )
 
@@ -334,7 +339,9 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
   const fake = (typed: string, name = typed) => ({ name, ctrl: false, shift: false, meta: false, sequence: typed }) as unknown as KeyEvent
   const keyLine: [string, () => void][] = focus === 'shell' ? [['typing in Shell: keys go to the shell', () => {}], ['ctrl+] leave', () => setFocus('none')], ['^K commands', () => onKey('palette')]]
     : focus === 'message' ? [['typing a message to the agent', () => {}], ['↵ send', () => keys(fake('', 'return'), '')], ['esc leave', () => setFocus('none')]]
-    : [['esc back', onBack], ['d diff', () => setPopup({ kind: 'diff' })], ['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })], ['[ ] pane', () => keys(fake(']'), ']')], ['v split', () => setSplit(x => !x)], ['e code', () => openEditor(data.worktree)], ...(pane === 'agent' ? [[full ? 'o fold' : 'o show all', () => setFull(x => !x)] as [string, () => void]] : []), ['i shell', () => keys(fake('i'), 'i')], ['m message', () => keys(fake('m'), 'm')],
+    : [['esc back', onBack], ...(hasTree ? [['d diff', () => setPopup({ kind: 'diff' })] as [string, () => void]] : []), ...(data.plan ? [['P plan', () => setPopup({ kind: 'md', file: 'plan.md' })] as [string, () => void]] : []), ['[ ] pane', () => keys(fake(']'), ']')],
+      ...(hasTree ? [['v split', () => setSplit(x => !x)], ['e code', () => openEditor(data.worktree)]] as [string, () => void][] : []), ...(pane === 'agent' ? [[full ? 'o fold' : 'o show all', () => setFull(x => !x)] as [string, () => void]] : []),
+      ...(hasTree ? [['i shell', () => keys(fake('i'), 'i')] as [string, () => void]] : []), ...(canMessage ? [['m message', () => keys(fake('m'), 'm')] as [string, () => void]] : []),
       ...(can?.approve ? [['a approve', () => onKey('a')] as [string, () => void]] : []), ...(can?.ship ? [['S ship', () => onKey('S')] as [string, () => void]] : []), ...(can?.port ? [['p port', () => onKey('p')] as [string, () => void]] : []), ['^K commands', () => onKey('palette')]]
   const rule = <text fg={C.faint}>{'─'.repeat(W)}</text>
   return (
@@ -362,14 +369,14 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
           <box flexDirection="row">
             <text fg={C.muted}>{' Open '}</text>
             {data.url ? <Click on={() => (api.openUrl ?? openInBrowser)(data.url)}><text fg={C.accent}>{'ticket ↗  '}</text></Click> : null}
-            {(['ticket.md', 'plan.md', 'pr.md', 'review.json'] as RunFile[]).map(f => <Click key={f} on={() => setPopup({ kind: 'md', file: f })}><text fg={C.accent}>{`${f.replace('.json', '')}  `}</text></Click>)}
-            <Click on={() => setPopup({ kind: 'diff' })}><text fg={C.accent}>diff</text></Click>
+            {(['ticket.md', ...(data.plan ? ['plan.md'] : []), ...(data.pr ? ['pr.md'] : []), ...(data.review ? ['review.json'] : [])] as RunFile[]).map(f => <Click key={f} on={() => setPopup({ kind: 'md', file: f })}><text fg={C.accent}>{`${f.replace('.json', '')}  `}</text></Click>)}
+            {hasTree ? <Click on={() => setPopup({ kind: 'diff' })}><text fg={C.accent}>diff</text></Click> : null}
           </box>
         </box>
         <box flexDirection="column" width={right + 1} border={['left']} borderColor={C.faint}>
           <box flexDirection="row" backgroundColor={C.panel}>
             {panes.map(tab)}
-            <Click on={() => setSplit(x => !x)}><text fg={C.faint}>{split ? '   ⊟ split on (v)' : '   ⊟ split (v)'}</text></Click>
+            {hasTree ? <Click on={() => setSplit(x => !x)}><text fg={C.faint}>{split ? '   ⊟ split on (v)' : '   ⊟ split (v)'}</text></Click> : null}
           </box>
           {split ? (
             <>
