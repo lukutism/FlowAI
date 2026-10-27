@@ -134,7 +134,9 @@ async function viaService(c: FlowClient, cmd: Command): Promise<void> {
       if (m.type === 'event' && (m.event.run === run || (!run && m.event.type === 'run.created'))) {
         run ||= m.event.run
         showEvent(m.event)
-        if ((!m.state || ['needs-you', 'blocked', 'failed', 'done', 'paused'].includes(m.state.status)) && m.event.type !== 'human.message') done()
+        // a removal ends with the run gone, or with a notice saying why not (stopping its agent first can block it)
+        if (cmd.cmd === 'remove') { if (m.event.type === 'run.removed') done() }
+        else if ((!m.state || ['needs-you', 'blocked', 'failed', 'done', 'paused'].includes(m.state.status)) && m.event.type !== 'human.message') done()
       }
       if (m.type === 'notice' && m.notice.run === run) { console.log(`flow: ${m.notice.text}`); done() }
     })
