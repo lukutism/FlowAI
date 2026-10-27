@@ -19,7 +19,11 @@ export interface DetailApi {
   log?(run: string, name: RunLog, lines: number): Promise<string[]>
   changes?(run: string): Promise<Change[]>
   diff?(run: string): Promise<FileDiff[]>
+  /** a link opened in the browser (the ticket's page) */
+  openUrl?(url: string): void
 }
+
+const openInBrowser = (url: string) => { try { Bun.spawn([process.platform === 'darwin' ? 'open' : 'xdg-open', url], { stdout: 'ignore', stderr: 'ignore' }) } catch {} }
 
 import { C, sessionLines, workingLine, wrap, type Line, type Seg } from './session.ts'
 export { C, wrap, type Line, type Seg } from './session.ts'
@@ -157,7 +161,7 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
   const [logs, setLogs] = useState<string[]>([])
   const [text, setText] = useState('')
   const [diffs, setDiffs] = useState<FileDiff[] | null>(null)
-  const [data, setData] = useState<{ plan: string; review: string; pr: string; changes: Change[]; events: RunEvent[]; worktree: string }>({ plan: '', review: '', pr: '', changes: [], events: [], worktree: '' })
+  const [data, setData] = useState<{ plan: string; review: string; pr: string; changes: Change[]; events: RunEvent[]; worktree: string; url: string }>({ plan: '', review: '', pr: '', changes: [], events: [], worktree: '', url: '' })
   const [scroll, setScroll] = useState(0)
   const [, redraw] = useState(0)
   // the shell pane's terminal (a new one each time the pane is shown): a state, so the replay runs for each
@@ -176,9 +180,9 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
     void Promise.all([api.events(run.id), api.file(run.id, 'plan.md'), api.file(run.id, 'review.json'), api.changes?.(run.id) ?? Promise.resolve([]), api.file(run.id, 'run.json'), api.file(run.id, 'pr.md')])
       .then(([events, plan, review, changes, meta, pr]) => {
         if (!live) return
-        let worktree = ''
-        try { worktree = (JSON.parse(meta || '{}') as { worktree?: string }).worktree ?? '' } catch {}
-        setData({ events, plan, review, pr, changes, worktree })
+        let worktree = '', url = ''
+        try { const m = JSON.parse(meta || '{}') as { worktree?: string; url?: string }; worktree = m.worktree ?? ''; url = /^https?:\/\//.test(m.url ?? '') ? m.url! : '' } catch {}
+        setData({ events, plan, review, pr, changes, worktree, url })
       })
     return () => { live = false }
   }, [api, run.id, run.updatedAt])
@@ -262,7 +266,9 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
     { label: 'Open the change', hint: 'd · comment on its lines', run: () => setPopup({ kind: 'diff' }) },
     // what the run has written so far: each only once it is there
     ...(data.plan ? [{ label: 'Open the plan', hint: 'P', run: () => setPopup({ kind: 'md', file: 'plan.md' }) }] : []),
-    { label: 'Open the ticket', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) },
+    // the ticket's own page (Jira, Azure DevOps) when it has one; what the agent read of it in ticket.md
+    ...(data.url ? [{ label: 'Open the ticket in the browser', hint: new URL(data.url).host, run: () => (api.openUrl ?? openInBrowser)(data.url) }] : []),
+    { label: 'Open the ticket as the agent read it', hint: 'ticket.md', run: () => setPopup({ kind: 'md', file: 'ticket.md' }) },
     ...(data.pr ? [{ label: 'Open the PR description', hint: 'pr.md', run: () => setPopup({ kind: 'md', file: 'pr.md' }) }] : []),
     ...(data.review ? [{ label: 'Open the review', hint: 'its findings', run: () => setPopup({ kind: 'md', file: 'review.json' }) }] : []),
     ...panes.filter(x => x.key !== 'shell').map(x => ({ label: `Show ${x.label === 'Agent' ? "the agent's session" : x.label}`, hint: 'pane', run: () => { setPane(x.key); setFocus('none') } })),
@@ -363,6 +369,7 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
           {runCol.slice(0, body - 1).map((l, i) => (l.open ? <Click key={i} on={() => setPopup(l.open!)}><Row l={l} /></Click> : <Row key={i} l={l} w={left} />))}
           <box flexDirection="row">
             <text fg={C.muted}>{' Open '}</text>
+            {data.url ? <Click on={() => (api.openUrl ?? openInBrowser)(data.url)}><text fg={C.accent}>{'ticket ↗  '}</text></Click> : null}
             {(['ticket.md', 'plan.md', 'pr.md', 'review.json'] as RunFile[]).map(f => <Click key={f} on={() => setPopup({ kind: 'md', file: f })}><text fg={C.accent}>{`${f.replace('.json', '')}  `}</text></Click>)}
             <Click on={() => setPopup({ kind: 'diff' })}><text fg={C.accent}>diff</text></Click>
           </box>

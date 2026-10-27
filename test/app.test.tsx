@@ -1166,6 +1166,23 @@ describe('the device in the browser', () => {
   })
 })
 
+describe("the ticket's own page", () => {
+  test('opened in the browser from the run (a click on ticket, or the palette); ticket.md stays one click away', async () => {
+    const opened: string[] = []
+    const t = await screen([base('fso-105', {})], undefined, { openUrl: (u: string) => { opened.push(u) }, file: async (_r: string, n: string) => (n === 'run.json' ? JSON.stringify({ worktree: '/w', url: 'https://dev.azure.com/acme/hub/_workitems/edit/105' }) : '') })
+    try {
+      await t.press('enter'); await act(async () => { await Bun.sleep(30) })
+      const f = await t.frame()
+      expect(f).toContain('ticket ↗')
+      const p = at(f, 'ticket ↗')
+      await act(async () => { await t.s.mockMouse.click(p.x, p.y) }); await act(async () => { await Bun.sleep(30) })
+      expect(opened).toEqual(['https://dev.azure.com/acme/hub/_workitems/edit/105'])
+      await t.press('ctrl+k', ...'ticket in'.split(''), 'enter')
+      expect(opened).toHaveLength(2)
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
 describe('80 to 89 columns', () => {
   test('every run and every item needing you stays on one line (they used to wrap)', async () => {
     const long = (id: string, over: Partial<RunState>) => base(id, { title: `A rather long title for the run ${id} that goes on`, ...over })
