@@ -473,7 +473,7 @@ describe('the command palette', () => {
       expect(f).toContain('Remove #104?')
       expect(f).toContain('esc back') // on its own line, not over the detail's keys
       const g = await t.press('y')
-      expect(t.f.sent).toContainEqual({ cmd: 'remove', run: 'fso-104', force: false })
+      expect(t.f.sent).toContainEqual({ cmd: 'remove', run: 'fso-104', force: true })
       expect(g).not.toContain('← esc  #104')
       // the row says so until the run is gone
       expect(await t.frame()).toContain('removing…')
@@ -618,7 +618,7 @@ describe('the mouse', () => {
       expect(await t.frame()).toMatch(/Activity +#103/)
     } finally { t.s.renderer.destroy() }
   })
-  test('Add a repo opens a choice of the repos the run lacks; Remove asks once, f removes work not shipped too', async () => {
+  test('Add a repo opens a choice of the repos the run lacks; Remove asks once, and y removes work not shipped too (your decision)', async () => {
     const list = [base('fso-104', { repos: ['mobile'], stage: 'build', status: 'blocked', needs: { kind: 'blocked', ask: 'x' } })]
     const fso = { key: 'fso', name: 'FSO', tracker: 'azure' as const, forge: 'azure' as const, repos: ['mobile', 'portal'], devices: [], patches: [], deadlineMinutes: 30 }
     const t = await screen(list, undefined, { projects: [fso] })
@@ -629,9 +629,12 @@ describe('the mouse', () => {
       expect(f).toContain('Add portal')
       await t.press('enter')
       expect(t.f.sent).toEqual([{ cmd: 'addRepo', run: 'fso-104', repo: 'portal' }])
+      // removing on the screen is your decision: the confirm says work not shipped goes too, and y does it
       await t.press('ctrl+k', ...'remove the run'.split(''), 'enter')
-      expect(await t.frame()).toContain('f also work not shipped')
-      await t.press('f')
+      const c = await t.frame()
+      expect(c).toContain('with any work not shipped')
+      expect(c).not.toContain('f also work not shipped')
+      await t.press('y')
       expect(t.f.sent.at(-1)).toEqual({ cmd: 'remove', run: 'fso-104', force: true })
     } finally { t.s.renderer.destroy() }
   })
@@ -1139,7 +1142,7 @@ describe('removing a run and marking it done', () => {
       await t.press('ctrl+k', ...'remove the run'.split(''), 'enter')
       expect(await t.frame()).toContain('Remove #104?')
       await t.press('y')
-      expect(t.f.sent).toEqual([{ cmd: 'remove', run: 'fso-104', force: false }])
+      expect(t.f.sent).toEqual([{ cmd: 'remove', run: 'fso-104', force: true }])
     } finally { t.s.renderer.destroy() }
   })
   test('mark done from the detail\'s commands', async () => {
