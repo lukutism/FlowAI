@@ -727,7 +727,7 @@ describe('the new-run form', () => {
     return o.lookup ?? found
   }
   const typeIn = async (t: Awaited<ReturnType<typeof screen>>, text: string) => { for (const k of text) await act(async () => { t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(400) }) }
-  const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : k === 'ctrl+s' ? t.s.mockInput.pressKey('s', { ctrl: true }) : k === 'shift+tab' ? t.s.mockInput.pressKey('\t', { shift: true }) : k === 'backspace' ? t.s.mockInput.pressBackspace() : k === 'home' || k === 'end' || k === 'delete' ? t.s.mockInput.pressKey(k.toUpperCase() as 'HOME') : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
+  const keys = async (t: Awaited<ReturnType<typeof screen>>, ...ks: string[]) => { for (const k of ks) await act(async () => { k === 'tab' ? t.s.mockInput.pressKey('\t') : k === 'right' ? t.s.mockInput.pressArrow('right') : k === 'left' ? t.s.mockInput.pressArrow('left') : k === 'up' ? t.s.mockInput.pressArrow('up') : k === 'down' ? t.s.mockInput.pressArrow('down') : k === 'enter' ? t.s.mockInput.pressEnter() : k === 'option+enter' ? t.s.mockInput.pressEnter({ meta: true }) : k === 'ctrl+s' ? t.s.mockInput.pressKey('s', { ctrl: true }) : k === 'shift+tab' ? t.s.mockInput.pressKey('\t', { shift: true }) : k === 'backspace' ? t.s.mockInput.pressBackspace() : k === 'home' || k === 'end' || k === 'delete' ? t.s.mockInput.pressKey(k.toUpperCase() as 'HOME') : t.s.mockInput.pressKey(k) }); await act(async () => { await Bun.sleep(30) }); return t.frame() }
   test('n opens it; the ticket is looked up as you type: its title, type, board, customer; the base and patch it points at', async () => {
     const t = await screen(runs, undefined, { projects: [fso, shop], query: query() as FlowApi['query'] })
     try {
@@ -858,7 +858,7 @@ describe('the new-run form', () => {
       expect(f).not.toContain('Password')
     } finally { t.s.renderer.destroy() }
   })
-  test('three steps: the run, notes as long as you like (enter is a new line), then logins; the password never shows', async () => {
+  test('three steps, enter goes on from each: the run, notes as long as you like (shift or option+enter, or \\ then enter, is a new line, as in Claude Code), then logins; the password never shows', async () => {
     const t = await screen(runs, undefined, { projects: [{ ...fso, license: true }], query: query() as FlowApi['query'] })
     try {
       await t.press('n', 'enter')
@@ -869,7 +869,7 @@ describe('the new-run form', () => {
       await typeIn(t, 'Use order ')
       expect(await t.frame()).toContain('Use order ▏') // the space shows as soon as it is typed
       await typeIn(t, '700216740')
-      await keys(t, 'enter')
+      await keys(t, 'option+enter') // shift+enter too, in a terminal with the kitty keyboard protocol
       await typeIn(t, 'tablet layout too')
       const n = await t.frame()
       expect(n).toContain('Use order 700216740')
@@ -886,7 +886,10 @@ describe('the new-run form', () => {
       await typeIn(t, '@')
       expect(await t.frame()).toContain('Use @order 700216740') // a click put the cursor there
       await keys(t, 'backspace', 'down', 'end')
-      expect(await keys(t, 'tab')).toContain('▸ 3 Login')
+      await typeIn(t, ' \\'); await keys(t, 'enter'); await typeIn(t, 'x') // a \ before enter: a new line too
+      expect(await t.frame()).toContain('2 Notes · 3 lines')
+      await keys(t, 'backspace', 'backspace')
+      expect(await keys(t, 'enter')).toContain('▸ 3 Login')
       await typeIn(t, 'tester@example.com')
       await keys(t, 'tab'); await typeIn(t, 's3cret-pass')
       await keys(t, 'tab'); await typeIn(t, 'LIC-1234')

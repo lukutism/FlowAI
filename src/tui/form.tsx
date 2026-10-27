@@ -253,12 +253,15 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (n === 'escape') { onCancel(); return true }
     if (key.ctrl && n === 's') { start(); return true }
     if (step === 2) {
-      // the notes: a box you type into at the cursor (arrows, Home/End, a click move it); enter is a new line, tab goes on to the logins
+      // the notes: a box you type into at the cursor (arrows, Home/End, a click move it). Enter goes on, as on every
+      // step; a new line is shift+enter, option+enter, or \ then enter (as in Claude Code)
       if (n === 'tab') { go(key.shift ? 1 : 3); return true }
       const moves: Record<string, NoteKey> = { left: 'left', right: 'right', up: 'up', down: 'down', home: 'home', end: 'end', backspace: 'backspace', delete: 'delete' }
       const move = moves[n] ?? (key.ctrl && n === 'a' ? 'home' : key.ctrl && n === 'e' ? 'end' : undefined)
       if (move) setNotes(x => editNote(x, { key: move }, noteWidth))
-      else if (n === 'return') setNotes(x => editNote(x, '\n', noteWidth))
+      else if (n === 'return' && (key.shift || key.meta || key.option)) setNotes(x => editNote(x, '\n', noteWidth))
+      else if (n === 'return' && notes.text[notes.at - 1] === '\\') setNotes(x => editNote(editNote(x, { key: 'backspace' }, noteWidth), '\n', noteWidth))
+      else if (n === 'return') { if (hasThree) go(3); else start() }
       else if (typed) setNotes(x => editNote(x, typed, noteWidth))
       return true
     }
@@ -460,9 +463,9 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
         <text>{'  '}</text>
         {step === 1 ? <Click on={() => go(2)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Next: Notes '}</strong></text></box></Click> : null}
         {step === 3 ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Start run '}</strong></text></box></Click> : null}
-        {step === 2 && hasThree ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{` ⇥ Next: ${threeLabel} `}</strong></text></box></Click> : null}
-        {step === 2 && !hasThree ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ctrl+s Start run '}</strong></text></box></Click> : null}
-        <text fg={C.muted}>{step === 1 ? '   ⇥ next field   ←→ choose   space toggle   ' : step === 2 ? '   ↵ new line   ←→↑↓ or a click move   ⇧⇥ back   ' : '   ⇥ next field   ⇧⇥ back   '}</text>
+        {step === 2 && hasThree ? <Click on={() => go(3)}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{` ↵ Next: ${threeLabel} `}</strong></text></box></Click> : null}
+        {step === 2 && !hasThree ? <Click on={start}><box backgroundColor={C.accent}><text fg={C.panel}><strong>{' ↵ Start run '}</strong></text></box></Click> : null}
+        <text fg={C.muted}>{step === 1 ? '   ⇥ next field   ←→ choose   space toggle   ' : step === 2 ? '   ⇧↵ new line   ←→↑↓ or a click move   ⇧⇥ back   ' : '   ⇥ next field   ⇧⇥ back   '}</text>
         {step === 1 || (step === 2 && hasThree) ? <Click on={start}><text fg={C.muted}>{'ctrl+s start now   '}</text></Click> : null}
         <Click on={onCancel}><text fg={C.muted}>esc cancel</text></Click>
       </box>
