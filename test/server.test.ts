@@ -162,7 +162,7 @@ describe('a run\'s device in the browser', () => {
   const withDevice = () => {
     const t = start()
     const log = join(t.data, 'adb.log')
-    writeFileSync(join(t.data, 'runs', 'fso-1', 'device.json'), JSON.stringify({ run: 'fso-1', platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 8300, pids: [] }))
+    writeFileSync(join(t.data, 'runs', 'fso-1', 'device.json'), JSON.stringify({ run: 'fso-1', platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 39830, pids: [] }))
     process.env.FLOW_ADB = join(import.meta.dir, 'fake-adb.ts'); process.env.FAKE_ADB_LOG = log
     const url = (p: string, token = 'secret-token') => `http://127.0.0.1:${t.s.port}/device/fso-1${p}?token=${token}`
     return { ...t, url, log }
@@ -217,7 +217,7 @@ describe('the screen\'s connection after the service restarts', () => {
 describe('the device page: logs and other devices', () => {
   const withDevice = () => {
     const t = start()
-    writeFileSync(join(t.data, 'runs', 'fso-1', 'device.json'), JSON.stringify({ run: 'fso-1', platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 8300, pids: [] }))
+    writeFileSync(join(t.data, 'runs', 'fso-1', 'device.json'), JSON.stringify({ run: 'fso-1', platform: 'android', id: 'emulator-5700', consolePort: 5700, metroPort: 39830, pids: [] }))
     process.env.FLOW_ADB = join(import.meta.dir, 'fake-adb.ts'); process.env.FAKE_ADB_LOG = join(t.data, 'adb.log')
     return { ...t, url: (p: string) => `http://127.0.0.1:${t.s.port}${p}${p.includes('?') ? '&' : '?'}token=secret-token` }
   }
