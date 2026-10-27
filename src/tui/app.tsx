@@ -10,7 +10,7 @@ import type { Command, ProjectSummary, Reply } from '../service.ts'
 import type { Windows } from '../usage.ts'
 import { WAITS_FOR, type Snapshot } from '../resources.ts'
 import {
-  activity, attention, canDo, duration, filterRuns, line, footer, groupRows, header, hhmm, lastMessage, layout, match, resourceBars, rank, rows, SORTS, tokens,
+  activity, attention, canDo, duration, filterRuns, line, footer, groupRows, header, hhmm, lastMessage, layout, liveWindows, match, resourceBars, rank, rows, SORTS, tokens,
   type AttentionItem, type Grouped, type Row, type Sort,
 } from './model.ts'
 
@@ -539,6 +539,8 @@ function Bottom({ bars, waiting, feed, run, width, runs, windows, now }: { bars:
     return kind === 'devices' && r.device ? `${r.ticket} ${r.device.platform} ${r.device.id}` : `${r.ticket} ${r.stage} ${duration(now - r.updatedAt)}`
   }
   const pct = (w?: { utilization: number }) => (w ? `${Math.round(w.utilization * 100)}%` : '–')
+  // a window past its reset shows no reading (–) until a turn reports it again
+  const live = liveWindows(windows, Date.now())
   return (
     <box flexDirection="row">
       <box flexDirection="column" width={left}>
@@ -552,7 +554,7 @@ function Bottom({ bars, waiting, feed, run, width, runs, windows, now }: { bars:
         ))}
         {bars.length ? null : <text fg={C.muted}>no slot data</text>}
         <text><span fg={C.muted}>{fit('Waiting', 9)}</span><span fg={C.secondary}>{fit(waiting.length ? waiting.map((w, i) => `${i + 1}. ${runs.get(w.run)?.ticket ?? w.run} for ${WAITS_FOR[w.kind]} · ${duration(now - (runs.get(w.run)?.updatedAt ?? now))}`).join('  ') : 'nobody', left - 10)}</span></text>
-        <text><span fg={C.muted}>{fit('Plan', 9)}5h </span>{meter(windows.fiveHour?.utilization ?? 0, 12)}<span fg={C.text}>{` ${pct(windows.fiveHour)}   `}</span><span fg={C.muted}>week </span>{meter(windows.week?.utilization ?? 0, 12)}<span fg={C.text}>{` ${pct(windows.week)}`}</span></text>
+        <text><span fg={C.muted}>{fit('Plan', 9)}5h </span>{meter(live.fiveHour?.utilization ?? 0, 12)}<span fg={C.text}>{` ${pct(live.fiveHour)}   `}</span><span fg={C.muted}>week </span>{meter(live.week?.utilization ?? 0, 12)}<span fg={C.text}>{` ${pct(live.week)}`}</span></text>
       </box>
       <box flexDirection="column" flexGrow={1}>
         <text> </text>

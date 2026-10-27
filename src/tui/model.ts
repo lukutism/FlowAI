@@ -126,7 +126,13 @@ export function rows(runs: RunState[], now: number, sort: Sort = 'newest'): Row[
   })
 }
 
-export function header(runs: RunState[], w: Windows, now: number) {
+/** the windows still current: one whose reset has passed has no reading until a turn reports it again */
+export function liveWindows(w: Windows, now: number): Windows {
+  return Object.fromEntries(Object.entries(w).filter(([, x]) => x && x.resetsAt * 1000 > now)) as Windows
+}
+
+export function header(runs: RunState[], all: Windows, now: number) {
+  const w = liveWindows(all, now)
   const pct = (x?: { utilization: number }) => (x ? `${Math.round(x.utilization * 100)}%` : '–')
   const reset = (x?: { resetsAt: number }) => (x && x.resetsAt * 1000 > now ? hhmm(x.resetsAt * 1000) : '')
   return {

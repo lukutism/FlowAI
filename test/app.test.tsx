@@ -25,7 +25,7 @@ function api(list = runs) {
   const sent: Command[] = []
   const listeners = new Set<(m: { type: string; notice?: { run: string; text: string } }) => void>()
   const a: FlowApi = {
-    runs: new Map(list.map(r => [r.id, r])), windows: { fiveHour: { utilization: 0.07, resetsAt: Date.parse('2026-10-25T14:00:00Z') / 1000, status: 'allowed' }, week: { utilization: 0.55, resetsAt: 1, status: 'allowed' } },
+    runs: new Map(list.map(r => [r.id, r])), windows: { fiveHour: { utilization: 0.07, resetsAt: new Date(2099, 0, 1, 14, 0).getTime() / 1000, status: 'allowed' }, week: { utilization: 0.55, resetsAt: new Date(2099, 0, 6).getTime() / 1000, status: 'allowed' } },
     listen: f => { listeners.add(f); return () => listeners.delete(f) },
     send: async c => { sent.push(c); return { ok: true, run: 'run' in c ? c.run : 'x' } },
     events: async run => [{ seq: 1, at: NOW - 14 * 60_000, run, actor: 'human', type: 'run.created', ticket: '#105', title: 't', project: 'fso', base: 'b' }, { seq: 2, at: NOW - 13 * 60_000, run, actor: 'agent', type: 'plan.submitted', summary: 's', questions: [] }] as RunEvent[],

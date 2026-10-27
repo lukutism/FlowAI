@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import type { RunState } from '../src/run.ts'
 import type { RunEvent } from '../src/run.ts'
 import type { Snapshot } from '../src/resources.ts'
-import { activity, attention, canDo, describeEvent, duration, filterRuns, footer, groupRows, header, layout, lastMessage, match, resourceBars, rows, tokens } from '../src/tui/model.ts'
+import { activity, attention, canDo, describeEvent, duration, filterRuns, footer, groupRows, header, layout, lastMessage, liveWindows, match, resourceBars, rows, tokens } from '../src/tui/model.ts'
 
 // What the Runs screen shows, from run states: computed without a terminal.
 const NOW = Date.parse('2026-10-25T12:00:00Z')
@@ -257,5 +257,14 @@ describe('a PR marked ready for review', () => {
     expect(attention([r], 1)[0]!).toMatchObject({ label: 'Draft PR', key: 'o', action: 'openPr' }) // its action: the PR in the browser
     expect(attention([{ ...r, prDraft: false }], 1)[0]!.label).toBe('PR ready for review')
     expect(rows([{ ...r, prDraft: false }], 1)[0]!.status).toBe('PR ready')
+  })
+})
+
+describe('plan usage once its window has reset', () => {
+  test('shown as not known yet (–) until a turn reports it again, not the last reading from before the reset', () => {
+    const now = Date.parse('2026-10-27T13:30:00Z')
+    const w = { fiveHour: { utilization: 0.9, resetsAt: Date.parse('2026-10-27T13:00:00Z') / 1000, status: 'allowed' }, week: { utilization: 0.08, resetsAt: now / 1000 + 86_400, status: 'allowed' } }
+    expect(header([], w, now)).toMatchObject({ fiveHour: '–', week: '8%' })
+    expect(liveWindows(w, now)).toEqual({ week: w.week })
   })
 })
