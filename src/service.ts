@@ -88,7 +88,7 @@ export interface ServiceDeps {
  * plan deadlines. Screens and the CLI send it commands and watch the event log.
  */
 /** how often a draft PR's state is asked of the code host */
-const PR_CHECK_MS = 10 * 60_000
+const PR_CHECK_MS = 2 * 60_000
 
 export class Service {
   private pipes = new Map<string, Pipeline>()
