@@ -1,3 +1,4 @@
+import type { AgentTools } from '../agenttools.ts'
 /**
  * A project's settings as the screen edits them: each section's fields over the project's own file (its JSON as
  * written, so what you don't touch stays as it was), a value read or set by its path, and the changes for the save.
@@ -6,18 +7,19 @@
 export type Path = (string | number)[]
 export type Json = Record<string, unknown>
 
-export type FieldKind = 'text' | 'number' | 'percent' | 'toggle' | 'select' | 'list' | 'map' | 'locked' | 'heading' | 'add'
+export type FieldKind = 'text' | 'number' | 'percent' | 'toggle' | 'select' | 'list' | 'map' | 'locked' | 'heading' | 'add' | 'member'
 export interface FieldDef {
   kind: FieldKind; label: string; path?: Path; hint?: string
   /** select: the choices; toggle: shown the other way round (on means the setting is false) */
   options?: string[]; invert?: boolean
   /** what is used when the file says nothing */
   fallback?: unknown
-  /** add: what the path is set to when chosen (a dev server's first settings, say) */
+  /** add: what the path is set to when chosen (a dev server's first settings, say); member: the item, on while it
+   * is not in the list at path (the list says what is off) */
   value?: unknown
 }
 
-export const SECTIONS = ['General', 'Tickets & PRs', 'Repos', 'Agents & limits', 'Permissions', 'Devices', 'Customer patches', 'Naming'] as const
+export const SECTIONS = ['General', 'Tickets & PRs', 'Repos', 'Agents & limits', 'Permissions', 'Skills & MCP', 'Devices', 'Customer patches', 'Naming'] as const
 export type Section = (typeof SECTIONS)[number]
 
 export function get(json: unknown, path: Path): unknown {
@@ -41,8 +43,8 @@ export function set<T extends Json>(json: T, path: Path, value: unknown): T {
 
 const repoKey = (json: Json, i: number) => String(get(json, ['repos', i, 'key']) ?? i)
 
-/** each section's fields; Repos shows the chosen repo's */
-export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
+/** each section's fields; Repos shows the chosen repo's; Skills & MCP, what the agents get (when it is known) */
+export function fields(section: Section, json: Json, repo = 0, tools?: AgentTools): FieldDef[] {
   const tracker = String(get(json, ['tracker', 'kind']) ?? ''), forge = String(get(json, ['forge', 'kind']) ?? '')
   const r = (k: string) => ['repos', repo, k]
   switch (section) {
@@ -97,6 +99,19 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
           { kind: 'text' as const, label: 'Apply', path: [...r('patches'), 'apply'] }, { kind: 'text' as const, label: 'Write back', path: [...r('patches'), 'writeBack'] },
           { kind: 'text' as const, label: 'List', path: [...r('patches'), 'choices'] }, { kind: 'text' as const, label: 'Check', path: [...r('patches'), 'check'] },
         ] : []),
+      ]
+    }
+    case 'Skills & MCP': {
+      if (!tools) return [{ kind: 'heading', label: 'Looking…', hint: 'a session starts in the repo to see what the agents get (no usage)' }]
+      // on unless the project turns it off; one off and since gone stays, to turn back on
+      const items = (kind: 'plugins' | 'skills' | 'mcp', seen: { id: string; name: string }[]) => {
+        const off = ((get(json, ['off', kind]) as string[] | undefined) ?? []).filter(x => !seen.some(y => y.id === x)).map(x => ({ id: x, name: x }))
+        return [...seen, ...off].sort((a, b) => a.name.localeCompare(b.name)).map(x => ({ kind: 'member' as const, label: x.name, path: ['off', kind], value: x.id, ...(x.id !== x.name ? { hint: x.id } : {}) }))
+      }
+      return [
+        { kind: 'heading', label: 'Plugins', hint: "yours, with their skills and servers; off: this project's agents don't get it" }, ...items('plugins', tools.plugins),
+        { kind: 'heading', label: 'Skills', hint: "yours and the repo's (a plugin's go with it)" }, ...items('skills', tools.skills.map(x => ({ id: x, name: x }))),
+        { kind: 'heading', label: 'MCP servers', hint: "yours and the repo's; off: not started for the agents (argent drives the device)" }, ...items('mcp', tools.mcp.map(x => ({ id: x, name: x }))),
       ]
     }
     case 'Agents & limits': return [
@@ -156,6 +171,12 @@ export function fields(section: Section, json: Json, repo = 0): FieldDef[] {
 }
 
 /** a field's value as shown: the file's, else what is used when it says nothing */
+/** a member of the list at path, added (turned off) or taken out (on again) */
+export function toggleMember(json: Json, path: Path, value: unknown): Json {
+  const list = (get(json, path) as unknown[] | undefined) ?? []
+  return set(json, path, list.includes(value) ? list.filter(x => x !== value) : [...list, value])
+}
+
 export function shown(f: FieldDef, json: Json): unknown { const v = f.path ? get(json, f.path) : undefined; return v === undefined ? f.fallback : v }
 
 /** a map ({app: pattern}) as list items and back */

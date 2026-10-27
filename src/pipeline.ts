@@ -649,7 +649,7 @@ export class Pipeline {
   private async advise(run: string): Promise<Advice | null> {
     const s = this.must(run), m = this.meta(run)
     if (!this.d.makeReviewer || !s.plan?.questions.length) return null
-    const settings = writeRunSettings({ dir: join(this.runDir(run), 'advisor'), worktree: m.worktree, allow: m.repos.map(r => r.worktree).filter(w => w !== m.worktree), deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
+    const settings = writeRunSettings({ dir: join(this.runDir(run), 'advisor'), worktree: m.worktree, allow: m.repos.map(r => r.worktree).filter(w => w !== m.worktree), deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, off: this.d.project.off, denyTools: this.d.project.denyTools })
     const advisor = this.d.makeReviewer({ cwd: m.worktree, settings, maxTurns: this.d.project.review.maxTurns, ...(m.model ? { model: m.model } : {}) })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
@@ -868,7 +868,7 @@ export class Pipeline {
     const dev = this.d.store.state(run)?.device
     // with a device, argent drives it but never boots one or stops the shared servers: flow owns the run's device
     const denyTools = [...this.d.project.denyTools, ...(dev ? ['mcp__argent__boot-device', 'mcp__argent__stop-all-simulator-servers'] : ['mcp__argent'])]
-    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
+    const settings = writeRunSettings({ dir: this.runDir(run), worktree: m.worktree, allow: [...others, ...own], deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, off: this.d.project.off, denyTools, allowTools: ['mcp__flow'], memory: memoryDir(this.repoConfig(m.repos[0]!.key).path) })
     // the run's tools: flow's MCP server for this run, beside the user's own servers
     const mcpConfig = join(dir, 'mcp.json')
     writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { flow: { command: self('mcp')[0], args: self('mcp').slice(1), env: { FLOW_RUN: run, FLOW_DATA: this.d.dataDir } } } }, null, 2) + '\n')
@@ -1227,7 +1227,7 @@ export class Pipeline {
     const evidence = existsSync(ev) ? readdirSync(ev).filter(f => /\.(png|jpe?g|webp|gif)$/i.test(f)).sort().map(f => join(ev, f)) : []
     const base = { key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), change, pr: read(this.prFile(run)), answers: read(this.answersFile(run)), evidence }
     const one = async (lens: Lens) => {
-      const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer', lens), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, denyTools: this.d.project.denyTools })
+      const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer', lens), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, off: this.d.project.off, denyTools: this.d.project.denyTools })
       // the run's model for the reviewers too (a run started on sonnet is reviewed on sonnet)
       const reviewer = this.d.makeReviewer!({ cwd: m.worktree, settings, maxTurns: c.maxTurns, ...(m.model ? { model: m.model } : {}) })
       try {

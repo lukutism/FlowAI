@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { discoverAgentTools, type AgentTools } from './agenttools.ts'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
 import type { Az } from './azure.ts'
@@ -62,6 +63,8 @@ export type Query =
   | { q: 'patches'; project: string }
   | { q: 'checkPatch'; project: string; patch: string; base: string }
   | { q: 'projectFile'; project: string }
+  /** the plugins, skills and MCP servers the project's agents get (its first repo's checkout, as you would there) */
+  | { q: 'agentTools'; project: string }
 
 /** note: what happened when it isn't what you asked for (a message queued) */
 export type Reply = { ok: true; run: string; note?: string } | { ok: false; error: string }
@@ -69,6 +72,8 @@ export interface Notice { run: string; text: string }
 
 export interface ServiceDeps {
   store: EventStore
+  /** what a project's agents get, seen by starting a session there (a stand-in in tests) */
+  discoverTools?: (cwd: string) => Promise<AgentTools>
   projects: Record<string, Project>
   az: Az
   dataDir: string
@@ -200,6 +205,14 @@ export class Service {
     if (q.q === 'patches') return p.patchChoices()
     if (q.q === 'refs') return p.refs(q.repo)
     if (q.q === 'projectFile') { const path = this.projectFile(q.project); return { path, json: JSON.parse(readFileSync(path, 'utf8')) } }
+    if (q.q === 'agentTools') {
+      // a session is started to see them (seconds, while MCP servers connect): kept for a while
+      const had = this.toolsSeen.get(q.project), now = (this.d.now ?? Date.now)()
+      if (had && now - had.at < 10 * 60_000) return had.tools
+      const tools = await (this.d.discoverTools ?? discoverAgentTools)(this.d.projects[q.project]!.repos[0]!.path)
+      this.toolsSeen.set(q.project, { at: now, tools })
+      return tools
+    }
     return p.checkPatch(q.patch, q.base)
   }
   onResources(fn: (s: Snapshot) => void) { return this.slots.onChange(fn) }
@@ -329,6 +342,7 @@ export class Service {
   }
 
   private reviving = new Set<string>()
+  private toolsSeen = new Map<string, { at: number; tools: AgentTools }>()
 
   async idle() { while (this.busy.size) await Promise.all(this.busy.values()) }
 

@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
+import { offSettings, type Off } from './agenttools.ts'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -11,12 +12,15 @@ const expand = (p: string) => resolve(p.replace(/^~(?=\/|$)/, homedir()))
  * plugins, skills, MCP servers and hooks all stay; flow adds only its guard.
  * deny: files the agent must not read (flow's token).
  */
-export function writeRunSettings(o: { dir: string; worktree: string; allow?: string[]; deny?: string[]; sandbox?: Record<string, unknown>; claudeMdExcludes?: string[]; denyTools?: string[]; allowTools?: string[]; memory?: string }): string {
+export function writeRunSettings(o: { dir: string; worktree: string; allow?: string[]; deny?: string[]; sandbox?: Record<string, unknown>; claudeMdExcludes?: string[]; denyTools?: string[]; allowTools?: string[]; memory?: string; off?: Off }): string {
   const deny = o.deny ?? []
   // a guard that fails to start would otherwise let the tool through (a hook's error is not a refusal); exit 2 blocks
   const command = `FLOW_WORKTREE=${sh(o.worktree)} FLOW_ALLOW=${sh((o.allow ?? []).join(':'))} FLOW_DENY=${sh(deny.join(':'))} ${self('guard').map(sh).join(' ')} || { echo 'flow guard failed to run' >&2; exit 2; }`
   const settings: Record<string, unknown> = { hooks: { PreToolUse: [{ matcher: 'Bash|Edit|Write|MultiEdit|NotebookEdit', hooks: [{ type: 'command', command }] }] } }
-  const denied = [...deny.map(f => `Read(/${f})`), ...(o.denyTools ?? [])]
+  // what the project turns off for its agents (a plugin, a skill, an MCP server), theirs only: your settings stay
+  const { deny: offTools = [], ...off } = o.off ? offSettings(o.off) : {}
+  Object.assign(settings, off)
+  const denied = [...deny.map(f => `Read(/${f})`), ...(o.denyTools ?? []), ...offTools]
   if (denied.length || o.allowTools?.length) settings.permissions = { ...(denied.length ? { deny: denied } : {}), ...(o.allowTools?.length ? { allow: o.allowTools } : {}) }
   // the repo's Claude memory (what earlier agents of it learned), not a fresh one per worktree
   if (o.memory) settings.autoMemoryDirectory = o.memory

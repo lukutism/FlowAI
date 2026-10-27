@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { changes, fields, get, itemsMap, mapItems, set, shown } from '../src/tui/settings-model.ts'
+import { changes, fields, get, itemsMap, mapItems, set, shown, toggleMember } from '../src/tui/settings-model.ts'
 
 // A project's settings as the screen edits them: fields over the file, set by path, the changes for the save.
 const json = {
@@ -71,5 +71,22 @@ describe('settings: the changes, for the save review', () => {
       { where: 'plan', before: undefined, after: { deadlineMinutes: 45 } },
     ])
     expect(changes(json, json)).toEqual([])
+  })
+})
+
+describe('Skills & MCP: what the agents get, each on or off for this project', () => {
+  const tools = { plugins: [{ id: 'crit@crit', name: 'crit' }], skills: ['agent-browser'], mcp: ['pencil'] }
+  test("a toggle for each plugin, skill and server the agents would get (on unless the project turns it off); one turned off and since gone stays listed, to turn back on", () => {
+    const f = fields('Skills & MCP', { key: 'p', off: { mcp: ['old-server'] } }, 0, tools)
+    expect(f.filter(x => x.kind === 'heading').map(x => x.label)).toEqual(['Plugins', 'Skills', 'MCP servers'])
+    expect(f.filter(x => x.kind === 'member').map(x => [x.label, x.value])).toEqual([['crit', 'crit@crit'], ['agent-browser', 'agent-browser'], ['old-server', 'old-server'], ['pencil', 'pencil']])
+  })
+  test('toggling one: into the off list, and out of it again', () => {
+    const off = toggleMember({ key: 'p' }, ['off', 'skills'], 'agent-browser')
+    expect(get(off, ['off', 'skills'])).toEqual(['agent-browser'])
+    expect(get(toggleMember(off, ['off', 'skills'], 'agent-browser'), ['off', 'skills'])).toEqual([])
+  })
+  test("before the agents' tools are known: says so", () => {
+    expect(fields('Skills & MCP', { key: 'p' }, 0)[0]).toMatchObject({ kind: 'heading', label: expect.stringMatching(/Looking/) })
   })
 })

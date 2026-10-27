@@ -2,7 +2,8 @@ import type { KeyEvent } from '@opentui/core'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { Command, Query, Reply } from '../service.ts'
 import { C } from './detail.tsx'
-import { changes, fields, get, itemsMap, mapItems, SECTIONS, set, shown, type FieldDef, type Json } from './settings-model.ts'
+import type { AgentTools } from '../agenttools.ts'
+import { changes, fields, get, itemsMap, mapItems, SECTIONS, set, shown, toggleMember, type FieldDef, type Json } from './settings-model.ts'
 
 /** what the settings screen needs from the service connection */
 export interface SettingsApi {
@@ -47,7 +48,14 @@ export function ProjectSettings({ api, project, width, height, bind, bindPaste, 
   }, [project])
 
   const sec = SECTIONS[section]!
-  const list = json ? fields(sec, json, repo) : []
+  // what the agents get: asked when its section is first shown (a session starts to see it)
+  const [tools, setTools] = useState<AgentTools | undefined>()
+  const [toolsError, setToolsError] = useState('')
+  useEffect(() => {
+    if (sec !== 'Skills & MCP' || tools || toolsError) return
+    void api.query?.<AgentTools>({ q: 'agentTools', project }).then(setTools).catch(e => setToolsError((e as Error).message))
+  }, [sec, project])
+  const list = json ? (sec === 'Skills & MCP' && toolsError ? [{ kind: 'heading' as const, label: "Couldn't see what the agents get", hint: toolsError }] : fields(sec, json, repo, tools)) : []
   const usable = (f?: FieldDef) => !!f && f.kind !== 'heading' && f.kind !== 'locked'
   const cur = Math.min(at, Math.max(0, list.length - 1))
   const f = list[cur]
@@ -64,6 +72,7 @@ export function ProjectSettings({ api, project, width, height, bind, bindPaste, 
     if (!json) return
     const v = shown(fd, json)
     if (fd.kind === 'toggle') change(fd, !v) // an inverted toggle is only shown the other way round
+    else if (fd.kind === 'member') setJson(toggleMember(json, fd.path!, fd.value))
     else if (fd.kind === 'select') { const o = fd.options ?? []; change(fd, o[(o.indexOf(String(v)) + d + o.length) % o.length]) }
     else if (fd.kind === 'number') change(fd, Math.max(0, Number(v ?? 0) + d))
     else if (fd.kind === 'percent') change(fd, Math.round(Math.max(0.05, Math.min(1, Number(v ?? 0) + d * 0.05)) * 100) / 100)
@@ -165,6 +174,7 @@ export function ProjectSettings({ api, project, width, height, bind, bindPaste, 
   const value = (fd: FieldDef): ReactNode => {
     if (!json) return null
     const v = shown(fd, json), dflt = fd.path && get(json, fd.path) === undefined
+    if (fd.kind === 'member') { const on = !(((get(json, fd.path!) as unknown[] | undefined) ?? []).includes(fd.value)); return <><span fg={on ? C.accent : C.muted}>{on ? '[x] ' : '[ ] '}</span><span fg={C.text}>{on ? 'on' : 'off'}</span></> }
     if (fd.kind === 'toggle') { const on = fd.invert ? !v : !!v; return <><span fg={on ? C.accent : C.muted}>{on ? '[x] ' : '[ ] '}</span><span fg={C.text}>{on ? 'on' : 'off'}</span></> }
     if (fd.kind === 'select') return <>{(fd.options ?? []).map(o => <span key={o} fg={o === v ? C.text : C.secondary}>{`${o === v ? '(•)' : '( )'} ${o}   `}</span>)}</>
     if (fd.kind === 'percent') return <span fg={dflt ? C.secondary : C.text}>{`${Math.round(Number(v ?? 0) * 100)}%`}</span>

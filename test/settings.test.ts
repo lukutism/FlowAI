@@ -94,3 +94,12 @@ describe('the run\'s settings: tools the project denies', () => {
     expect(s.permissions.deny).toEqual(['Read(//t)', 'mcp__azure-devops__repo_pull_request_write'])
   })
 })
+
+describe("the run's settings: what the project turns off for its agents", () => {
+  test('a plugin, a skill and an MCP server off: in the agents\' own settings, beside the tools flow denies', () => {
+    const d = mkdtempSync(join(tmpdir(), 'flow-off-'))
+    const s = JSON.parse(readFileSync(writeRunSettings({ dir: d, worktree: '/w', denyTools: ['mcp__argent'], off: { plugins: ['crit@crit'], skills: ['agent-browser'], mcp: ['pencil'] } }), 'utf8'))
+    expect(s).toMatchObject({ enabledPlugins: { 'crit@crit': false }, skillOverrides: { 'agent-browser': 'off' }, deniedMcpServers: [{ serverName: 'pencil' }] })
+    expect(s.permissions.deny).toEqual(expect.arrayContaining(['mcp__argent', 'mcp__pencil']))
+  })
+})

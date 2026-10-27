@@ -122,6 +122,8 @@ const project = z.object({
   sandbox: z.record(z.unknown()).optional(),
   /** CLAUDE.md files (paths or globs) the agents don't load: another tool's instructions in a folder above the worktrees */
   claudeMdExcludes: z.array(z.string()).optional(),
+  /** what this project's agents don't get of yours and the repo's: plugins (ids), skills, MCP servers (names) */
+  off: z.object({ plugins: z.array(z.string()).default([]), skills: z.array(z.string()).default([]), mcp: z.array(z.string()).default([]) }).default({}),
   /** tracked files (globs) an editor or its build tooling rewrites with the machine's own paths: never a run's change */
   editorFiles: z.array(z.string()).default(['**/.settings/org.eclipse.buildship.core.prefs', '**/.settings/org.eclipse.jdt.core.prefs']),
   /** the main checkout's git-ignored files linked into each worktree (project skills, .mcp.json, .npmrc, a code index) */

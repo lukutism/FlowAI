@@ -982,6 +982,19 @@ describe('project settings', () => {
       expect(g).toMatch(/General[\s\S]*Permissions[\s\S]*Naming/)
     } finally { t.s.renderer.destroy() }
   })
+  test("Skills & MCP: what the agents get, each turned off for this project's agents (saved in its file)", async () => {
+    const tools = { plugins: [{ id: 'crit@crit', name: 'crit' }], skills: ['agent-browser'], mcp: ['pencil'] }
+    const t = await screen(runs, undefined, { projects: summary, query: (async (q: { q: string }) => (q.q === 'projectFile' ? { path: '/home/me/.config/flow/projects/fso.json', json: raw } : q.q === 'agentTools' ? tools : [])) as FlowApi['query'] })
+    t.f.a.send = async c => { t.f.sent.push(c); return { ok: true, run: '' } }
+    try {
+      await t.press('4'); await k(t, 'enter')
+      const f = await k(t, 'j', 'j', 'j', 'j', 'j', 'enter')
+      expect(f).toMatch(/Plugins[\s\S]*crit +\[x\] on[\s\S]*Skills[\s\S]*agent-browser +\[x\] on[\s\S]*MCP servers[\s\S]*pencil +\[x\] on/)
+      expect(await k(t, ' ')).toMatch(/▌ crit +\[ \] off/)
+      await k(t, 'S'); await k(t, 'y')
+      expect(t.f.sent).toEqual([{ cmd: 'saveProject', project: 'fso', json: { ...raw, off: { plugins: ['crit@crit'] } } }])
+    } finally { t.s.renderer.destroy() }
+  })
   test('a toggle changed, shown against the file, saved on y', async () => {
     const t = await open()
     try {
