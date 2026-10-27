@@ -54,9 +54,10 @@ function setup(turns: (dirs: { wt: string; run: string }) => FakeTurn[], o: { re
   const reviewer = new FakeAgent(o.review ?? [])
   const reviewers: { cwd: string; settings: string }[] = []
   const resources = o.resources?.(store)
-  const pipe = new Pipeline({ store, project, az, dataDir, gitEnv: env, makeAgent: o => { agents.push(o); return agent }, ...(resources ? { resources } : {}),
+  const said: { own: boolean; who?: string }[] = []
+  const pipe = new Pipeline({ store, project, az, dataDir, gitEnv: env, makeAgent: o => { agents.push(o); return agent }, ...(resources ? { resources } : {}), onPrompt: (_r, _t, own, _f, who) => { said.push({ own, ...(who ? { who } : {}) }) },
     ...(o.review ? { makeReviewer: (x: { cwd: string; settings: string }) => { reviewers.push(x); return reviewer } } : {}) })
-  return { pipe, store, agent, reviewer, reviewers, azCalls, origin, main, wt, runDir, agents, root, resources }
+  return { pipe, store, agent, reviewer, reviewers, azCalls, origin, main, wt, runDir, agents, root, resources, said }
 }
 const review = (findings: object[]): FakeTurn => ({ stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 'rev-1', model: 'm', apiKeySource: 'none' }),
   JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: `Checked.\n\n\`\`\`json\n${JSON.stringify(findings)}\n\`\`\``, num_turns: 1, session_id: 'rev-1', usage: { input_tokens: 500, output_tokens: 50 } })].join('\n') })
@@ -75,6 +76,8 @@ describe('a ticket to a draft PR', () => {
     const run = await t.pipe.start(186278)
     expect(run).toBe('example-186278')
     expect(t.store.state(run)).toMatchObject({ ticket: '#186278', title: 'Asset list crashes', stage: 'ship', status: 'needs-you', needs: { kind: 'ship' } })
+    // each verify is kept for later: its steps, what they found on the change and on the base
+    expect(readFileSync(join(t.runDir, 'verify.log'), 'utf8')).toMatch(/verify: ok\n.*mobile tsc: ok \(head \d+, base \d+\)/)
     expect(t.agent.prompts[0]).toContain('It crashes.')
     expect(t.agent.prompts[0]).toContain(join(t.runDir, 'plan.md'))
     expect(t.agents[0]).toMatchObject({ cwd: t.wt })
@@ -264,6 +267,8 @@ describe('the independent review before ship', () => {
     const run = await t.pipe.start(186278)
     const lenses = t.reviewer.prompts.slice(0, 3).map(p => /Your lens: (\w+)/.exec(p)?.[1]).sort()
     expect(lenses).toEqual(['correctness', 'simplicity', 'skeptic'])
+    // in the run's transcript each reviewer's entries say which lens wrote them
+    expect(t.said.filter(x => !x.own).map(x => x.who).slice(0, 3).sort()).toEqual(['review: correctness', 'review: simplicity', 'review: skeptic'])
     expect(t.reviewer.prompts[0]).toContain('Verified: flow verify → no new findings') // the PR description's claims
     expect(t.reviewer.prompts[0]).toContain(`- ${join(t.runDir, 'evidence', 'after-list.png')}`) // the screenshots, to open
     expect(t.reviewers.map(r => r.settings)).toEqual(expect.arrayContaining([expect.stringContaining(join('reviewer', 'skeptic'))]))

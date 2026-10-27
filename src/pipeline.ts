@@ -65,9 +65,9 @@ export interface PipelineDeps {
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   /** sees each agent event as it arrives (live output); own: the run's agent, not the reviewer */
-  tap?: (run: string, e: AgentEvent, own: boolean) => void
+  tap?: (run: string, e: AgentEvent, own: boolean, who?: string) => void
   /** each prompt as it is sent to an agent */
-  onPrompt?: (run: string, text: string, own: boolean, from: 'flow' | 'you') => void
+  onPrompt?: (run: string, text: string, own: boolean, from: 'flow' | 'you', who?: string) => void
   /** the plan windows changed (after they are saved) */
   onWindows?: (w: Windows) => void
   /** where tickets come from and PRs go; by default from the project (az, gh, the Jira token in the keychain) */
@@ -590,7 +590,7 @@ export class Pipeline {
     const advisor = this.d.makeReviewer({ cwd: m.worktree, settings, maxTurns: this.d.project.review.maxTurns, ...(m.model ? { model: m.model } : {}) })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
-      const r = await this.runner.turnWith(run, advisor, advisorPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), questions: s.plan.questions }), { ownSession: false })
+      const r = await this.runner.turnWith(run, advisor, advisorPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), questions: s.plan.questions }), { ownSession: false, who: 'advisor' })
       if (!r.ok) return null
       try { return parseAdvice(r.text, s.plan.questions) } catch { return null }
     } finally { await advisor.close?.() }
@@ -1081,10 +1081,12 @@ export class Pipeline {
   /** verify every repo; with several repos each finding names its repo */
   private async verifyAll(run: string, m: Meta): Promise<{ ok: boolean; findings: string[] }> {
     let ok = true
-    const findings: string[] = []
+    const findings: string[] = [], log: string[] = []
     for (const r of m.repos) {
       const res = await this.building(run, () => verify(r.worktree, this.repoConfig(r.key).verify))
       ok &&= res.ok
+      if (res.note) log.push(`  ${r.key}: ${res.note}`)
+      for (const st of res.steps) log.push(`  ${r.key} ${st.name}: ${st.status} (head ${st.head}, base ${st.base})${st.note ? ` ${st.note}` : ''}${st.newFindings.map(f => `\n    ${f}`).join('')}`)
       findings.push(...res.steps.flatMap(s => s.newFindings).map(f => (m.repos.length > 1 ? `${r.key}: ${f}` : f)))
     }
     // only the fix, nothing that shouldn't be published: the change beyond the plan's PR extras, and the description
@@ -1095,6 +1097,8 @@ export class Pipeline {
       const ev = join(this.runDir(run), 'evidence')
       own.push(...prProblems(readFileSync(this.prFile(run), 'utf8'), { repro: plan.repro, evidence: existsSync(ev) ? readdirSync(ev) : [] }))
     }
+    // kept for later (what a verify found, and on what): the run's verify.log
+    appendFileSync(join(this.runDir(run), 'verify.log'), `${new Date().toISOString()} verify: ${ok && !own.length ? 'ok' : 'findings'}\n${[...log, ...own.map(f => `  ${f}`)].join('\n')}\n`)
     return { ok: ok && !own.length, findings: [...findings, ...own] }
   }
 
@@ -1142,10 +1146,10 @@ export class Pipeline {
       // the run's model for the reviewers too (a run started on sonnet is reviewed on sonnet)
       const reviewer = this.d.makeReviewer!({ cwd: m.worktree, settings, maxTurns: c.maxTurns, ...(m.model ? { model: m.model } : {}) })
       try {
-        let r = await this.runner.turnWith(run, reviewer, reviewPrompt({ ...base, ...(c.lenses.length > 1 ? { lens } : {}) }), { ownSession: false })
+        let r = await this.runner.turnWith(run, reviewer, reviewPrompt({ ...base, ...(c.lenses.length > 1 ? { lens } : {}) }), { ownSession: false, who: `review: ${lens}` })
         if (!r.ok) return { lens, error: `the ${lens} review did not finish: ${r.text.split('\n')[0]!.slice(0, 200)}` }
         try { return { lens, ...parseFindings(r.text) } } catch (first) {
-          r = await this.runner.turnWith(run, reviewer, 'Answer again with the short note and exactly one ```json block holding the array of findings (an empty array if none).', { ownSession: false })
+          r = await this.runner.turnWith(run, reviewer, 'Answer again with the short note and exactly one ```json block holding the array of findings (an empty array if none).', { ownSession: false, who: `review: ${lens}` })
           if (!r.ok) return { lens, error: `the ${lens} review did not finish` }
           try { return { lens, ...parseFindings(r.text) } } catch (e) { return { lens, error: `the ${lens} review unreadable: ${(e as Error).message} (first answer: ${(first as Error).message})` } }
         }

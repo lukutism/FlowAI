@@ -8,7 +8,8 @@ import { loginValues, maskLogins } from './redact.ts'
  * said and did. One JSON line per entry in runs/<run>/transcript.jsonl. own: the run's agent (false: the reviewer).
  */
 export type Said = { kind: 'prompt'; from: 'flow' | 'you'; text: string }
-export type Entry = (Exclude<AgentEvent, { kind: 'usage' }> | Said) & { at: number; own: boolean }
+/** who: which other agent wrote it, when not the run's own (a review lens, the advisor) */
+export type Entry = (Exclude<AgentEvent, { kind: 'usage' }> | Said) & { at: number; own: boolean; who?: string }
 
 const file = (dataDir: string, run: string) => join(dataDir, 'runs', run, 'transcript.jsonl')
 

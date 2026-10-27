@@ -205,8 +205,8 @@ export class Service {
       const cfg = this.d.projects[project]
       if (!cfg) throw new Error(`no project ${project}`)
       p = new Pipeline({ store: this.d.store, project: cfg, az: this.d.az, dataDir: this.d.dataDir, makeAgent: this.d.makeAgent, makeReviewer: this.d.makeReviewer, resources: this.slots, gitEnv: this.d.gitEnv, now: this.d.now,
-        tap: (run, e, own) => { this.d.tap?.(run, e); if (e.kind !== 'usage') this.record(run, { ...e, at: (this.d.now ?? Date.now)(), own }) },
-        onPrompt: (run, text, own, from) => this.record(run, { kind: 'prompt', from, text, at: (this.d.now ?? Date.now)(), own }),
+        tap: (run, e, own, who) => { this.d.tap?.(run, e); if (e.kind !== 'usage') this.record(run, { ...e, at: (this.d.now ?? Date.now)(), own, ...(who ? { who } : {}) }) },
+        onPrompt: (run, text, own, from, who) => this.record(run, { kind: 'prompt', from, text, at: (this.d.now ?? Date.now)(), own, ...(who ? { who } : {}) }),
         onWindows: w => { this.lastWindows = w; for (const l of this.windowsListeners) l(w) } })
       if (!Object.keys(this.lastWindows).length) this.lastWindows = p.runner.ingest.windows
       this.pipes.set(project, p)

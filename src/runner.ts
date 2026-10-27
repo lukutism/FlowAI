@@ -16,9 +16,10 @@ export interface RunnerOptions {
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   /** sees every agent event as it arrives (live output); own: the run's agent, not the reviewer */
-  tap?: (run: string, e: AgentEvent, own: boolean) => void
+  /** who: the other agent of a turn that isn't the run's own (a review lens, the advisor) */
+  tap?: (run: string, e: AgentEvent, own: boolean, who?: string) => void
   /** a prompt as it is sent: from flow, or a message of yours */
-  onPrompt?: (run: string, text: string, own: boolean, from: 'flow' | 'you') => void
+  onPrompt?: (run: string, text: string, own: boolean, from: 'flow' | 'you', who?: string) => void
   /** the plan windows as last saved, and where to save new ones */
   windows?: Windows
   onWindows?: (w: Windows) => void
@@ -60,11 +61,11 @@ export class Runner {
   }
 
   /** a turn with another agent for the run (the reviewer): its tokens count for the run, its session is not the run's */
-  async turnWith(run: string, agent: RunAgent, prompt: string, o: { ownSession?: boolean; from?: 'flow' | 'you' } = {}): Promise<{ ok: boolean; text: string }> {
+  async turnWith(run: string, agent: RunAgent, prompt: string, o: { ownSession?: boolean; from?: 'flow' | 'you'; who?: string } = {}): Promise<{ ok: boolean; text: string }> {
     const own = o.ownSession ?? agent === this.o.agentFor(run)
     // the plan's usage limit ends a turn early: it is sent again once the window resets (the scheduler waits for it)
     for (let attempt = 0; ; attempt++) {
-      const r = await this.once(run, agent, prompt, own, o.from ?? 'flow')
+      const r = await this.once(run, agent, prompt, own, o.from ?? 'flow', o.who)
       if (r.ok || r.blocked) return { ok: r.ok, text: r.text }
       if (r.limited && attempt < 3) {
         if (canStartTurn(this.ingest.windows, (this.o.now ?? Date.now)(), this.o.limits).ok) {
@@ -79,13 +80,13 @@ export class Runner {
     }
   }
 
-  private async once(run: string, agent: RunAgent, prompt: string, own: boolean, from: 'flow' | 'you'): Promise<{ ok: boolean; text: string; reason: string; limited: boolean; blocked: boolean }> {
+  private async once(run: string, agent: RunAgent, prompt: string, own: boolean, from: 'flow' | 'you', who?: string): Promise<{ ok: boolean; text: string; reason: string; limited: boolean; blocked: boolean }> {
     const release = await this.turns.acquire(run)
     let rejected = false
     try {
-      this.o.onPrompt?.(run, prompt, own, from)
+      this.o.onPrompt?.(run, prompt, own, from, who)
       for await (const e of agent.turn(prompt)) {
-        this.o.tap?.(run, e, own)
+        this.o.tap?.(run, e, own, who)
         if (e.kind === 'session' && !e.subscription) {
           await agent.close?.()
           this.o.store.append(run, 'engine', { type: 'run.blocked', reason: 'the agent session is not on your Claude subscription (an API key is set); flow stopped it before it could be billed' })
