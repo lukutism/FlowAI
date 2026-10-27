@@ -13,6 +13,8 @@ export interface RunnerOptions {
   limits: UsageLimits
   /** the agent of a run (one process per run, kept between turns) */
   agentFor: (run: string) => RunAgent
+  /** the run's agent process closed and a new one made (its session resumed) */
+  fresh?: (run: string) => Promise<RunAgent>
   now?: () => number
   sleep?: (ms: number) => Promise<void>
   /** sees every agent event as it arrives (live output); own: the run's agent, not the reviewer */
@@ -63,9 +65,13 @@ export class Runner {
   /** a turn with another agent for the run (the reviewer): its tokens count for the run, its session is not the run's */
   async turnWith(run: string, agent: RunAgent, prompt: string, o: { ownSession?: boolean; from?: 'flow' | 'you'; who?: string } = {}): Promise<{ ok: boolean; text: string }> {
     const own = o.ownSession ?? agent === this.o.agentFor(run)
+    let again = false
     // the plan's usage limit ends a turn early: it is sent again once the window resets (the scheduler waits for it)
     for (let attempt = 0; ; attempt++) {
       const r = await this.once(run, agent, prompt, own, o.from ?? 'flow', o.who)
+      // an empty answer with no model call is a background task's leftover in the process, not the reply: the
+      // prompt goes once more to a fresh process (the session resumed, without the leftover)
+      if (r.empty && own && !again && this.o.fresh) { again = true; agent = await this.o.fresh(run); continue }
       if (r.ok || r.blocked) return { ok: r.ok, text: r.text }
       if (r.limited && attempt < 3) {
         if (canStartTurn(this.ingest.windows, (this.o.now ?? Date.now)(), this.o.limits).ok) {
@@ -80,7 +86,7 @@ export class Runner {
     }
   }
 
-  private async once(run: string, agent: RunAgent, prompt: string, own: boolean, from: 'flow' | 'you', who?: string): Promise<{ ok: boolean; text: string; reason: string; limited: boolean; blocked: boolean }> {
+  private async once(run: string, agent: RunAgent, prompt: string, own: boolean, from: 'flow' | 'you', who?: string): Promise<{ ok: boolean; text: string; reason: string; limited: boolean; blocked: boolean; empty?: boolean }> {
     const release = await this.turns.acquire(run)
     let rejected = false
     try {
@@ -96,7 +102,7 @@ export class Runner {
         if (e.kind !== 'session' || own) this.ingest.agent(run, e)
         if (e.kind === 'result') {
           const limited = !e.ok && (rejected || /usage limit|rate limit|limit will reset|limit reached/i.test(e.text))
-          return { ok: e.ok, text: e.text, reason: e.reason, limited, blocked: false }
+          return { ok: e.ok, text: e.text, reason: e.reason, limited, blocked: false, empty: e.ok && e.turns === 0 && !e.text.trim() }
         }
       }
       throw new Error('the turn ended without a result')

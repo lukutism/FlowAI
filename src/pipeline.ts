@@ -113,7 +113,7 @@ export class Pipeline {
     this.browsers = new Browsers(d.browserBin ? { bin: d.browserBin } : {})
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
-      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
+      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), fresh: async run => { await this.closeAgent(run); return this.agentFor(run) }, now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
       // an ending (ask, resolve, block) belongs to the turn that called it: a failed turn's never ends a later one
       turnStarts: run => { this.ends.delete(run) },
       // a repo the agent added during its turn: its session restarts with it (brief, settings) and carries on

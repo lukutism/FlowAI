@@ -96,6 +96,14 @@ describe('a ticket to a draft PR', () => {
     expect(create[create.indexOf('--description') + 1]).toBe('## Summary\nFixes the crash.\n\nVerified: flow verify → no new findings\nNot verified: the device — no device in this test')
     expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'pr' }, pr: { number: 4711 } })
   })
+  test("an empty answer (no model call: a background task's leftover in the agent's process) is not the answer: the prompt goes again to a fresh process", async () => {
+    const empty: FakeTurn = { stream: [JSON.stringify({ type: 'system', subtype: 'init', session_id: 's-1', model: 'm', apiKeySource: 'none' }), JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 0, session_id: 's-1', usage: {} })].join('\n') }
+    const t = setup(d => [empty, turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also guard the order list? — default: no')))])
+    const run = await t.pipe.start(186278)
+    expect(t.agent.prompts[1]).toBe(t.agent.prompts[0])
+    expect(t.agents.length).toBe(2) // a fresh process, resuming the session
+    expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'plan' } })
+  })
   test('a message that leaves the plan unfinished (the agent ended its turn to wait) gets one retry before the run blocks', async () => {
     const draft = '# Plan (WORKING DRAFT)\n\n## Working state\n- waiting for the sync\n'
     const t = setup(d => [
