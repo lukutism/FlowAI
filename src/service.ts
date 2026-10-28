@@ -68,7 +68,8 @@ export type Query =
 
 /** note: what happened when it isn't what you asked for (a message queued) */
 export type Reply = { ok: true; run: string; note?: string } | { ok: false; error: string }
-export interface Notice { run: string; text: string }
+/** at: when it happened (the service keeps the last ones, for a screen opened later) */
+export interface Notice { run: string; text: string; at?: number }
 
 export interface ServiceDeps {
   store: EventStore
@@ -111,6 +112,7 @@ export class Service {
   readonly slots: Resources
 
   constructor(private d: ServiceDeps) {
+    this.notices.add(n => { this.kept = [...this.kept, { ...n, at: n.at ?? (d.now ?? Date.now)() }].slice(-50) })
     this.slots = new Resources(d.limits ?? DEFAULT_LIMITS, {
       onWait: (run, kind) => { if (d.store.state(run)) d.store.append(run, 'engine', { type: 'run.waiting', resource: WAITS_FOR[kind] }) },
       onGo: run => { if (d.store.state(run)) d.store.append(run, 'engine', { type: 'run.resumed' }) },
@@ -160,6 +162,9 @@ export class Service {
   tool(run: string, name: string, args: Record<string, unknown>) { const s = this.d.store.state(run); if (!s) throw new Error(`no run ${run}`); return this.pipeline(s.project).callTool(run, name, args) }
 
   onNotice(fn: (n: Notice) => void) { this.notices.add(fn); return () => { this.notices.delete(fn) } }
+  /** the notices of the last day, the latest 50: a screen opened later shows the ones it didn't see */
+  recentNotices(): Notice[] { const now = (this.d.now ?? Date.now)(); return this.kept.filter(n => now - (n.at ?? 0) < 86_400_000) }
+  private kept: Notice[] = []
   onWindows(fn: (w: Windows) => void) { this.windowsListeners.add(fn); return () => { this.windowsListeners.delete(fn) } }
   windows(): Windows { return this.lastWindows }
   onProjects(fn: (p: ProjectSummary[]) => void) { this.projectListeners.add(fn); return () => { this.projectListeners.delete(fn) } }

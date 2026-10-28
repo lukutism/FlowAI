@@ -1,7 +1,7 @@
 import type { RunEvent, RunState } from './run.ts'
 import { RECENT, type Change, type FileDiff, type Message, type RequestBody, type RunFile, type RunLog } from './server.ts'
 import type { Entry } from './transcript.ts'
-import type { Command, ProjectSummary, Query, Reply } from './service.ts'
+import type { Command, Notice, ProjectSummary, Query, Reply } from './service.ts'
 import type { Windows } from './usage.ts'
 import type { Snapshot } from './resources.ts'
 
@@ -14,6 +14,8 @@ export class FlowClient {
   resources?: Snapshot
   /** the latest events of all runs, oldest first (the snapshot's, then each pushed one) */
   recent: RunEvent[] = []
+  /** the service's notices of the last day, and those since */
+  notices: Notice[] = []
   projects: ProjectSummary[] = []
   connected = true
   /** a page of the service for the browser (a run's device), with the token */
@@ -151,10 +153,11 @@ export class FlowClient {
   }
 
   private take(m: Message) {
-    if (m.type === 'snapshot') { this.runs.clear(); for (const r of m.runs) this.runs.set(r.id, r); this.windows = m.windows; this.resources = m.resources; this.recent = m.recent ?? []; this.projects = m.projects ?? [] }
+    if (m.type === 'snapshot') { this.runs.clear(); for (const r of m.runs) this.runs.set(r.id, r); this.windows = m.windows; this.resources = m.resources; this.recent = m.recent ?? []; this.projects = m.projects ?? []; this.notices = m.notices ?? [] }
     else if (m.type === 'resources') this.resources = m.resources
     else if (m.type === 'event') { if (m.state) this.runs.set(m.state.id, m.state); else this.runs.delete(m.event.run); this.recent = [...this.recent, m.event].slice(-RECENT) }
     else if (m.type === 'windows') this.windows = m.windows
+    else if (m.type === 'notice') this.notices = [...this.notices, m.notice].slice(-50)
     else if (m.type === 'projects') this.projects = m.projects
     else if (m.type === 'reply') { this.pending.get(m.id)?.(m.reply); this.pending.delete(m.id) }
     for (const l of this.listeners) l(m)

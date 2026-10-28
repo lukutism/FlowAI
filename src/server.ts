@@ -89,7 +89,7 @@ export type RequestBody = Command | { cmd: 'events'; run: string } | { cmd: 'fil
 export type Request = RequestBody & { id: number }
 
 export type Message =
-  | { type: 'snapshot'; runs: RunState[]; windows: Windows; resources?: Snapshot; recent?: RunEvent[]; projects?: ProjectSummary[] }
+  | { type: 'snapshot'; runs: RunState[]; windows: Windows; resources?: Snapshot; recent?: RunEvent[]; projects?: ProjectSummary[]; notices?: Notice[] }
   /** not sent: the client's own word that the service went away */
   | { type: 'closed' }
   | { type: 'resources'; resources: Snapshot }
@@ -101,7 +101,7 @@ export type Message =
   | { type: 'projects'; projects: ProjectSummary[] }
   | { type: 'reply'; id: number; reply: Reply | { ok: true; events: RunEvent[] } | { ok: true; text: string } | { ok: true; entries: Entry[] } | { ok: true; lines: string[] } | { ok: true; changes: Change[] } | { ok: true; diffs: FileDiff[] } | { ok: true; data: unknown } | { ok: false; error: string } }
 
-type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent' | 'query' | 'onProjects'> & Partial<Pick<Service, 'tools' | 'tool'>>
+type ServiceApi = Pick<Service, 'dispatch' | 'windows' | 'onNotice' | 'onWindows' | 'resources' | 'onResources' | 'projects' | 'onAgent' | 'query' | 'onProjects'> & Partial<Pick<Service, 'tools' | 'tool' | 'recentNotices'>>
 
 /** how many of the latest events the screen gets on connect (its Activity) */
 export const RECENT = 300
@@ -142,7 +142,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
           return
         }
         ws.subscribe('all')
-        ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows(), resources: o.service.resources(), recent: o.store.recent(RECENT), projects: o.service.projects() } satisfies Message))
+        ws.send(JSON.stringify({ type: 'snapshot', runs: o.store.runs(), windows: o.service.windows(), resources: o.service.resources(), recent: o.store.recent(RECENT), projects: o.service.projects(), notices: o.service.recentNotices?.() ?? [] } satisfies Message))
       },
       close(ws) { ws.data.closed = true; ws.data.stop?.() },
       async message(ws, raw) {
@@ -182,7 +182,7 @@ export function serve(o: { service: ServiceApi; store: EventStore; dataDir: stri
   const publish = (m: Message) => server.publish('all', JSON.stringify(m))
   const offs = [
     o.store.subscribe(e => publish({ type: 'event', event: e, state: o.store.state(e.run) ?? null })),
-    o.service.onNotice(n => publish({ type: 'notice', notice: n })),
+    o.service.onNotice(n => publish({ type: 'notice', notice: { ...n, at: n.at ?? Date.now() } })),
     o.service.onWindows(w => publish({ type: 'windows', windows: w })),
     o.service.onResources(r => publish({ type: 'resources', resources: r })),
     o.service.onAgent((run, entry) => publish({ type: 'agent', run, entry })),

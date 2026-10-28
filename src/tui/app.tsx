@@ -6,7 +6,7 @@ import { NewRunForm, type FormApi } from './form.tsx'
 import { ProjectSettings } from './settings.tsx'
 import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
-import type { Command, ProjectSummary, Reply } from '../service.ts'
+import type { Command, Notice, ProjectSummary, Reply } from '../service.ts'
 import type { Windows } from '../usage.ts'
 import { WAITS_FOR, type Snapshot } from '../resources.ts'
 import {
@@ -17,13 +17,15 @@ import {
 /** What the screen needs from the service connection (FlowClient implements it). */
 export interface FlowApi extends DetailApi, FormApi {
   runs: Map<string, RunState>
+  /** the service's notices of the last day (a screen opened later sees what it missed) */
+  notices?: Notice[]
   windows: Windows
   resources?: Snapshot
   /** the latest events of all runs, oldest first */
   recent?: RunEvent[]
   projects?: ProjectSummary[]
   connected?: boolean
-  listen(fn: (m: { type: string; notice?: { run: string; text: string }; run?: string; entry?: import('../transcript.ts').Entry }) => void): () => void
+  listen(fn: (m: { type: string; notice?: { run: string; text: string; at?: number }; run?: string; entry?: import('../transcript.ts').Entry }) => void): () => void
   send(c: Command): Promise<Reply>
   /** a service page for the browser; opened with the system's opener */
   pageUrl?(path: string): string
@@ -55,6 +57,8 @@ type Mode =
   | { kind: 'detail'; run: string }
   | { kind: 'filter'; text: string }
   | { kind: 'projects'; index: number }
+  // the notices of the last day; closing marks them seen
+  | { kind: 'notices'; from: Mode }
 
 
 /** an entry of the command palette: what it says, and what choosing it does */
@@ -65,7 +69,11 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
   const [, setTick] = useState(0)
   const [selected, setSelected] = useState(0)
   const [mode, setMode] = useState<Mode>({ kind: 'list' })
-  const [notice, setNotice] = useState<string | null>(null)
+  // what you just did (a line of yours), and the service's notices: those not yet seen stay until you have seen them
+  const [local, setLocal] = useState<{ text: string; at: number } | null>(null)
+  const setNotice = (text: string | null) => setLocal(text ? { text, at: now() } : null)
+  const [inbox, setInbox] = useState<Notice[]>(() => api.notices ?? [])
+  const [seenAt, setSeenAt] = useState(0)
   const detailKeys = useRef<DetailKeys | null>(null)
   const formKeys = useRef<DetailKeys | null>(null)
   const settingsKeys = useRef<DetailKeys | null>(null)
@@ -92,8 +100,9 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
 
   useEffect(() => api.listen(m => {
     // a notice is one plain line on the screen (an error may carry a hook's terminal output: colours, boxes, lines)
-    if (m.type === 'notice' && m.notice) { setNotice(`${m.notice.run}: ${m.notice.text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/[\u2800-\u28ff]/g, '').split('\n').map(l => l.trim()).filter(l => l && !/^[─━-]+$/.test(l)).join(' · ').slice(0, 300)}`); const run = m.notice.run; setRemoving(x => (x.has(run) ? new Set([...x].filter(y => y !== run)) : x)) }
+    if (m.type === 'notice' && m.notice) { const text = (m.notice.text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/[\u2800-\u28ff]/g, '').split('\n').map(l => l.trim()).filter(l => l && !/^[─━-]+$/.test(l)).join(' · ').slice(0, 300)); setInbox(x => [...x, { run: m.notice!.run, text, at: m.notice!.at ?? now() }].slice(-50)); const run = m.notice.run; setRemoving(x => (x.has(run) ? new Set([...x].filter(y => y !== run)) : x)) }
     if (m.type === 'closed') setNotice('the flow service stopped: start flow again')
+    if (m.type === 'snapshot') setInbox(api.notices ?? [])
     setTick(t => t + 1)
   }), [api])
   // the clock moves even when nothing happens (elapsed times, deadlines)
@@ -231,6 +240,9 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (name === 'return') return enter(m.text)
       if (typed) edit(x => x + typed)
     }
+    // the notices: closing them marks them seen
+    if (mode.kind === 'notices') { if (name === 'escape' || name === 'return' || typed === '!' || typed === 'q') { setSeenAt(now()); setMode(mode.from) } return }
+    if (typed === '!' && (mode.kind === 'list' || mode.kind === 'detail')) return setMode({ kind: 'notices', from: mode })
     if (mode.kind === 'projects') {
       if (name === 'down' || typed === 'j') return setMode({ kind: 'projects', index: Math.min(mode.index + 1, choices.length - 1) })
       if (name === 'up' || typed === 'k') return setMode({ kind: 'projects', index: Math.max(mode.index - 1, 0) })
@@ -359,7 +371,8 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
 
   const bars = api.resources ? resourceBars(api.resources) : []
   const inline = mode.kind === 'approve' || mode.kind === 'ship' || mode.kind === 'remove' ? mode.run : undefined
-  const message = notice ?? (L.message ? lastMessage(recent, t, id => api.runs.get(id)) : '')
+  const unseen = inbox.filter(n => (n.at ?? 0) > seenAt && t - (n.at ?? 0) < 86_400_000), latest = unseen.at(-1)
+  const message = latest && (!local || (latest.at ?? 0) >= local.at) ? `✕ ${latest.run}: ${latest.text}` : local?.text ?? (L.message ? lastMessage(recent, t, id => api.runs.get(id)) : '')
   if (mode.kind === 'settings') return (
     <box flexDirection="column" paddingLeft={1} paddingRight={1}>
       <Tabs tab={tab} names={L.tabNames} filter={filter} connected={api.connected !== false} onTab={i => handle('', String(i + 1))} onProject={() => {}} />
@@ -386,6 +399,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
         <span fg={C.accent}>● </span><span fg={C.text}>{h.active}</span><span fg={C.muted}> active   </span>
         <span fg={C.warning}>▲ </span><span fg={C.text}>{h.needYou}</span><span fg={C.muted}> need you   </span>
         <span fg={C.secondary}>◌ </span><span fg={C.text}>{h.waiting}</span><span fg={C.muted}> waiting   </span>
+        {unseen.length ? <span fg={C.danger}>{`✕ ${unseen.length} notice${unseen.length === 1 ? '' : 's'} (!)   `}</span> : null}
         {bars.filter(b => b.kind !== 'agents').map(b => <span key={b.kind} fg={b.full ? C.warning : C.muted}>{`${b.label.toLowerCase()} `}<span fg={C.text}>{`${b.holders.length}/${b.used.length}`}</span>{'   '}</span>)}
         <span fg={C.muted}>5h </span><span fg={C.text}>{h.fiveHour}</span><span fg={C.muted}>{h.fiveHourReset && L.tabNames ? ` (resets ${h.fiveHourReset})` : ''}   week </span><span fg={C.text}>{h.week}</span>
       </text>
@@ -414,6 +428,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       <text> </text>
       {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} fixed={/project:(\S+)/.test(filter)} bind={k => { formKeys.current = k }} bindPaste={f => { pasteTo.current = f }}
         onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
+      {mode.kind === 'notices' ? <Notices items={inbox.filter(n => t - (n.at ?? 0) < 86_400_000)} width={width} /> : null}
       {mode.kind === 'projects' ? <ProjectPicker choices={choices} index={mode.index} current={/project:(\S+)/.exec(filter)?.[1] ?? ''} onPick={pickProject} /> : null}
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
       <Bar mode={mode} run={mode.kind === 'message' ? api.runs.get(mode.run) : undefined} message={message} compact={!L.tabNames} tab={tab} onKey={handle} {...(state ? { can: can(state) } : {})} />
@@ -591,6 +606,18 @@ function Bottom({ bars, waiting, feed, run, width, runs, windows, now }: { bars:
 
 function ResourcesLine({ bars }: { bars: ReturnType<typeof resourceBars> }) {
   return <text>{bars.map(b => <span key={b.kind}><span fg={C.muted}>{`${b.label} `}</span><span fg={b.full ? C.warning : C.text}>{`${b.holders.length}/${b.used.length}`}</span><span fg={C.muted}>{b.waiting.length ? ` (${b.waiting.length} waiting)` : ''}{'   '}</span></span>)}</text>
+}
+
+/** the service's notices of the last day, newest first */
+function Notices({ items, width }: { items: Notice[]; width: number }) {
+  const W = Math.min(110, width - 4)
+  return (
+    <box position="absolute" top={3} left={Math.max(1, Math.floor((width - W) / 2))} width={W} flexDirection="column" border borderStyle="rounded" borderColor={C.danger} backgroundColor={C.panel} zIndex={40} paddingLeft={1} paddingRight={1}>
+      <text><strong>Notices</strong><span fg={C.muted}>{'  the last day, newest first · esc closes'}</span></text>
+      {items.length ? [...items].reverse().slice(0, 20).map((n, i) => <text key={i}><span fg={C.muted}>{`${hhmm(n.at ?? 0)}  `}</span><span fg={C.secondary}>{`${n.run}  `}</span><span fg={C.text}>{n.text.slice(0, W * 2)}</span></text>)
+        : <text fg={C.muted}>No notices.</text>}
+    </box>
+  )
 }
 
 function ProjectPicker({ choices, index, current, onPick }: { choices: { key: string; name: string; count: number }[]; index: number; current: string; onPick: (key: string) => void }) {

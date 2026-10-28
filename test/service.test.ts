@@ -314,3 +314,15 @@ describe('Service: run devices', () => {
     expect(asked).toEqual(['ex-1'])
   })
 })
+
+describe('Service: notices kept for a screen opened later', () => {
+  test('the last day of them, with when each happened', async () => {
+    const t = setup(() => [])
+    t.store.append('ex-7', 'human', { type: 'run.created', ticket: '#7', title: 'x', project: 'ex', base: 'origin/develop' })
+    t.store.append('ex-7', 'engine', { type: 'setup.done' })
+    t.store.append('ex-7', 'engine', { type: 'plan.submitted', summary: 'p', questions: [] })
+    t.svc.dispatch({ cmd: 'message', run: 'ex-7', text: 'go on' }) // no run.json: the step throws, a notice says why
+    await t.svc.idle()
+    expect(t.svc.recentNotices()).toEqual([expect.objectContaining({ run: 'ex-7', text: expect.stringMatching(/run\.json|ENOENT/), at: expect.any(Number) })])
+  })
+})

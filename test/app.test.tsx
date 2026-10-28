@@ -145,6 +145,30 @@ describe('Runs screen', () => {
       expect(t.f.sent).toEqual([])
     } finally { t.s.renderer.destroy() }
   })
+  test('a notice stays until you have seen it: counted in the header, the latest at the bottom over later messages of yours; ! lists them, closing marks them seen', async () => {
+    const t = await screen()
+    try {
+      await act(async () => { t.f.push({ type: 'notice', notice: { run: 'fso-104', text: 'fso-104 has work not shipped (mobile: a.ts); remove it with force to drop it', at: NOW } as never }) })
+      await t.press('j', 'j') // moving around doesn't make it go
+      const f = await t.frame()
+      expect(f).toContain('✕ 1 notice (!)')
+      expect(f).toContain('fso-104: fso-104 has work not shipped')
+      const l = await t.press('!')
+      expect(l).toMatch(/Notices[\s\S]*fso-104 +fso-104 has work not shipped/)
+      const g = await t.press('esc')
+      expect(g).not.toContain('✕ 1 notice')
+      expect(g).not.toContain('has work not shipped')
+    } finally { t.s.renderer.destroy() }
+  })
+  test("notices from while the screen was closed come with the service's state", async () => {
+    const f = api()
+    f.a.notices = [{ run: 'fso-103', text: 'the device could not be booted again', at: NOW - 3600_000 }]
+    const s = await testRender(<App api={f.a} now={() => NOW} onQuit={() => {}} />, { width: 130, height: 34 })
+    try {
+      await act(async () => { await Bun.sleep(1) }); await s.renderOnce()
+      expect(s.captureCharFrame()).toContain('✕ 1 notice (!)')
+    } finally { s.renderer.destroy() }
+  })
   test('a notice from the service shows at the bottom', async () => {
     const t = await screen()
     try {
