@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeAgent, type FakeTurn } from '../src/agent/fake.ts'
@@ -32,10 +32,11 @@ function setup(turns: (d: { root: string; data: string }) => FakeTurn[], azMore?
   let now = Date.parse('2026-10-25T10:00:00Z')
   const store = new EventStore(':memory:', () => now)
   const agent = new FakeAgent(turns({ root, data }))
-  const svc = new Service({ store, projects: { ex: project }, az, dataDir: data, gitEnv: env, now: () => now, makeAgent: () => agent })
+  const deps = { store, projects: { ex: project }, az, dataDir: data, gitEnv: env, now: () => now, makeAgent: () => agent }
+  const svc = new Service(deps)
   const notices: string[] = []
   svc.onNotice(n => notices.push(`${n.run}: ${n.text}`))
-  return { svc, store, notices, data, agent, at: (iso: string) => { now = Date.parse(iso) } }
+  return { svc, store, notices, data, agent, deps, at: (iso: string) => { now = Date.parse(iso) } }
 }
 const planWith = (data: string, q: string) => () => { mkdirSync(join(data, 'runs', 'ex-1'), { recursive: true }); writeFileSync(join(data, 'runs', 'ex-1', 'plan.md'), fullPlan(q)) }
 
@@ -324,5 +325,37 @@ describe('Service: notices kept for a screen opened later', () => {
     t.svc.dispatch({ cmd: 'message', run: 'ex-7', text: 'go on' }) // no run.json: the step throws, a notice says why
     await t.svc.idle()
     expect(t.svc.recentNotices()).toEqual([expect.objectContaining({ run: 'ex-7', text: expect.stringMatching(/run\.json|ENOENT/), at: expect.any(Number) })])
+  })
+})
+
+describe('Service: a release drains it first', () => {
+  test('a turn waiting for the usage window is parked at once (the release does not wait for the reset)', async () => {
+    const t = setup(d => [turn(planWith(d.data, 'none — clear'))])
+    mkdirSync(t.data, { recursive: true })
+    writeFileSync(join(t.data, 'usage.json'), JSON.stringify({ week: { utilization: 1, resetsAt: Date.parse('2026-10-26T08:00:00Z') / 1000, status: 'rejected' } }))
+    const svc = new Service(t.deps)
+    svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 })
+    for (let i = 0; i < 50 && t.store.state('ex-1')?.status !== 'paused'; i++) await Bun.sleep(20)
+    expect(t.store.state('ex-1')).toMatchObject({ status: 'paused' })
+    await Promise.race([svc.drain(), Bun.sleep(2000).then(() => { throw new Error('the drain waited for the usage window') })])
+    expect(existsSync(join(t.data, 'runs', 'ex-1', 'next-prompt.json'))).toBe(true)
+  })
+  test('turns running finish; the next step keeps its prompt instead of starting; the next service sends it and the run goes on', async () => {
+    const t = setup(d => [turn(planWith(d.data, '- Q1: x? — default: y')), turn(() => writeFileSync(join(d.root, 'wt', '1', 'mobile', 'a.txt'), 'b\n'))])
+    t.svc.dispatch({ cmd: 'start', project: 'ex', ticket: 1 }); await t.svc.idle()
+    const drained = t.svc.drain()
+    expect(t.svc.dispatch({ cmd: 'approve', run: 'ex-1' })).toMatchObject({ ok: true }) // its build turn would start now
+    await drained
+    const kept = join(t.data, 'runs', 'ex-1', 'next-prompt.json')
+    expect(JSON.parse(readFileSync(kept, 'utf8')).prompt).toMatch(/approved/i)
+    expect(t.store.state('ex-1')).toMatchObject({ stage: 'build', status: 'running' }) // not blocked: nothing broke
+    expect(t.agent.prompts).toHaveLength(1)
+    const next = new Service(t.deps)
+    await next.recover(); await next.idle()
+    expect(existsSync(kept)).toBe(false)
+    expect(t.agent.prompts).toHaveLength(2)
+    expect(t.agent.prompts[1]).toMatch(/approved/i)
+    expect(t.store.state('ex-1')!.stage).not.toBe('build')
+    expect(t.store.events('ex-1').some(e => e.type === 'run.blocked')).toBe(false)
   })
 })

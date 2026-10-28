@@ -172,6 +172,8 @@ async function serveCmd() {
   // could take hours, and the next service would start beside this one
   const stop = async () => { clearInterval(tick); srv.stop(); await Promise.race([svc.shutdown(), Bun.sleep(5000)]); withdraw(DATA); unlockService(DATA); process.exit(0) }
   process.on('SIGINT', stop); process.on('SIGTERM', stop)
+  // a release: the turns running finish, the ones about to start keep their prompt for the next service; then go
+  process.on('SIGUSR2', () => { console.log('draining for a release: running turns finish, no new ones start'); void svc.drain().then(stop) })
   await new Promise(() => {})
 }
 

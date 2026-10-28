@@ -34,18 +34,22 @@ mkdir -p "$(dirname "$bin")"
 cp dist/flow "$bin.new" && mv -f "$bin.new" "$bin"
 echo "installed $bin ($version)"
 
-# a restart cuts off what runs are doing (a setup is done again, an agent is told to carry on, but its turn's work in
-# flight is lost): the service restarts once no run is in the middle of a step, or after FLOW_RELEASE_WAIT seconds
-waited=0
-while "$bin" status 2>/dev/null | grep -q ' · running' && [ "$waited" -lt "${FLOW_RELEASE_WAIT:-900}" ]; do
-  [ "$waited" = 0 ] && echo "runs are mid-step: the service restarts once they are between steps (at most ${FLOW_RELEASE_WAIT:-900}s)"
-  sleep 10; waited=$((waited + 10))
-done
-# the service on the release (open screens reconnect by themselves); a run's next turn uses the release's guard and tools
+# the old service drains first (SIGUSR2): turns running finish, a turn about to start keeps its prompt for the new
+# service, and it exits once no step is in flight; nothing is cut off. After FLOW_RELEASE_WAIT seconds (default an
+# hour) it is stopped anyway, as before: its runs are then told to carry on
+old=""
 if [ -f "$data/service.json" ]; then
-  pid="$(sed -n 's/.*"pid": *\([0-9]*\).*/\1/p' "$data/service.json")"
-  [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
-  for _ in 1 2 3 4 5 6 7 8 9 10; do [ -f "$data/service.json" ] || break; sleep 0.5; done
+  old="$(sed -n 's/.*"pid": *\([0-9]*\).*/\1/p' "$data/service.json")"
+  if [ -n "$old" ] && kill -USR2 "$old" 2>/dev/null; then
+    echo "the service drains: running turns finish first (at most ${FLOW_RELEASE_WAIT:-3600}s)"
+    waited=0
+    while kill -0 "$old" 2>/dev/null && [ "$waited" -lt "${FLOW_RELEASE_WAIT:-3600}" ]; do sleep 5; waited=$((waited + 5)); done
+  fi
+fi
+# only the old service is stopped (if it outlasted the wait): one an open screen started since is already the release's
+if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+  kill "$old" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$old" 2>/dev/null || break; sleep 0.5; done
 fi
 # an open screen starts a service as soon as the old one stops: it may have won with its own; the release takes over
 for _ in 1 2 3; do

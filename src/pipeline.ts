@@ -119,7 +119,7 @@ export class Pipeline {
     this.browsers = new Browsers(d.browserBin ? { bin: d.browserBin } : {})
     const usage = join(d.dataDir, 'usage.json')
     this.runner = new Runner({
-      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, agentFor: run => this.agentFor(run), fresh: async run => { await this.closeAgent(run); return this.agentFor(run) }, now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
+      store: d.store, maxParallel: d.project.agent.maxParallel, limits: d.project.usage, park: (run, prompt, from) => writeFileSync(join(this.runDir(run), 'next-prompt.json'), JSON.stringify({ prompt, from })), agentFor: run => this.agentFor(run), fresh: async run => { await this.closeAgent(run); return this.agentFor(run) }, now: d.now, tap: d.tap, onPrompt: d.onPrompt, queued: run => this.takeQueued(run),
       // an ending (ask, resolve, block) belongs to the turn that called it: a failed turn's never ends a later one
       turnStarts: run => { this.ends.delete(run) },
       // a repo the agent added during its turn: its session restarts with it (brief, settings) and carries on
@@ -669,7 +669,20 @@ export class Pipeline {
   /** a message to the agent, from the human (or from flow itself: the same, by the engine); the run goes on from where it stopped */
   async message(run: string, text: string, from: 'human' | 'flow' = 'human') {
     this.d.store.append(run, from === 'flow' ? 'engine' : 'human', { type: 'human.message', text })
-    const r = await this.say(run, from === 'flow' ? text : fromHuman(text), from === 'flow' ? 'flow' : 'you')
+    await this.afterTurn(run, await this.say(run, from === 'flow' ? text : fromHuman(text), from === 'flow' ? 'flow' : 'you'))
+  }
+
+  /** the next turn a release kept from starting (its prompt saved as the old service drained): sent now, the run goes on */
+  async resume(run: string) {
+    const f = join(this.runDir(run), 'next-prompt.json')
+    const { prompt, from } = JSON.parse(readFileSync(f, 'utf8')) as { prompt: string; from: 'flow' | 'you' }
+    rmSync(f, { force: true })
+    this.d.store.append(run, 'engine', { type: 'run.note', text: 'flow was released between two steps: the next one is sent now' })
+    await this.afterTurn(run, await this.runner.turn(run, prompt, from))
+  }
+
+  /** after a turn that wasn't a step's own (a message, a resumed one): the run goes on from where it is */
+  private async afterTurn(run: string, r: { ok: boolean; text: string }) {
     if (!r.ok || this.ended(run, r.text)) return
     const s = this.must(run)
     if (s.status !== 'running') return // the agent asked something back, or the run was done or failed already
@@ -1065,6 +1078,9 @@ export class Pipeline {
   async stopTurn(run: string) { await this.agents.get(run)?.stop?.() }
 
   /** the run's agent process closed (it holds about 2 GB); its next turn starts one again on the same session */
+  /** no new agent turns: the running ones finish, the ones about to start keep their prompt (a release) */
+  drain() { this.runner.drain() }
+
   async closeAgent(run: string) { const a = this.agents.get(run); this.agents.delete(run); await a?.close?.() }
 
   async close() { await Promise.all([...this.agents.values()].map(a => a.close?.())) }

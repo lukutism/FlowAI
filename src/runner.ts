@@ -7,6 +7,9 @@ import { canStartTurn, type UsageLimits, type Windows } from './usage.ts'
 
 export type RunAgent = Agent & { close?: () => Promise<void>; stop?: () => Promise<void> }
 
+/** a turn not started because flow is draining for a release: the step ends here, its prompt kept for the next service */
+export class Drained extends Error { constructor() { super('flow is restarting for a release: the next turn waits for it') } }
+
 export interface RunnerOptions {
   store: EventStore
   maxParallel: number
@@ -31,6 +34,8 @@ export interface RunnerOptions {
   queued?: (run: string) => string[]
   /** told as each of the run's own turns starts */
   turnStarts?: (run: string) => void
+  /** a turn of the run's own agent not started while draining: its prompt, for the next service to send */
+  park?: (run: string, prompt: string, from: 'flow' | 'you') => void
   /** after a turn of the run's own agent: a prompt to carry on with at once (its session restarted meanwhile) */
   afterTurn?: (run: string) => Promise<string | undefined>
 }
@@ -86,8 +91,18 @@ export class Runner {
     }
   }
 
+  /** no new turns from now on: the ones running finish, the ones about to start are parked */
+  drain() { this.draining = true; this.drainNow() }
+  private draining = false
+  private drainNow: () => void = () => {}
+  private drainStarts = new Promise<void>(r => { this.drainNow = r })
+
   private async once(run: string, agent: RunAgent, prompt: string, own: boolean, from: 'flow' | 'you', who?: string): Promise<{ ok: boolean; text: string; reason: string; limited: boolean; blocked: boolean; empty?: boolean }> {
-    const release = await this.turns.acquire(run)
+    // draining for a release: turns running finish; one about to start keeps its prompt and its step ends
+    const parked = () => { if (own) this.o.park?.(run, prompt, from); return new Drained() }
+    if (this.draining) throw parked()
+    const release = await Promise.race([this.turns.acquire(run), this.drainStarts.then(() => null)])
+    if (!release) throw parked()
     let rejected = false
     // removed (or ended) while the turn waited for its slot or the usage window: nothing to do
     const now = this.o.store.state(run)

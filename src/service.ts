@@ -1,4 +1,5 @@
 import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { Drained } from './runner.ts'
 import { discoverAgentTools, type AgentTools } from './agenttools.ts'
 import { join } from 'node:path'
 import type { AgentEvent } from './agent/stream.ts'
@@ -128,12 +129,14 @@ export class Service {
    * count against the device slots again.
    */
   async recover() {
-    const carry: { id: string; project: string; stage: string; put: string[] }[] = [], redo: typeof carry = [], replan: typeof carry = []
+    const carry: { id: string; project: string; stage: string; put: string[] }[] = [], redo: typeof carry = [], replan: typeof carry = [], resume: typeof carry = []
     for (const s of this.d.store.runs()) {
       if (!['running', 'waiting', 'paused'].includes(s.status)) continue
       // a change verify had set aside comes back first, or is named
       const put = s.stage === 'verify' && this.d.projects[s.project] ? await this.pipeline(s.project).restoreStashes(s.id).catch(() => []) : []
       const r = { id: s.id, project: s.project, stage: s.stage, put }
+      // its next turn kept by the old service's drain: sent as it was, the run goes on
+      if (this.d.projects[s.project] && existsSync(join(this.d.dataDir, 'runs', s.id, 'next-prompt.json'))) { resume.push(r); continue }
       // a ship waits for you; a setup is done again from the start; a plan with no session yet gets its step again;
       // otherwise the agent's session resumes where it was: it is told to carry on (the run goes on, not blocked)
       if (s.stage === 'ship' || !this.d.projects[s.project]) this.stopped(s.id, `flow's service restarted during ${s.stage}${put.length ? ` (${put.join('; ')})` : ''}`)
@@ -142,6 +145,7 @@ export class Service {
       else carry.push(r)
     }
     for (const key of Object.keys(this.d.projects)) this.pipeline(key).adoptDevices()
+    for (const s of resume) this.act(s.id, () => this.pipeline(s.project).resume(s.id))
     for (const s of redo) this.act(s.id, () => this.pipeline(s.project).redoSetup(s.id))
     for (const s of replan) this.act(s.id, () => this.pipeline(s.project).restartPlan(s.id))
     for (const s of carry) this.act(s.id, () => this.pipeline(s.project).message(s.id, `flow restarted (a new release of flow) while you were working on ${s.stage === 'plan' ? 'the plan' : 'this step'}: your session is resumed${s.put.length ? ` (${s.put.join('; ')})` : ''}. Carry on where you left off and end the turn the usual way.`, 'flow'))
@@ -232,6 +236,7 @@ export class Service {
         onPrompt: (run, text, own, from, who) => this.record(run, { kind: 'prompt', from, text, at: (this.d.now ?? Date.now)(), own, ...(who ? { who } : {}) }),
         onWindows: w => { this.lastWindows = w; for (const l of this.windowsListeners) l(w) } })
       if (!Object.keys(this.lastWindows).length) this.lastWindows = p.runner.ingest.windows
+      if (this.draining) p.drain()
       this.pipes.set(project, p)
     }
     return p
@@ -306,6 +311,7 @@ export class Service {
 
   /** plans past their deadline get their defaults (held ones never); draft PRs are looked at now and then */
   tick() {
+    if (this.draining) return // a release: nothing new starts
     const now = (this.d.now ?? Date.now)()
     for (const s of this.d.store.runs()) {
       if (s.needs?.kind === 'pr' && !this.busy.has(s.id) && now - (this.prChecked.get(s.id) ?? 0) >= PR_CHECK_MS) {
@@ -349,6 +355,18 @@ export class Service {
   private reviving = new Set<string>()
   private toolsSeen = new Map<string, { at: number; tools: AgentTools }>()
 
+  /**
+   * A release: no new agent turns from now on. Turns running finish; a step about to start one keeps its prompt
+   * (next-prompt.json in the run's folder) and ends; this resolves once no step is in flight, so the service can go
+   * and the next one sends each kept turn (recover).
+   */
+  async drain() {
+    this.draining = true
+    for (const p of this.pipes.values()) p.drain()
+    await this.idle()
+  }
+  private draining = false
+
   async idle() { while (this.busy.size) await Promise.all(this.busy.values()) }
 
   async close() { await this.idle(); await this.shutdown() }
@@ -360,6 +378,8 @@ export class Service {
     if (this.busy.has(run)) throw new Error(`${run} is busy: wait for its current step to end`)
     const p = (async () => {
       try { await fn() } catch (e) {
+        // parked by a release's drain: nothing broke, the next service sends its turn
+        if (e instanceof Drained) return
         // a refusal (not ready to ship) leaves the run as it was; a step that broke off mid-way blocks it
         this.stopped(run, (e as Error).message)
         for (const l of this.notices) l({ run, text: (e as Error).message })
