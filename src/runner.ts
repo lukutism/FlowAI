@@ -91,6 +91,10 @@ export class Runner {
     }
   }
 
+  /** whether the run has a turn running now (its agent's, or a reviewer's) */
+  turning(run: string) { return this.live.has(run) }
+  private live = new Set<string>()
+
   /** no new turns from now on: the ones running finish, the ones about to start are parked */
   drain() { this.draining = true; this.drainNow() }
   private draining = false
@@ -107,6 +111,7 @@ export class Runner {
     // removed (or ended) while the turn waited for its slot or the usage window: nothing to do
     const now = this.o.store.state(run)
     if (!now || now.status === 'done' || now.status === 'failed') { release(); return { ok: false, text: '', reason: 'gone', limited: false, blocked: true } }
+    this.live.add(run)
     try {
       this.o.onPrompt?.(run, prompt, own, from, who)
       for await (const e of agent.turn(prompt)) {
@@ -127,6 +132,6 @@ export class Runner {
     } catch (err) {
       this.o.store.append(run, 'engine', { type: 'run.blocked', reason: `agent stopped: ${(err as Error).message}` })
       return { ok: false, text: '', reason: 'error', limited: false, blocked: true }
-    } finally { release() }
+    } finally { this.live.delete(run); release() }
   }
 }

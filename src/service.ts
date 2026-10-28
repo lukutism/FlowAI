@@ -14,7 +14,9 @@ import type { Windows } from './usage.ts'
 
 export type Command =
   /** note: added to the agent's brief; logins: test logins, kept in a file only you can read */
-  | { cmd: 'start'; project: string; ticket: number | string; task?: string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; note?: string; logins?: string; vars?: Record<string, string>; headless?: boolean }
+  | { cmd: 'start'; project: string; ticket: number | string; task?: string; base?: string; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; effort?: string; note?: string; logins?: string; vars?: Record<string, string>; headless?: boolean }
+  /** the run's model and effort from its next turn on (none: your own setting); works while the run is busy */
+  | { cmd: 'setAgent'; run: string; model?: string; effort?: string }
   | { cmd: 'approve'; run: string; answers?: Record<string, string> }
   | { cmd: 'message'; run: string; text: string }
   | { cmd: 'ship'; run: string }
@@ -252,7 +254,7 @@ export class Service {
         if (this.d.store.state(run)) throw new Error(`run ${run} exists already`)
         if (c.device && !this.d.projects[c.project]!.devices?.[c.device]) throw new Error(`project ${c.project} has no devices configured for ${c.device} (devices.${c.device} in its config)`)
         this.starting.set(run, c.project)
-        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, task: c.task, note: c.note, logins: c.logins, ...(c.vars ? { vars: c.vars } : {}), ...(c.headless !== undefined ? { headless: c.headless } : {}) }) })
+        this.act(run, async () => { await p.start(c.ticket, { base: c.base, kind: c.kind, repos: c.repos, device: c.device, patch: c.patch, devServer: c.devServer, model: c.model, effort: c.effort, task: c.task, note: c.note, logins: c.logins, ...(c.vars ? { vars: c.vars } : {}), ...(c.headless !== undefined ? { headless: c.headless } : {}) }) })
         return { ok: true, run }
       }
       if (c.cmd === 'stop') {
@@ -266,6 +268,14 @@ export class Service {
       if (c.cmd === 'message' && this.busy.has(c.run) && owner) {
         this.pipeline(owner).queueMessage(c.run, c.text)
         return { ok: true, run: c.run, note: `queued for ${c.run}: the agent gets it with its next turn` }
+      }
+      // the agent's model and effort: taken while the run works too (its next turn has them)
+      if (c.cmd === 'setAgent') {
+        const st = this.d.store.state(c.run)
+        if (!st) throw new Error(`no run ${c.run}`)
+        void this.pipeline(st.project).setAgent(c.run, { ...(c.model ? { model: c.model } : {}), ...(c.effort ? { effort: c.effort } : {}) })
+          .catch(e => { for (const l of this.notices) l({ run: c.run, text: (e as Error).message }) })
+        return { ok: true, run: c.run }
       }
       // a run busy for a long while (a turn waiting hours for the usage window) is removed now, not refused: its agent
       // stopped first; the step that waited finds the run gone

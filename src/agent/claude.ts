@@ -11,6 +11,8 @@ export interface ClaudeOptions {
   resume?: string
   /** a model for this run; default: the user's own setting */
   model?: string
+  /** how hard it thinks (low … max); default: the user's own setting */
+  effort?: string
   /** plan: reads, never edits (the reviewer); default: the user's own permission mode */
   permissionMode?: string
   /** the run's brief, kept through compactions (unlike a message) */
@@ -83,7 +85,7 @@ export class ClaudeAgent implements Agent {
 
   private start() {
     if (this.proc) return this.proc
-    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none', '--settings', this.o.settings, ...(this.o.resume ? ['--resume', this.o.resume] : []), ...(this.o.model ? ['--model', this.o.model] : []), ...(this.o.permissionMode ? ['--permission-mode', this.o.permissionMode] : []), ...(this.o.appendSystemPrompt ? ['--append-system-prompt', this.o.appendSystemPrompt] : []), ...(this.o.mcpConfig ? ['--mcp-config', this.o.mcpConfig] : []), ...(this.o.maxTurns ? ['--max-turns', String(this.o.maxTurns)] : [])]
+    const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--permission-prompts', 'none', '--settings', this.o.settings, ...(this.o.resume ? ['--resume', this.o.resume] : []), ...(this.o.model ? ['--model', this.o.model] : []), ...(this.o.effort ? ['--effort', this.o.effort] : []), ...(this.o.permissionMode ? ['--permission-mode', this.o.permissionMode] : []), ...(this.o.appendSystemPrompt ? ['--append-system-prompt', this.o.appendSystemPrompt] : []), ...(this.o.mcpConfig ? ['--mcp-config', this.o.mcpConfig] : []), ...(this.o.maxTurns ? ['--max-turns', String(this.o.maxTurns)] : [])]
     const env: Record<string, string | undefined> = { ...process.env, ...this.o.env }
     delete env.CLAUDECODE // flow may itself run inside a Claude session; the agent is not nested in it
     const proc = Bun.spawn([...(this.o.bin ?? ['claude']), ...args], { cwd: this.o.cwd, env, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' })

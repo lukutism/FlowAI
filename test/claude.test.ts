@@ -44,6 +44,13 @@ describe('ClaudeAgent: one claude process per run, one message per turn', () => 
     await all(a.turn('x'))
     expect(log()[0].argv.slice(-2)).toEqual(['--resume', 'abc-123'])
   })
+  test("the run's model and effort are passed on", async () => {
+    const { a, log } = agent(['02-resume'], { model: 'opus', effort: 'xhigh' })
+    await all(a.turn('x'))
+    const argv = log()[0].argv as string[]
+    expect(argv.slice(argv.indexOf('--model'), argv.indexOf('--model') + 2)).toEqual(['--model', 'opus'])
+    expect(argv.slice(argv.indexOf('--effort'), argv.indexOf('--effort') + 2)).toEqual(['--effort', 'xhigh'])
+  })
   test('a second message while a turn runs is refused (the CLI would lose it)', async () => {
     const { a } = agent(['01-turn-tool'])
     const first = a.turn('one')[Symbol.asyncIterator]()

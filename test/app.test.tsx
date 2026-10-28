@@ -491,7 +491,7 @@ describe('the command palette', () => {
       const f = await t.press('enter', 'ctrl+k')
       expect(f).toContain('#104 commands')
       // the rest have a key or a button in the detail: m, d, P, e, i, p, the Open line, the PR in the header
-      expect(f).toContain('#104 commands · 2 results')
+      expect(f).toContain('#104 commands · 3 results') // Change model or effort, Remove the run, Quit
       expect(f).toContain('Remove the run')
       for (const c of ['Open the change', 'Open the plan', 'Open the worktree in VS Code', 'Port to develop', 'in the browser']) expect(f).not.toContain(c)
       expect(f).not.toContain('Group by stage')
@@ -803,6 +803,18 @@ describe('the new-run form', () => {
       await keys(t, 'down', 'down', 'down', 'right')
       await keys(t, 'ctrl+s') // start now, past Notes and Login
       expect(t.f.sent).toEqual([{ cmd: 'start', project: 'fso', ticket: 204598, base: 'origin/patch/3.20.7', kind: 'feature', repos: ['mobile'], device: 'android', patch: 'acme/product' }])
+    } finally { t.s.renderer.destroy() }
+  })
+  test('the model and the effort can be chosen; default keeps your own setting', async () => {
+    const t = await screen(runs, undefined, { projects: [fso], query: query({ lookup: { ...found, tags: [], customer: '', board: 'fso' } }) as FlowApi['query'] })
+    try {
+      await t.press('n'); await typeIn(t, '204598')
+      for (let i = 0; i < 14 && !(await t.frame()).match(/▌ Model/); i++) await keys(t, 'tab')
+      expect(await t.frame()).toMatch(/Model +\(•\) default +\( \) opus +\( \) sonnet +\( \) fable +\( \) haiku/)
+      await keys(t, 'right', 'tab')
+      expect(await t.frame()).toMatch(/Effort +\(•\) default +\( \) low +\( \) medium +\( \) high +\( \) xhigh +\( \) max/)
+      await keys(t, 'left', 'ctrl+s') // max
+      expect(t.f.sent[0]).toMatchObject({ cmd: 'start', model: 'opus', effort: 'max' })
     } finally { t.s.renderer.destroy() }
   })
   test('repos are toggled with space; a repo with a dev server offers one; the model can be chosen', async () => {
@@ -1241,6 +1253,20 @@ describe('removing a run and marking it done', () => {
       for (const gone of ['Mark done', 'Back to the runs', "Show the agent's session"]) expect(f).not.toContain(gone)
       await t.press(...'confirm'.split(''), 'enter')
       expect(t.f.sent).toEqual([{ cmd: 'done', run: 'fso-104' }])
+    } finally { t.s.renderer.destroy() }
+  })
+})
+
+describe("a run's agent: model and effort", () => {
+  test('shown in its header; changed from the palette (its next turn has them)', async () => {
+    const t = await screen([base('fso-105', { stage: 'build', status: 'running', model: 'sonnet', effort: 'high' })])
+    try {
+      expect(await t.press('enter')).toContain('sonnet · high effort')
+      const f = await t.press('ctrl+k', ...'model or effort'.split(''), 'enter')
+      expect(f).toMatch(/▸ Model +\( \) default +\( \) opus +\(•\) sonnet/)
+      expect(f).toMatch(/  Effort +\( \) default .*\(•\) high/)
+      await t.press('left', 'down', 'right', 'right', 'enter') // opus; max
+      expect(t.f.sent.at(-1)).toEqual({ cmd: 'setAgent', run: 'fso-105', model: 'opus', effort: 'max' })
     } finally { t.s.renderer.destroy() }
   })
 })

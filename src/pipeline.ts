@@ -37,7 +37,7 @@ import { self } from './self.ts'
 interface RunRepo { key: string; worktree: string; base: string }
 
 /** what a run needs beyond its events: kept as run.json in the run folder */
-interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string; model?: string
+interface Meta extends Brief { id: number | string; kind: 'bug' | 'feature'; repos: RunRepo[]; platform?: 'android' | 'ios'; web?: string; model?: string; effort?: string
   /** a run without a ticket: a task described instead */
   task?: boolean
   /** the run's environment (the project's vars: given, suggested by the ticket, followed or default) */
@@ -59,9 +59,9 @@ export interface PipelineDeps {
   az: Az
   /** flow's own data: the event log and one folder per run */
   dataDir: string
-  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; env?: Record<string, string>; appendSystemPrompt?: string; mcpConfig?: string }) => RunAgent
+  makeAgent: (o: { cwd: string; settings: string; resume?: string; model?: string; effort?: string; env?: Record<string, string>; appendSystemPrompt?: string; mcpConfig?: string }) => RunAgent
   /** a fresh, read-only reviewer session per review; without it the review is skipped */
-  makeReviewer?: (o: { cwd: string; settings: string; model?: string; maxTurns?: number }) => RunAgent
+  makeReviewer?: (o: { cwd: string; settings: string; model?: string; effort?: string; maxTurns?: number }) => RunAgent
   gitEnv?: Record<string, string | undefined>
   now?: () => number
   /** sees each agent event as it arrives (live output); own: the run's agent, not the reviewer */
@@ -84,6 +84,9 @@ export interface PipelineDeps {
   /** how long a run's dev server may take to listen (default 5 minutes) */
   devServerReadyTimeoutMs?: number
 }
+
+/** how hard an agent thinks: Claude Code's --effort */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 
 /**
  * Claude Code's tools for waiting and scheduling outside the turn: ending a turn ends the step (flow then reads what
@@ -108,6 +111,8 @@ export class Pipeline {
   private ends = new Map<string, { kind: 'ask' | 'resolve' | 'block'; text: string }>()
   /** repos the agent added during the turn going on: its session restarts with them when the turn ends */
   private addedDuringTurn = new Map<string, string[]>()
+  /** runs whose agent restarts once its turn ends (its model or effort changed meanwhile) */
+  private reopen = new Set<string>()
   /** the web runs' browsers, each through its proxy */
   private browsers: Browsers
   private tracker: Tracker
@@ -124,6 +129,8 @@ export class Pipeline {
       turnStarts: run => { this.ends.delete(run) },
       // a repo the agent added during its turn: its session restarts with it (brief, settings) and carries on
       afterTurn: async run => {
+        // its model or effort changed during the turn: the next turn starts a process with them (the session goes on)
+        if (this.reopen.delete(run)) await this.closeAgent(run)
         const added = this.addedDuringTurn.get(run)
         if (!added) return undefined
         this.addedDuringTurn.delete(run)
@@ -229,7 +236,7 @@ export class Pipeline {
     return { ok: res.code === 0, text: tail(res.out || res.err, 1) }
   }
 
-  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; task?: string; note?: string; logins?: string; vars?: Record<string, string>; headless?: boolean } = {}): Promise<string> {
+  async start(ticket: number | string, o: { base?: string; bases?: Record<string, string>; kind?: 'bug' | 'feature'; repos?: string[]; device?: 'android' | 'ios'; patch?: string; devServer?: boolean; model?: string; effort?: string; task?: string; note?: string; logins?: string; vars?: Record<string, string>; headless?: boolean } = {}): Promise<string> {
     const p = this.d.project
     const run = o.task?.trim() && !String(ticket).trim() ? this.taskRunId(o.task) : this.runId(ticket)
     if (o.device && !p.devices?.[o.device]) throw new Error(`project ${p.key} has no devices configured for ${o.device} (devices.${o.device} in its config)`)
@@ -257,7 +264,7 @@ export class Pipeline {
     // bases reach git and the project's shell commands: plain ref names only
     for (const r of repos) if (!/^[A-Za-z0-9][\w./-]*$/.test(r.base) || r.base.includes('..') || r.base.endsWith('/')) throw new Error(`base "${r.base}" is not a branch name`)
     const branch = task ? `${kind === 'bug' ? 'fix' : 'feat'}/${id}` : p.naming.branch.replaceAll('{type}', kind === 'bug' ? 'fix' : 'feat').replaceAll('{id}', String(id)).replaceAll('{key}', t.key)
-    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(task ? { task: true } : {}),
+    const m: Meta = { id, key: t.key, title: t.title, kind, url: t.url, branch, base: repos[0]!.base, repos, worktree: Pipeline.layout(root, repos), ...(o.device ? { platform: o.device } : {}), ...(patch ? { patch } : {}), ...(web ? { web } : {}), ...(o.model ? { model: o.model } : {}), ...(o.effort ? { effort: o.effort } : {}), ...(task ? { task: true } : {}),
       ...(p.vars.length ? { vars: resolveVars(p.vars, { ...detectVars(p.vars, t), ...o.vars }) } : {}), ...(o.headless !== undefined ? { headless: o.headless } : {}) }
     mkdirSync(this.runDir(run), { recursive: true })
     writeFileSync(join(this.runDir(run), 'run.json'), JSON.stringify(m, null, 2) + '\n')
@@ -270,6 +277,7 @@ export class Pipeline {
     if (logins) writeFileSync(join(this.runDir(run), 'logins.md'), logins + '\n', { mode: 0o600 })
     writeFileSync(join(this.runDir(run), 'ticket.md'), task ? `# ${t.title}\n\n${red.text}\n` : `# ${t.key} ${t.title}\n${t.url}\n\n${red.text}\n`)
     this.d.store.append(run, 'human', { type: 'run.created', ticket: t.key || 'task', title: t.title, project: p.key, base: m.base, repos: m.repos.map(r => r.key) })
+    if (m.model || m.effort) this.d.store.append(run, 'human', { type: 'agent.set', ...(m.model ? { model: m.model } : {}), ...(m.effort ? { effort: m.effort } : {}) })
     if (!(await this.setup(run, m))) return run
     await this.planStep(run, red.text)
     return run
@@ -656,7 +664,7 @@ export class Pipeline {
     const s = this.must(run), m = this.meta(run)
     if (!this.d.makeReviewer || !s.plan?.questions.length) return null
     const settings = writeRunSettings({ dir: join(this.runDir(run), 'advisor'), worktree: m.worktree, allow: m.repos.map(r => r.worktree).filter(w => w !== m.worktree), deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, off: this.d.project.off, denyTools: [...this.d.project.denyTools, ...UNSCHEDULED] })
-    const advisor = this.d.makeReviewer({ cwd: m.worktree, settings, maxTurns: this.d.project.review.maxTurns, ...(m.model ? { model: m.model } : {}) })
+    const advisor = this.d.makeReviewer({ cwd: m.worktree, settings, maxTurns: this.d.project.review.maxTurns, ...(m.model ? { model: m.model } : {}), ...(m.effort ? { effort: m.effort } : {}) })
     try {
       const read = (f: string) => (existsSync(f) ? readFileSync(f, 'utf8') : '')
       const r = await this.runner.turnWith(run, advisor, advisorPrompt({ key: m.key, title: m.title, ticket: read(join(this.runDir(run), 'ticket.md')), plan: read(this.planFile(run)), questions: s.plan.questions }), { ownSession: false, who: 'advisor' })
@@ -898,7 +906,7 @@ export class Pipeline {
     const appendSystemPrompt = runBrief({ ...this.meta(run), run, runDir: dir, planFile: this.planFile(run), prFile: this.prFile(run), ...(note ? { note } : {}), logins: existsSync(join(dir, 'logins.md')), tools: this.d.project.tools, browser: !!this.browserSpec(run), otherRepos: this.otherRepos(run),
       env: this.d.project.vars.filter(v => this.meta(run).vars?.[v.name]).map(v => `${v.label ?? v.name}: ${this.meta(run).vars![v.name]}`),
       ...(dev ? {} : { noDevice: { canAdd: !!(this.d.project.devices?.android || this.d.project.devices?.ios) } }) })
-    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, mcpConfig, env, ...(m.model ? { model: m.model } : {}) })
+    const agent = this.d.makeAgent({ cwd: m.worktree, settings, resume: this.d.store.state(run)?.session, appendSystemPrompt, mcpConfig, env, ...(m.model ? { model: m.model } : {}), ...(m.effort ? { effort: m.effort } : {}) })
     this.agents.set(run, agent)
     return agent
   }
@@ -1078,6 +1086,22 @@ export class Pipeline {
   async stopTurn(run: string) { await this.agents.get(run)?.stop?.() }
 
   /** the run's agent process closed (it holds about 2 GB); its next turn starts one again on the same session */
+  /**
+   * The model and effort the run's agent works with (undefined: your own setting), its reviewers and advisor too.
+   * Its next turn has them: at once if it is between turns, else once the turn running ends; the session goes on.
+   */
+  async setAgent(run: string, o: { model?: string; effort?: string }) {
+    if (o.effort && !EFFORTS.includes(o.effort)) throw new Error(`effort is ${EFFORTS.slice(0, -1).join(', ')} or ${EFFORTS.at(-1)}, not ${o.effort}`)
+    if (o.model && !/^[\w.\-[\]]+$/.test(o.model)) throw new Error(`"${o.model}" is not a model name`)
+    const f = join(this.runDir(run), 'run.json')
+    const raw = JSON.parse(readFileSync(f, 'utf8')) as Meta
+    delete raw.model; delete raw.effort
+    writeFileSync(f, JSON.stringify({ ...raw, ...(o.model ? { model: o.model } : {}), ...(o.effort ? { effort: o.effort } : {}) }, null, 2) + '\n')
+    this.d.store.append(run, 'human', { type: 'agent.set', ...(o.model ? { model: o.model } : {}), ...(o.effort ? { effort: o.effort } : {}) })
+    if (this.runner.turning(run)) this.reopen.add(run)
+    else await this.closeAgent(run)
+  }
+
   /** no new agent turns: the running ones finish, the ones about to start keep their prompt (a release) */
   drain() { this.runner.drain() }
 
@@ -1251,7 +1275,7 @@ export class Pipeline {
     const one = async (lens: Lens) => {
       const settings = writeRunSettings({ dir: join(this.runDir(run), 'reviewer', lens), worktree: m.worktree, allow: others, deny: [join(this.d.dataDir, 'token')], sandbox: this.d.project.sandbox, claudeMdExcludes: this.d.project.claudeMdExcludes, off: this.d.project.off, denyTools: [...this.d.project.denyTools, ...UNSCHEDULED] })
       // the run's model for the reviewers too (a run started on sonnet is reviewed on sonnet)
-      const reviewer = this.d.makeReviewer!({ cwd: m.worktree, settings, maxTurns: c.maxTurns, ...(m.model ? { model: m.model } : {}) })
+      const reviewer = this.d.makeReviewer!({ cwd: m.worktree, settings, maxTurns: c.maxTurns, ...(m.model ? { model: m.model } : {}), ...(m.effort ? { effort: m.effort } : {}) })
       try {
         let r = await this.runner.turnWith(run, reviewer, reviewPrompt({ ...base, ...(c.lenses.length > 1 ? { lens } : {}) }), { ownSession: false, who: `review: ${lens}` })
         if (!r.ok) return { lens, error: `the ${lens} review did not finish: ${r.text.split('\n')[0]!.slice(0, 200)}` }

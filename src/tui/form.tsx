@@ -21,10 +21,12 @@ export interface Lookup {
   vars?: Record<string, string>
 }
 
-type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'email' | 'password' | 'license' | 'headless' | `var:${string}`
+type Field = 'project' | 'ticket' | 'task' | 'base' | 'kind' | 'repos' | 'device' | 'dev' | 'patch' | 'model' | 'effort' | 'email' | 'password' | 'license' | 'headless' | `var:${string}`
 /** how many lines of the notes show at once (the last ones, as you type) */
 const NOTE_ROWS = 8
-const MODELS = ['default', 'opus', 'sonnet']
+export const MODELS = ['default', 'opus', 'sonnet', 'fable', 'haiku']
+/** how hard the agent thinks (Claude Code's --effort); default: your own setting */
+export const EFFORT = ['default', 'low', 'medium', 'high', 'xhigh', 'max']
 
 /** the base a ticket's release tag points at (3.18 → the newest patch/3.18.x), else none */
 export function suggestBase(tags: string[], bases: string[]): string | undefined {
@@ -110,6 +112,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
   const [patch, setPatch] = useState('')
   const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null)
   const [model, setModel] = useState('default')
+  const [effort, setEffort] = useState('default')
   const [field, setField] = useState<Field>('ticket')
   const [picking, setPicking] = useState<Picking | null>(null)
   const [problem, setProblem] = useState('')
@@ -175,7 +178,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
 
   const devRepos = (p?.devServers ?? []).filter(r => repos.includes(r))
   const fields: Field[] = [...(fixed ? [] : ['project' as const]), 'ticket', ...(ticket.trim() ? [] : ['task' as const]), 'base', 'kind', 'repos', ...(p?.devices.length && repos.some(r => !(p?.devServers ?? []).includes(r)) ? ['device' as const] : []),
-    ...(devRepos.length ? ['dev' as const] : []), ...(device !== 'none' || dev ? ['headless' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model']
+    ...(devRepos.length ? ['dev' as const] : []), ...(device !== 'none' || dev ? ['headless' as const] : []), ...(p?.patches.some(r => repos.includes(r)) && choices.length ? ['patch' as const] : []), 'model', 'effort']
   // test logins are for the app the agent signs into: on its device, or in the browser of its dev server
   const signsIn = device !== 'none' || dev
   const loginFields: ('email' | 'password' | 'license')[] = signsIn ? ['email', 'password', ...(p?.license ? ['license' as const] : [])] : []
@@ -216,7 +219,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       if (!slug(task.split('\n')[0]!)) { setField('task'); return setProblem('describe the task in a few words: they name the run and the branch') }
       if (!repos.length) { setField('repos'); return setProblem('choose at least one repo') }
       return onStart({ cmd: 'start', project, ticket: '', task: task.trim(), ...(base ? { base } : {}), kind, repos,
-        ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...(headless !== (p?.headless ?? true) ? { headless } : {}), ...extra })
+        ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...(effort !== 'default' ? { effort } : {}), ...(headless !== (p?.headless ?? true) ? { headless } : {}), ...extra })
     }
     if (look.state === 'loading') return setProblem('still looking the ticket up')
     if (look.state === 'error') return setProblem(look.error ?? 'the ticket could not be read')
@@ -224,7 +227,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (!repos.length) { setField('repos'); return setProblem('choose at least one repo') }
     if (patch && check && !check.ok) { setField('patch'); return setProblem('the customer patch does not fit this base: choose another base or no patch') }
     onStart({ cmd: 'start', project, ticket: /^\d+$/.test(ticket) ? Number(ticket) : ticket, ...(base ? { base } : {}), kind, repos,
-      ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...(headless !== (p?.headless ?? true) ? { headless } : {}), ...extra })
+      ...(device !== 'none' ? { device } : {}), ...(dev ? { devServer: true } : {}), ...(patch ? { patch } : {}), ...(model !== 'default' ? { model } : {}), ...(effort !== 'default' ? { effort } : {}), ...(headless !== (p?.headless ?? true) ? { headless } : {}), ...extra })
   }
   const choose = (f: 'base' | 'patch', v: string) => { touch(f); if (f === 'base') setBase(v); else setPatch(v); setPicking(null) }
   const open = (f: 'base' | 'patch', query = '') => {
@@ -313,6 +316,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
     if (field === 'kind') { touch('kind'); setKind(k => (k === 'bug' ? 'feature' : 'bug')) }
     if (field === 'device') setDevice(cycle(['none', ...(p?.devices ?? [])] as ('none' | 'android' | 'ios')[], device, d))
     if (field === 'model') setModel(cycle(MODELS, model, d))
+    if (field === 'effort') setEffort(cycle(EFFORT, effort, d))
     return true
   }
   useEffect(() => { bind(keys); return () => bind(null) })
@@ -409,6 +413,7 @@ export function NewRunForm({ api, width, project: initial, fixed, bind, bindPast
       {patch && check && !check.ok ? <text fg={C.warning} bg="#2A2416">{`             ⚠ ${fit(check.text || 'no patch for this base', W - 18)}`}</text> : null}
       {patch && check?.ok ? <text fg={C.success}>{`             ✓ ${fit(check.text, W - 18)}`}</text> : null}
       {row('model', 'Model', <>{radio(MODELS.map(m => ({ v: m, label: m })), model, setModel)}</>)}
+      {row('effort', 'Effort', <>{radio(EFFORT.map(m => ({ v: m, label: m })), effort, setEffort)}</>)}
       {blank}
       {wrap(will, W - 16).slice(0, 3).map((l, i) => <text key={i}>{'  '}<span fg={C.muted}>{i ? '          ' : 'Will      '}</span><span fg={C.secondary}>{l}</span></text>)}
       {used && limits ? <text>{'  '}<span fg={C.muted}>{'Slots     '}</span><span fg={buildsFull ? C.warning : C.secondary}>{`agents ${limits.agents - used.agents}/${limits.agents} free · builds ${used.builds}/${limits.builds}${buildsFull ? ' full → the install waits for a slot' : ''}`}</span></text> : null}

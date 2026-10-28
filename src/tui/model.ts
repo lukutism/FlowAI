@@ -211,6 +211,7 @@ export function describeEvent(e: RunEvent): { stage: Stage | ''; text: string } 
     case 'repo.added': return { stage: '', text: `${e.repo} added (from ${e.base.replace(/^origin\//, '')})` }
     case 'run.note': return { stage: '', text: e.text }
     case 'pr.draft': return { stage: 'ship', text: e.draft ? 'PR back to draft' : 'PR ready for review' }
+    case 'agent.set': return { stage: '', text: `agent: ${e.model ?? 'your model'}, ${e.effort ? `${e.effort} effort` : 'your effort'}` }
     case 'run.synced': return { stage: '', text: `brought up to the base: ${e.repos.join(', ')}` }
     case 'plan.returned': return { stage: 'plan', text: `back to the agent to look up ${e.lookups.join(', ')}` }
     case 'agent.asked': return { stage: '', text: `asks: ${e.question}` }

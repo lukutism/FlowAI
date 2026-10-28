@@ -18,6 +18,8 @@ export type EventBody =
   | { type: 'plan.decided'; by: 'human' | 'deadline' | 'advisor'; answers: Record<string, string>; reasons?: Record<string, string> }
   /** the PR marked ready for review, or back to draft, on the code host */
   | { type: 'pr.draft'; draft: boolean }
+  /** the model and effort the run's agent works with (none: your own setting); set at start, changed any time */
+  | { type: 'agent.set'; model?: string; effort?: string }
   /** something worth knowing that changes nothing */
   | { type: 'run.note'; text: string }
   /** a repo added to the run (its own worktree on the run's branch) */
@@ -81,6 +83,9 @@ export interface RunState {
   repos?: string[]
   /** its PR is a draft (flow opens drafts; false once marked ready for review on the code host) */
   prDraft?: boolean
+  /** the agent's model and effort, when the run chose them (else your own setting) */
+  model?: string
+  effort?: string
   stage: Stage; status: Status; needs?: Needs
   plan?: { summary: string; questions: Question[]; answers?: Record<string, string>; decidedBy?: 'human' | 'deadline' | 'advisor'; reasons?: Record<string, string>; returned?: boolean
     /** the plan's Target lines: the other lines the fix is for (none: this base only; unset: the plan didn't say) */
@@ -152,6 +157,7 @@ export function apply(s: RunState | undefined, e: RunEvent, rules: Rules = DEFAU
     case 'repo.added': return go(s, e, s.repos ? { repos: [...s.repos, e.repo] } : {})
     case 'run.synced': case 'run.note': return go(s, e, {})
     // the waiting line says what the PR is now
+    case 'agent.set': return go(s, e, { model: e.model, effort: e.effort })
     case 'pr.draft': return go(s, e, { prDraft: e.draft, ...(s.needs?.kind === 'pr' && s.prs?.length ? { needs: { kind: 'pr', ask: prAsk(s.prs, e.draft) } } : {}) })
     case 'plan.returned':
       if (s.needs?.kind !== 'plan' || !s.plan) throw new TransitionError('no plan is waiting for a decision')

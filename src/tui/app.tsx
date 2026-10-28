@@ -2,7 +2,7 @@ import { useKeyboard, usePaste, useTerminalDimensions } from '@opentui/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { KeyEvent } from '@opentui/core'
 import { RunDetail, stopShells, type DetailApi, type DetailKeys, type PaletteAction } from './detail.tsx'
-import { NewRunForm, type FormApi } from './form.tsx'
+import { EFFORT, MODELS, NewRunForm, type FormApi } from './form.tsx'
 import { ProjectSettings } from './settings.tsx'
 import type { RunEvent, RunState } from '../run.ts'
 import type { RunFile } from '../server.ts'
@@ -59,6 +59,8 @@ type Mode =
   | { kind: 'projects'; index: number }
   // the notices of the last day; closing marks them seen
   | { kind: 'notices'; from: Mode }
+  // the run's agent: its model and effort (row: which one the arrows change)
+  | { kind: 'agent'; run: string; model: string; effort: string; row: 0 | 1 }
 
 
 /** an entry of the command palette: what it says, and what choosing it does */
@@ -180,6 +182,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       const r = inDetail
       // only what has no key or button in the detail (approve, ship, port, the PR and the device page are there)
       a.push(...(detailCmds.current?.() ?? []))
+      if (r.status !== 'done' && r.status !== 'failed') a.push({ label: 'Change model or effort', hint: `${r.model ?? 'your model'} · ${r.effort ?? 'your'} effort; its next turn`, run: () => setMode({ kind: 'agent', run: r.id, model: r.model ?? 'default', effort: r.effort ?? 'default', row: 0 }) })
       if (r.status !== 'done' && r.status !== 'failed') {
         if (missingRepos(r).length) a.push({ label: 'Add a repo', hint: `${missingRepos(r).join(', ')} · its own worktree on the run's branch`, run: () => setPal({ text: '', index: 0, sub: 'repos' }) })
         if (!r.pr) a.push({ label: 'Sync with the base', hint: "fetch, merge the base under the agent's change (kept uncommitted)", run: () => void send({ cmd: 'sync', run: r.id }, `${r.ticket}: syncing with its base`) })
@@ -241,6 +244,20 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       if (typed) edit(x => x + typed)
     }
     // the notices: closing them marks them seen
+    if (mode.kind === 'agent') {
+      if (name === 'up' || name === 'down') return setMode({ ...mode, row: mode.row ? 0 : 1 })
+      if (name === 'left' || name === 'right') {
+        const list = mode.row ? EFFORT : MODELS, cur = mode.row ? mode.effort : mode.model, d = name === 'right' ? 1 : list.length - 1
+        const v = list[(Math.max(0, list.indexOf(cur)) + d) % list.length]!
+        return setMode(mode.row ? { ...mode, effort: v } : { ...mode, model: v })
+      }
+      if (name === 'return') {
+        void send({ cmd: 'setAgent', run: mode.run, ...(mode.model !== 'default' ? { model: mode.model } : {}), ...(mode.effort !== 'default' ? { effort: mode.effort } : {}) }, `${mode.run}: its agent's next turn is on ${mode.model} · ${mode.effort} effort`)
+        return setMode({ kind: 'detail', run: mode.run })
+      }
+      if (name === 'escape') return setMode({ kind: 'detail', run: mode.run })
+      return
+    }
     if (mode.kind === 'notices') { if (name === 'escape' || name === 'return' || typed === '!' || typed === 'q') { setSeenAt(now()); setMode(mode.from) } return }
     if (typed === '!' && (mode.kind === 'list' || mode.kind === 'detail')) return setMode({ kind: 'notices', from: mode })
     if (mode.kind === 'projects') {
@@ -428,6 +445,7 @@ export function App({ api, now = Date.now, onQuit = () => process.exit(0) }: { a
       <text> </text>
       {mode.kind === 'new' ? <NewRunForm api={api} width={width} project={/project:(\S+)/.exec(filter)?.[1] ?? [...all].sort((x, y) => y.createdAt - x.createdAt)[0]?.project} fixed={/project:(\S+)/.test(filter)} bind={k => { formKeys.current = k }} bindPaste={f => { pasteTo.current = f }}
         onStart={c => void send(c, `starting ${c.project}-${c.ticket}`)} onCancel={() => setMode({ kind: 'list' })} /> : null}
+      {mode.kind === 'agent' ? <AgentChoice mode={mode} width={width} /> : null}
       {mode.kind === 'notices' ? <Notices items={inbox.filter(n => t - (n.at ?? 0) < 86_400_000)} width={width} /> : null}
       {mode.kind === 'projects' ? <ProjectPicker choices={choices} index={mode.index} current={/project:(\S+)/.exec(filter)?.[1] ?? ''} onPick={pickProject} /> : null}
       {pal ? <Palette text={pal.text} found={found} index={pal.index} width={width} title="commands" onPick={a => { setPal(null); a.run() }} onIndex={i => setPal(p => p && { ...p, index: i })} /> : null}
@@ -606,6 +624,22 @@ function Bottom({ bars, waiting, feed, run, width, runs, windows, now }: { bars:
 
 function ResourcesLine({ bars }: { bars: ReturnType<typeof resourceBars> }) {
   return <text>{bars.map(b => <span key={b.kind}><span fg={C.muted}>{`${b.label} `}</span><span fg={b.full ? C.warning : C.text}>{`${b.holders.length}/${b.used.length}`}</span><span fg={C.muted}>{b.waiting.length ? ` (${b.waiting.length} waiting)` : ''}{'   '}</span></span>)}</text>
+}
+
+/** the run's agent: its model and effort, ↑↓ a row, ←→ the choice */
+function AgentChoice({ mode, width }: { mode: Extract<Mode, { kind: 'agent' }>; width: number }) {
+  const W = Math.min(90, width - 4)
+  const row = (i: 0 | 1, label: string, list: string[], cur: string) => (
+    <text><span fg={mode.row === i ? C.accent : C.muted}>{mode.row === i ? '▸ ' : '  '}</span><span fg={C.text}>{label.padEnd(8)}</span>{list.map(v => <span key={v} fg={v === cur ? C.accent : C.secondary}>{`${v === cur ? '(•)' : '( )'} ${v}  `}</span>)}</text>
+  )
+  return (
+    <box position="absolute" top={3} left={Math.max(1, Math.floor((width - W) / 2))} width={W} flexDirection="column" border borderStyle="rounded" borderColor={C.accent} backgroundColor={C.panel} zIndex={40} paddingLeft={1} paddingRight={1}>
+      <text><strong>{`${mode.run}'s agent`}</strong><span fg={C.muted}>{'  its next turn has them; the session goes on'}</span></text>
+      {row(0, 'Model', MODELS, mode.model)}
+      {row(1, 'Effort', EFFORT, mode.effort)}
+      <text fg={C.muted}>{'↑↓ model or effort · ←→ choose · ↵ apply · esc cancel   default: your own setting'}</text>
+    </box>
+  )
 }
 
 /** the service's notices of the last day, newest first */

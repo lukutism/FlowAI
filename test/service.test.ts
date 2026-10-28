@@ -359,3 +359,16 @@ describe('Service: a release drains it first', () => {
     expect(t.store.events('ex-1').some(e => e.type === 'run.blocked')).toBe(false)
   })
 })
+
+describe('Service: the agent of a run', () => {
+  test('its model and effort changed while the run is busy: taken, not refused', async () => {
+    const t = setup(() => [])
+    t.store.append('ex-4', 'human', { type: 'run.created', ticket: '#4', title: 'x', project: 'ex', base: 'origin/develop' })
+    mkdirSync(join(t.data, 'runs', 'ex-4'), { recursive: true })
+    writeFileSync(join(t.data, 'runs', 'ex-4', 'run.json'), JSON.stringify({ id: 4, key: '#4', title: 'x', kind: 'bug', url: '', branch: 'fix/4', base: 'origin/develop', repos: [], worktree: '/w' }))
+    expect(t.svc.dispatch({ cmd: 'setAgent', run: 'ex-4', model: 'opus', effort: 'max' })).toMatchObject({ ok: true })
+    await Bun.sleep(20)
+    expect(t.store.state('ex-4')).toMatchObject({ model: 'opus', effort: 'max' })
+    expect(JSON.parse(readFileSync(join(t.data, 'runs', 'ex-4', 'run.json'), 'utf8'))).toMatchObject({ model: 'opus', effort: 'max' })
+  })
+})

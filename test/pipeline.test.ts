@@ -118,6 +118,20 @@ describe('a ticket to a draft PR', () => {
     expect(t.agent.prompts[3]).toMatch(/don't end the turn to wait/)
     expect(t.store.state(run)).toMatchObject({ status: 'needs-you', needs: { kind: 'plan' } })
   })
+  test("a run's model and effort: chosen at start, passed to its agent; changed later, its next turn has them (the session goes on)", async () => {
+    const t = setup(d => [
+      turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also guard the order list? — default: no'))),
+      turn(() => { writeFileSync(join(d.wt, 'src/b.ts'), 'export const b = 2\n'); writeFileSync(join(d.run, 'pr.md'), prMd) }),
+    ])
+    const run = await t.pipe.start(186278, { model: 'sonnet', effort: 'high' })
+    expect(t.agents[0]).toMatchObject({ model: 'sonnet', effort: 'high' })
+    expect(t.store.state(run)).toMatchObject({ model: 'sonnet', effort: 'high' })
+    await t.pipe.setAgent(run, { model: 'opus', effort: 'max' })
+    expect(t.store.state(run)).toMatchObject({ model: 'opus', effort: 'max' })
+    await t.pipe.approve(run)
+    expect(t.agents.at(-1)).toMatchObject({ model: 'opus', effort: 'max', resume: 's-1' })
+    await expect(t.pipe.setAgent(run, { effort: 'huge' })).rejects.toThrow(/effort is low, medium, high, xhigh or max/)
+  })
   test('open questions: the run waits; approve with an answer, and the build turn is told it', async () => {
     const t = setup(d => [
       turn(() => writeFileSync(join(d.run, 'plan.md'), plan('- Q1: Also guard the order list? — default: no'))),

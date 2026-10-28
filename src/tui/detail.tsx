@@ -356,6 +356,7 @@ export function RunDetail({ api, run, now, width, height, message, can, bind, on
         <text>
           <span fg={C.accent}>{` ${track(run)}  `}</span><span fg={C.accent}>{`${run.stage} · ${run.status} ${duration(now - run.updatedAt)}`}</span>
           <span fg={C.muted}>{`   ${tokens(run.tokens)} tokens${run.cached ? ` (+${tokens(run.cached)} from cache)` : ''} · ${run.compactions} compaction${run.compactions === 1 ? '' : 's'}`}</span>
+          {run.model || run.effort ? <span fg={C.secondary}>{`   ${run.model ?? 'your model'} · ${run.effort ? `${run.effort} effort` : 'your effort'}`}</span> : null}
           {run.device ? <span fg={C.secondary}>{`   ${run.device.platform} ${run.device.id} · Metro :${run.device.metroPort}`}</span> : null}
           {run.patch ? <span fg={C.secondary}>{`   patch ${run.patch.customer}/${run.patch.app}`}</span> : null}
         </text>
